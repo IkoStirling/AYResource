@@ -1,0 +1,25 @@
+#include "AYAssetPath.h"
+#include "AYTest.h"
+
+using namespace ayt::resource;
+
+TEST_SUITE(AssetPathTests)
+
+TEST_CASE(resolve_relative_to_base_file)
+{
+    const std::string resolved =
+        resolveAssetPath("assets/meshes/hero.aymesh", "materials/hero.aymat");
+    CHECK(resolved == "assets/meshes/materials/hero.aymat"
+          || resolved == "assets\\meshes\\materials\\hero.aymat");
+}
+
+TEST_CASE(resolve_with_asset_root)
+{
+    setAssetRoot("content");
+    const std::string resolved = resolveAssetPath("", "shaders/pbr.phoskia");
+    CHECK(resolved == "content/shaders/pbr.phoskia"
+          || resolved == "content\\shaders\\pbr.phoskia");
+    setAssetRoot("");
+}
+
+TEST_SUITE_END

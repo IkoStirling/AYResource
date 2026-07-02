@@ -1,0 +1,4 @@
+*.md
+.vs
+test_output
+!docs/runtime-conventions.md

@@ -1,0 +1,305 @@
+#include "AYResource.h"
+#include "Converter/FBXConverter.h"
+#include "Loader/MeshLoader.h"
+#include "Loader/MaterialLoader.h"
+#include "Loader/TextureLoader.h"
+#include "Loader/SkeletonLoader.h"
+#include "AYTest.h"
+#include "AYMesh.h"
+#include "AYMaterial.h"
+#include "AYTexture.h"
+#include "AYSkeleton.h"
+#include <vector>
+#include <fstream>
+#include <cstring>
+
+using namespace ayt::resource;
+using namespace ayt::math;
+
+static bool fileExists(const std::string& path) {
+    std::ifstream f(path);
+    return f.is_open();
+}
+
+TEST_SUITE(FBXConverterTests)
+
+TEST_CASE(FileValide) {
+    // 验证文件存在
+    //std::string fullPath = "D:/Projects/AYResource/test_output/merged/meshes/Sour_merged.aymesh";
+    std::string fullPath = "D:/Projects/AYResource/test_output/meshes/Sour_RootNode_Sour_mesh.aymesh";
+    CHECK(fileExists(fullPath) == true);
+    printf("    [OK] File exists\n");
+
+    // 读取二进制
+    std::ifstream rawFile(fullPath, std::ios::binary);
+    CHECK(rawFile.is_open() == true);
+    rawFile.seekg(0, std::ios::end);
+    size_t rawSize = rawFile.tellg();
+    rawFile.seekg(0, std::ios::beg);
+
+    std::vector<UInt8> fileData(rawSize);
+    rawFile.read(reinterpret_cast<char*>(fileData.data()), rawSize);
+
+    // 验证 header
+    UInt32 magic = *reinterpret_cast<UInt32*>(fileData.data());
+    UInt16 version = *reinterpret_cast<UInt16*>(fileData.data() + 4);
+    CHECK(magic == 0x484D5941);  // 'AYMH'
+    CHECK(version == 1);
+    printf("    [OK] Magic=0x%08X, Version=%d\n", magic, version);
+
+    // 加载并验证
+    MeshLoader loader;
+    auto mesh = std::dynamic_pointer_cast<Mesh>(
+        loader.loadFromBinary(fileData.data(), fileData.size()));
+	CHECK(mesh != nullptr);
+}
+
+    TEST_CASE(ConvertSuzanne) {
+        std::string fbxPath = "D:/Projects/suzanne.fbx";
+
+        FBXConverter converter(fbxPath);
+        CHECK(converter.isValid() == true);
+
+        // 设置输出目录
+        converter.setOutputDir("D:/Projects/AYResource/test_output");
+
+        ConversionResult result = converter.convert();
+        CHECK(result.resources.size() > 0);
+
+        // 验证输出文件存在
+        std::string outPath = "D:/Projects/AYResource/test_output/" + result.resources[0].path;
+        CHECK(fileExists(outPath) == true);
+
+        // 验证资源信息
+        CHECK(result.resources[0].type == "Mesh");
+        CHECK(result.resources[0].size > 0);
+    }
+
+    TEST_CASE(ConvertCube) {
+        std::string fbxPath = "D:/Projects/AliyatRenderer/assets/core/models/cube.fbx";
+
+        FBXConverter converter(fbxPath);
+        CHECK(converter.isValid() == true);
+
+        converter.setOutputDir("D:/Projects/AYResource/test_output");
+
+        ConversionResult result = converter.convert();
+        CHECK(result.resources.size() > 0);
+
+        // 验证输出文件
+        std::string outPath = "D:/Projects/AYResource/test_output/" + result.resources[0].path;
+        CHECK(fileExists(outPath) == true);
+    }
+
+    TEST_CASE(ConvertSourMikuFull) {
+        std::string fbxPath = "D:/Projects/AliyatRenderer/assets/core/models/sour-miku-Creamy/Sour.fbx";
+
+        FBXConverter converter(fbxPath);
+        CHECK(converter.isValid() == true);
+
+        // 使用 Full 模式，解析所有资源类型（Mesh + Material + Texture）
+        converter.setLoadOption(IConverter::LoadOption::Full);
+        converter.setSeparateModels(true);  // 分离模式：每个节点一个 MeshData
+        converter.setOutputDir("D:/Projects/AYResource/test_output");
+
+        ConversionResult result = converter.convert();
+        CHECK(result.resources.size() > 0);
+
+        // 统计各类型资源数量
+        size_t meshCount = 0;
+        size_t materialCount = 0;
+        size_t textureCount = 0;
+        size_t skeletonCount = 0;
+        for (const auto& res : result.resources) {
+            if (res.type == "Mesh") meshCount++;
+            else if (res.type == "Material") materialCount++;
+            else if (res.type == "Texture") textureCount++;
+            else if (res.type == "Skeleton") skeletonCount++;
+        }
+
+        printf("=== Conversion Result ===\n");
+        printf("  total resources: %zu\n", result.resources.size());
+        printf("  Mesh: %zu, Material: %zu, Texture: %zu, Skeleton: %zu\n", meshCount, materialCount, textureCount, skeletonCount);
+        printf("  dependencies: %zu\n", result.dependencies.size());
+
+        // 验证有 Mesh 资源
+        CHECK(meshCount > 0);
+        printf("  [OK] Mesh count: %zu\n", meshCount);
+
+        // ===== 验证 Mesh =====
+        for (size_t i = 0; i < result.resources.size(); i++) {
+            const auto& res = result.resources[i];
+            if (res.type != "Mesh") continue;
+
+            printf("  Testing Mesh[%zu]: path=%s size=%lld\n", i, res.path.c_str(), (long long)res.size);
+
+            // 验证文件存在
+            std::string fullPath = "D:/Projects/AYResource/test_output/" + res.path;
+            CHECK(fileExists(fullPath) == true);
+            printf("    [OK] File exists\n");
+
+            // 读取二进制
+            std::ifstream rawFile(fullPath, std::ios::binary);
+            CHECK(rawFile.is_open() == true);
+            rawFile.seekg(0, std::ios::end);
+            size_t rawSize = rawFile.tellg();
+            rawFile.seekg(0, std::ios::beg);
+
+            std::vector<UInt8> fileData(rawSize);
+            rawFile.read(reinterpret_cast<char*>(fileData.data()), rawSize);
+
+            // 验证 header
+            UInt32 magic = *reinterpret_cast<UInt32*>(fileData.data());
+            UInt16 version = *reinterpret_cast<UInt16*>(fileData.data() + 4);
+            CHECK(magic == 0x484D5941);  // 'AYMH'
+            CHECK(version == 1);
+            printf("    [OK] Magic=0x%08X, Version=%d\n", magic, version);
+
+            // 加载并验证
+            MeshLoader loader;
+            auto mesh = std::dynamic_pointer_cast<Mesh>(
+                loader.loadFromBinary(fileData.data(), fileData.size()));
+            CHECK(mesh != nullptr);
+            CHECK(mesh->getVertexCount() > 0);
+            CHECK(mesh->getIndexCount() > 0);
+            printf("    [OK] vertexCount=%u, indexCount=%u\n",
+                   mesh->getVertexCount(), mesh->getIndexCount());
+
+            // 验证 bounds
+            CHECK(mesh->hasBounds() == true);
+            FVector3 min, max;
+            mesh->getBounds(min, max);
+            CHECK(min.x <= max.x && min.y <= max.y && min.z <= max.z);
+            printf("    [OK] Bounds valid\n");
+
+            // 验证顶点数据
+            CHECK(mesh->getVertexData() != nullptr);
+            CHECK(mesh->getIndexData() != nullptr);
+
+            // 验证 submesh 和 material slot
+            printf("    [OK] submeshCount=%u, materialSlotCount=%u\n",
+                   mesh->getSubmeshCount(), mesh->getMaterialSlotCount());
+        }
+
+        // ===== 验证 Material =====
+        printf("  Testing Materials...\n");
+        for (size_t i = 0; i < result.resources.size(); i++) {
+            const auto& res = result.resources[i];
+            if (res.type != "Material") continue;
+
+            std::string fullPath = "D:/Projects/AYResource/test_output/" + res.path;
+            CHECK(fileExists(fullPath) == true);
+            printf("    Material: %s (size=%lld) [OK]\n", res.path.c_str(), (long long)res.size);
+        }
+        CHECK(materialCount > 0);
+        printf("  [OK] Material count: %zu\n", materialCount);
+
+        // ===== 验证 Texture（如果有） =====
+        if (textureCount > 0) {
+            printf("  Testing Textures...\n");
+            for (size_t i = 0; i < result.resources.size(); i++) {
+                const auto& res = result.resources[i];
+                if (res.type != "Texture") continue;
+
+                std::string fullPath = "D:/Projects/AYResource/test_output/" + res.path;
+                CHECK(fileExists(fullPath) == true);
+                printf("    Texture: %s (size=%lld) [OK]\n", res.path.c_str(), (long long)res.size);
+            }
+            printf("  [OK] Texture count: %zu\n", textureCount);
+        } else {
+            printf("  [INFO] No embedded textures in this FBX\n");
+        }
+
+        // ===== 验证 Skeleton（如果有） =====
+        if (skeletonCount > 0) {
+            printf("  Testing Skeletons...\n");
+            for (size_t i = 0; i < result.resources.size(); i++) {
+                const auto& res = result.resources[i];
+                if (res.type != "Skeleton") continue;
+
+                printf("  Testing Skeleton[%zu]: path=%s size=%lld\n", i, res.path.c_str(), (long long)res.size);
+
+                std::string fullPath = "D:/Projects/AYResource/test_output/" + res.path;
+                CHECK(fileExists(fullPath) == true);
+                printf("    [OK] File exists\n");
+
+                // 读取二进制
+                std::ifstream rawFile(fullPath, std::ios::binary);
+                CHECK(rawFile.is_open() == true);
+                rawFile.seekg(0, std::ios::end);
+                size_t rawSize = rawFile.tellg();
+                rawFile.seekg(0, std::ios::beg);
+
+                std::vector<UInt8> fileData(rawSize);
+                rawFile.read(reinterpret_cast<char*>(fileData.data()), rawSize);
+
+                // 验证 header
+                UInt32 magic = *reinterpret_cast<UInt32*>(fileData.data());
+                CHECK(magic == 0x534B4C4E);  // 'SKLN'
+                printf("    [OK] Magic=0x%08X\n", magic);
+
+                // 加载并验证
+                SkeletonLoader loader;
+                auto skeleton = std::dynamic_pointer_cast<Skeleton>(
+                    loader.loadFromBinary(fileData.data(), fileData.size()));
+                CHECK(skeleton != nullptr);
+                CHECK(skeleton->getBoneCount() > 0);
+                printf("    [OK] boneCount=%zu\n", skeleton->getBoneCount());
+            }
+            printf("  [OK] Skeleton count: %zu\n", skeletonCount);
+        } else {
+            printf("  [INFO] No skeletons in this FBX\n");
+        }
+
+        // ===== 验证依赖关系 =====
+        printf("  Testing Dependencies...\n");
+        CHECK(result.dependencies.size() > 0);
+        int dep_count = 0;
+        for (const auto& dep : result.dependencies) {
+			if (dep.from.empty() || dep.to.empty() ){
+				dep_count++;
+			}
+
+        }
+        CHECK(dep_count == 0);
+    }
+
+    //TEST_CASE(ConvertSourMikuMergedVsSeparate) {
+    //    // 注意：SourMiku 只有 1 个顶级节点，所以无论哪种模式都只输出 1 个 .aymesh
+    //    // 分离模式只在多顶级节点的 FBX 下才有意义
+    //    std::string fbxPath = "D:/Projects/AliyatRenderer/assets/core/models/sour-miku-Creamy/Sour.fbx";
+    //    // 验证两种模式都能正常工作
+    //    for (bool separate : {false, true}) {
+    //        FBXConverter converter(fbxPath);
+    //        converter.setLoadOption(IConverter::LoadOption::Full);
+    //        converter.setSeparateModels(separate);
+    //        converter.setOutputDir("D:/Projects/AYResource/test_output/" + std::string(separate ? "separate" : "merged"));
+    //        ConversionResult result = converter.convert();
+    //        size_t meshCount = 0;
+    //        for (const auto& res : result.resources) {
+    //            if (res.type == "Mesh") meshCount++;
+    //        }
+    //        printf("=== Mode: %s, Mesh count: %zu ===\n", separate ? "Separate" : "Merged", meshCount);
+    //        CHECK(meshCount > 0);
+    //    }
+    //}
+
+    TEST_CASE(FactoryCreate) {
+        // 测试工厂方法
+        auto fbxConv = IConverter::create("test.fbx");
+        CHECK(fbxConv != nullptr);
+        CHECK(strcmp(fbxConv->getSourceType(), "FBX") == 0);
+
+        auto gltfConv = IConverter::create("test.gltf");
+        CHECK(gltfConv != nullptr);
+        CHECK(strcmp(gltfConv->getSourceType(), "glTF") == 0);
+
+        auto glbConv = IConverter::create("test.glb");
+        CHECK(glbConv != nullptr);
+        CHECK(strcmp(glbConv->getSourceType(), "glTF") == 0);
+
+        auto unknownConv = IConverter::create("test.obj");
+        CHECK(unknownConv == nullptr);
+    }
+
+TEST_SUITE_END

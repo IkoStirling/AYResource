@@ -1,0 +1,104 @@
+# AYResource Runtime Conventions (R2b)
+
+This document defines how AYResource CPU assets connect to AYShader (Phoskia) and
+AYRenderer (GPU). Offline converters and runtime loaders must follow these rules.
+
+## 1. Shader reference in `.aymat`
+
+| Field | Value |
+|-------|--------|
+| `shader` | Virtual path to a **Phoskia source file**, e.g. `shaders/pbr.phoskia` |
+| Not used at runtime | `.ayshader` (legacy GLSL/HLSL blob), `"Standard"` string ids |
+
+### Phoskia → compiled GPU shader chain
+
+```
+aymat.shader path
+  → resolveAssetPath(aymatDir, path)
+  → AYIO File::readAllText(phoskiaPath)
+  → ShaderResourcePool::acquire(source, cacheKey = phoskiaPath)
+       → Phoskia compile → BGFX .sc → shaderc → .bin → bgfx::createShader
+       → disk cache .aysc (AYShader internal, not an AYResource asset)
+```
+
+Bridge (R2b) reads Phoskia text; AYShader owns compile/cache/hot-reload.
+
+## 2. Material parameter / texture names
+
+Names must match Phoskia property / uniform / texture declarations.
+
+| aymat param | Phoskia | Notes |
+|-------------|---------|-------|
+| `baseColor`, `albedo` | property / uniform | vec4 tint |
+| `metallic`, `roughness`, `smoothness` | property | float |
+| `albedoMap` | `texture2d albedoMap` | path in aymat → `.aytex` or image |
+| `normalMap` | `texture2d normalMap` | optional |
+
+## 3. Path resolution
+
+```
+resolveAssetPath(basePath, refPath):
+  - refPath absolute → use as-is
+  - else join directory(basePath) with refPath, normalize
+  - optional global asset root (setAssetRoot) for bare refs
+```
+
+Examples:
+
+- mesh slot `materials/hero.aymat` relative to `meshes/hero.aymesh` directory
+- material texture `textures/albedo.aytex` relative to `materials/hero.aymat` directory
+- phoskia `shaders/pbr.phoskia` relative to aymat or asset root
+
+## 4. Mesh layout → renderer
+
+| MeshAttribute bit | VertexLayoutDesc |
+|-------------------|------------------|
+| Position | `VertexAttribute::Position`, 3× float |
+| Normal | `VertexAttribute::Normal`, 3× float |
+| UV | `VertexAttribute::TexCoord0`, 2× float |
+| Color | (R2b+ preset TBD) |
+| Tangent | (R2b+ preset TBD) |
+
+## 5. Index buffer policy (Scheme A)
+
+| Layer | Format |
+|-------|--------|
+| `.aymesh` storage | always `uint32_t` indices |
+| Bridge upload | if max index < 65536 → u16 IB; else u32 + `BGFX_BUFFER_INDEX32` |
+| Renderer API | `createMesh` (u16) + `createMesh32` (u32) |
+
+References: glTF UNSIGNED_SHORT/INT accessors; Unity 16/32-bit mesh indices; bgfx
+`BGFX_BUFFER_INDEX32`.
+
+## 6. Loading entry points
+
+| API | Use |
+|-----|-----|
+| `initializeLoaders()` | Register all runtime loaders (call once at startup) |
+| `ResourceRegistry::loadByPath(path)` | Debug, tests, loose files (no DB) |
+| `ResourceManager::load<T>(path)` | Game/editor; DB + pak when registered; **falls back** to loose file |
+
+## 7. Loose dependency sidecars
+
+Offline converters may emit `{assetStem}.aydep.json` next to an asset. At runtime,
+`ResourceManager` loads dependencies listed for matching `from` paths before the
+primary asset when using the loose-file path.
+
+## 8. Public include surface (Phase 3)
+
+Consumers should include `AYResource.h` and link `AYResource`. The following are **PUBLIC**:
+
+- `AYResource.h`, `interface/**`, `interface/assetsDefs/**`
+- `include/AYResource*.h`, `include/AYAssetPath.h`, `include/AYAsyncLoader.h`, `include/AYHotReloadWatcher.h`, `include/AYLooseDependency.h`
+
+The following are **PRIVATE** to the library and unit tests (not propagated to dependents):
+
+- `include/assetsImpl/**` — concrete asset classes (`Mesh`, `Material`, …)
+- `include/Loader/**`, `include/Converter/**` — loaders and offline converters
+
+Legacy `.ayshader` / `ShaderLoader` / `ShaderConverter` remain for offline tooling only; they are **not** registered in `initializeLoaders()`. Prefer **not** to `#include "assetsImpl/..."` from engine code; use `interface/assetsDefs/I*.h` instead.
+
+## 9. Legacy
+
+- `.ayshader` / `IShader`: offline or deprecated; not used in R2b render path.
+- `MaterialFile` multi-material bundles: use `materialCount` + concatenated material blobs.
