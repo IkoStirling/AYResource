@@ -254,7 +254,7 @@ void Texture::createCheckerboard(UInt32 width, UInt32 height, UInt32 checkSize) 
     UInt8* ptr = _imageData.data();
     for (UInt32 y = 0; y < height; y++) {
         for (UInt32 x = 0; x < width; x++) {
-            bool isLight = ((x / checkSize) + (y / checkSize) % 2 == 0);
+            bool isLight = (((x / checkSize) + (y / checkSize)) % 2 == 0);
             UInt32 i = y * width + x;
             if (isLight) {
                 ptr[i * 4 + 0] = 255;

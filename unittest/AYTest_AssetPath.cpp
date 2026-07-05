@@ -22,4 +22,12 @@ TEST_CASE(resolve_with_asset_root)
     setAssetRoot("");
 }
 
+TEST_CASE(resolve_windows_absolute_base)
+{
+    const std::string resolved = resolveAssetPath(
+        "C:/Temp/demo_cube.aymat", "demo_simple_lit.phoskia");
+    CHECK(resolved == "C:/Temp/demo_simple_lit.phoskia"
+          || resolved == "C:\\Temp\\demo_simple_lit.phoskia");
+}
+
 TEST_SUITE_END
