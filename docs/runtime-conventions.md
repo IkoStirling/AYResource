@@ -102,3 +102,12 @@ Legacy `.ayshader` / `ShaderLoader` / `ShaderConverter` remain for offline tooli
 
 - `.ayshader` / `IShader`: offline or deprecated; not used in R2b render path.
 - `MaterialFile` multi-material bundles: use `materialCount` + concatenated material blobs.
+
+## 10. Phase 0 deferred items
+
+See [`phase0-follow-ups.md`](phase0-follow-ups.md) for known issues intentionally
+left out of Phase 0's exit criteria:
+
+- **F-01**: `SubmeshData::vertexOffset` is dropped by `MeshConverter` (Phase 1 R-02 + AN-01 territory).
+- **F-02**: `IMesh::Submesh` has no `#pragma pack` — future 8-byte fields will silently pad SUBM chunks.
+- **F-03**: `_setForTest*` family is public on `Mesh` — should be demoted to a friend class or test-only namespace in Phase 1.
