@@ -208,4 +208,59 @@ TEST_CASE(load_ignores_unknown_fourcc)
     CHECK(loaded->getIndexCount() == mesh->getIndexCount());
 }
 
+// 多 submesh 的 SUBM chunk round-trip。
+// 关键不变量:
+//   1. N 个 Submesh 进、N 个出
+//   2. 每个 Submesh 字段 (indexOffset, indexCount, materialIndex) 完全一致
+//   3. Submesh 的二进制 layout 是 3 × UInt32 = 12 bytes（不带 padding），
+//      所以 chunk 大小 == N × sizeof(Submesh)
+TEST_CASE(submesh_multi_chunk_round_trip)
+{
+    auto mesh = std::make_shared<Mesh>();
+    mesh->createCube(1.0f);   // 24 verts, 36 indices, 1 submesh initially
+
+    // 构造 3 个非平凡 submesh，验证字段序列化正确
+    std::vector<IMesh::Submesh> expected(3);
+    expected[0] = {  0, 12, 0 };   // +X face triangles (12 idx)
+    expected[1] = { 12, 12, 1 };   // -X face (different material)
+    expected[2] = { 24, 12, 2 };   // +Y face
+    mesh->_setForTestSubmeshes(expected.data(), static_cast<UInt32>(expected.size()));
+
+    // 检查 IMesh 端 submesh 数组是原样
+    CHECK(mesh->getSubmeshCount() == 3u);
+    CHECK(mesh->getSubmeshes()[0].indexOffset == 0u);
+    CHECK(mesh->getSubmeshes()[1].materialIndex == 1u);
+
+    std::vector<UInt8> binary;
+    CHECK(mesh->saveToBinary(binary));
+
+    auto loaded = std::make_shared<Mesh>();
+    CHECK(loaded->loadFromBinary(binary.data(), binary.size()));
+
+    CHECK(loaded->getSubmeshCount() == 3u);
+    const IMesh::Submesh* rd = loaded->getSubmeshes();
+    CHECK(rd[0].indexOffset   == expected[0].indexOffset);
+    CHECK(rd[0].indexCount    == expected[0].indexCount);
+    CHECK(rd[0].materialIndex == expected[0].materialIndex);
+    CHECK(rd[1].indexOffset   == expected[1].indexOffset);
+    CHECK(rd[1].indexCount    == expected[1].indexCount);
+    CHECK(rd[1].materialIndex == expected[1].materialIndex);
+    CHECK(rd[2].indexOffset   == expected[2].indexOffset);
+    CHECK(rd[2].indexCount    == expected[2].indexCount);
+    CHECK(rd[2].materialIndex == expected[2].materialIndex);
+
+    // 验证 SUBM chunk 的二进制 size = N × sizeof(Submesh)
+    const auto* header = reinterpret_cast<const MeshBinaryHeader*>(binary.data());
+    const auto* dir = reinterpret_cast<const MeshChunkDirEntry*>(
+        binary.data() + header->chunkTableOffset);
+    UInt32 submSize = 0;
+    for (UInt32 i = 0; i < header->chunkCount; ++i) {
+        if (dir[i].fourCC == kFourCC('S','U','B','M')) {
+            submSize = dir[i].size;
+            break;
+        }
+    }
+    CHECK(submSize == static_cast<UInt32>(3 * sizeof(IMesh::Submesh)));
+}
+
 TEST_SUITE_END
