@@ -15,6 +15,7 @@ add_executable(${MODULE_NAME}
     AYTest_MaterialFile.cpp
     AYTest_AssetPath.cpp
     AYTest_MeshLoader.cpp
+    AYTest_MeshBinaryChunk.cpp
     #AYTest_FBXConverter.cpp
     AYTest_TextureConverter.cpp
     AYTest_MaterialConverter.cpp

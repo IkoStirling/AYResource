@@ -26,28 +26,33 @@ UInt8 MeshConverter::computeVertexStride(uint8_t attributeMask) {
     return stride;
 }
 
+// MeshConverter::saveToBinary — v1 chunked layout
+//
+// 复用 Mesh 类的 chunked 序列化：把 MeshData 数据装到一个临时 Mesh 实例上，
+// 调用 Mesh::saveToBinary，再将生成的 chunked 字节流写出。这样保证两个写入端
+// (Mesh::saveToBinary 和 MeshConverter) 共用同一份磁盘格式，未来修改一处即可。
 bool MeshConverter::saveToBinary(const MeshData& mesh, std::vector<UInt8>& outData) {
-    bool hasSkinWeights = (mesh.attributeMask & (1u << static_cast<uint8_t>(MeshAttribute::SkinWeight))) != 0;
+    const UInt32 vertexCount = static_cast<UInt32>(mesh.positions.size() / 3);
+    const UInt32 indexCount  = static_cast<UInt32>(mesh.indices.size());
 
-    UInt8 vertexStride = computeVertexStride(mesh.attributeMask);
-    UInt32 vertexCount = static_cast<UInt32>(mesh.positions.size() / 3);
-    UInt32 indexCount = static_cast<UInt32>(mesh.indices.size());
-    UInt32 vertexDataSize = vertexCount * vertexStride;
-    UInt32 indexDataSize = indexCount * sizeof(UInt32);
-    UInt32 materialSlotsSize = 0;
-    for (const auto& slot : mesh.materialSlots) {
-        materialSlotsSize += sizeof(UInt32) + static_cast<UInt32>(slot.size());
+    if (vertexCount == 0 || indexCount == 0) {
+        ayt::log::error("[MeshConverter] empty MeshData (verts=%u indices=%u)", vertexCount, indexCount);
+        return false;
     }
-    UInt32 submeshesSize = static_cast<UInt32>(mesh.submeshes.size()) * sizeof(UInt32) * 3;
-    UInt32 skinWeightsSize = hasSkinWeights ? vertexCount * sizeof(VertexSkinWeight) : 0;
 
-    size_t dataSize = vertexDataSize + indexDataSize + materialSlotsSize + submeshesSize + skinWeightsSize;
+    // 构造临时 Mesh
+    Mesh tmp;
+    tmp.setGuid(ayt::storage::Guid::computeFromData(nullptr, 0)); // 覆盖为 content-hash 后再 set
 
-    // 构建内容数据
-    std::vector<UInt8> contentData(dataSize);
-    UInt8* ptr = contentData.data();
+    // attribute mask
+    tmp._setForTestAttributeMask(mesh.attributeMask);
 
-    // 构建交错顶点数据
+    // 填充 interleaved vertex data
+    const UInt8 attrStride = computeVertexStride(mesh.attributeMask);
+    tmp._setForTestVertexLayout(mesh.attributeMask, vertexCount, attrStride);
+
+    // 拷贝 interleaved vertex stream
+    std::vector<Float32> interleaved(static_cast<size_t>(attrStride / sizeof(Float32)) * vertexCount, 0.0f);
     UInt8 posOffset = 0, normOffset = 0, uvOffset = 0, tanOffset = 0, colOffset = 0;
     UInt8 cur = 0;
     if (mesh.attributeMask & (1u << static_cast<uint8_t>(MeshAttribute::Position))) { posOffset = cur; cur += 12; }
@@ -55,110 +60,101 @@ bool MeshConverter::saveToBinary(const MeshData& mesh, std::vector<UInt8>& outDa
     if (mesh.attributeMask & (1u << static_cast<uint8_t>(MeshAttribute::UV))) { uvOffset = cur; cur += 8; }
     if (mesh.attributeMask & (1u << static_cast<uint8_t>(MeshAttribute::Tangent))) { tanOffset = cur; cur += 16; }
     if (mesh.attributeMask & (1u << static_cast<uint8_t>(MeshAttribute::Color))) { colOffset = cur; cur += 16; }
-
-    UInt8 floatStride = cur / sizeof(Float32);
-    std::vector<float> interleaved(floatStride * vertexCount, 0.0f);
-    for (UInt32 v = 0; v < vertexCount; v++) {
-        UInt32 base = v * floatStride;
+    for (UInt32 v = 0; v < vertexCount; ++v) {
+        const UInt32 base = v * (attrStride / sizeof(Float32));
         if (mesh.attributeMask & (1u << static_cast<uint8_t>(MeshAttribute::Position))) {
-            UInt32 idx = base + posOffset / sizeof(Float32);
+            const UInt32 idx = base + posOffset / sizeof(Float32);
             interleaved[idx + 0] = mesh.positions[v * 3 + 0];
             interleaved[idx + 1] = mesh.positions[v * 3 + 1];
             interleaved[idx + 2] = mesh.positions[v * 3 + 2];
         }
         if (mesh.attributeMask & (1u << static_cast<uint8_t>(MeshAttribute::Normal))) {
-            UInt32 idx = base + normOffset / sizeof(Float32);
+            const UInt32 idx = base + normOffset / sizeof(Float32);
             interleaved[idx + 0] = mesh.normals[v * 3 + 0];
             interleaved[idx + 1] = mesh.normals[v * 3 + 1];
             interleaved[idx + 2] = mesh.normals[v * 3 + 2];
         }
         if (mesh.attributeMask & (1u << static_cast<uint8_t>(MeshAttribute::UV))) {
-            UInt32 idx = base + uvOffset / sizeof(Float32);
+            const UInt32 idx = base + uvOffset / sizeof(Float32);
             interleaved[idx + 0] = mesh.uvs[v * 2 + 0];
             interleaved[idx + 1] = mesh.uvs[v * 2 + 1];
         }
         if (mesh.attributeMask & (1u << static_cast<uint8_t>(MeshAttribute::Tangent))) {
-            UInt32 idx = base + tanOffset / sizeof(Float32);
+            const UInt32 idx = base + tanOffset / sizeof(Float32);
             interleaved[idx + 0] = mesh.tangents[v * 4 + 0];
             interleaved[idx + 1] = mesh.tangents[v * 4 + 1];
             interleaved[idx + 2] = mesh.tangents[v * 4 + 2];
             interleaved[idx + 3] = mesh.tangents[v * 4 + 3];
         }
         if (mesh.attributeMask & (1u << static_cast<uint8_t>(MeshAttribute::Color))) {
-            UInt32 idx = base + colOffset / sizeof(Float32);
+            const UInt32 idx = base + colOffset / sizeof(Float32);
             interleaved[idx + 0] = mesh.colors[v * 4 + 0];
             interleaved[idx + 1] = mesh.colors[v * 4 + 1];
             interleaved[idx + 2] = mesh.colors[v * 4 + 2];
             interleaved[idx + 3] = mesh.colors[v * 4 + 3];
         }
     }
-    memcpy(ptr, interleaved.data(), vertexDataSize);
-    ptr += vertexDataSize;
+    tmp._setForTestVertexData(interleaved.data(), interleaved.size() * sizeof(Float32));
 
-    memcpy(ptr, mesh.indices.data(), indexDataSize);
-    ptr += indexDataSize;
+    // indices
+    tmp._setForTestIndices(mesh.indices.data(), indexCount);
 
+    // submeshes (SubmeshData → IMesh::Submesh, 字段对齐：startIndex → indexOffset)
+    std::vector<IMesh::Submesh> submeshVec(mesh.submeshes.size());
+    for (size_t i = 0; i < mesh.submeshes.size(); ++i) {
+        submeshVec[i].indexOffset   = mesh.submeshes[i].startIndex;
+        submeshVec[i].indexCount    = mesh.submeshes[i].indexCount;
+        submeshVec[i].materialIndex = mesh.submeshes[i].materialIndex;
+    }
+    tmp._setForTestSubmeshes(submeshVec.data(), static_cast<UInt32>(submeshVec.size()));
+
+    // material slots
     for (const auto& slot : mesh.materialSlots) {
-        UInt32 len = static_cast<UInt32>(slot.size());
-        memcpy(ptr, &len, sizeof(UInt32)); ptr += sizeof(UInt32);
-        memcpy(ptr, slot.data(), len); ptr += len;
+        tmp._addForTestMaterialSlot(slot);
     }
 
-    for (const auto& submesh : mesh.submeshes) {
-        const UInt32 indexOffset = submesh.startIndex;
-        const UInt32 indexCount = submesh.indexCount;
-        const UInt32 materialIndex = submesh.materialIndex;
-        memcpy(ptr, &indexOffset, sizeof(UInt32)); ptr += sizeof(UInt32);
-        memcpy(ptr, &indexCount, sizeof(UInt32)); ptr += sizeof(UInt32);
-        memcpy(ptr, &materialIndex, sizeof(UInt32)); ptr += sizeof(UInt32);
-    }
-
-    if (hasSkinWeights && !mesh.skinWeights.empty()) {
+    // skin weights: 8 floats per vertex = (4 indices as float, 4 weights)
+    const bool hasSkin = (mesh.attributeMask & (1u << static_cast<uint8_t>(MeshAttribute::SkinWeight))) != 0
+                        && !mesh.skinWeights.empty();
+    if (hasSkin) {
         std::vector<VertexSkinWeight> packed(vertexCount);
         for (UInt32 v = 0; v < vertexCount; ++v) {
             const float* src = &mesh.skinWeights[v * 8];
             for (int b = 0; b < 4; ++b) {
-                packed[v].boneIndex[b] = static_cast<UInt8>(src[b]);
+                packed[v].boneIndex[b]  = static_cast<UInt8>(src[b]);
                 packed[v].boneWeight[b] = src[b + 4];
             }
         }
-        memcpy(ptr, packed.data(), skinWeightsSize);
-        ptr += skinWeightsSize;
+        tmp._setForTestSkinWeights(packed);
     }
 
-    // 计算 GUID
-    lastGuid = ayt::storage::Guid::computeFromData(contentData.data(), contentData.size());
-
-    // 构建 header
-    MeshBinaryHeader header;
-    memset(&header, 0, sizeof(header));
-    header.magic = IMesh::MAGIC;
-    header.version = IMesh::VERSION;
-    header.guid = lastGuid;
-    header.attributeMask = mesh.attributeMask;
-    header.flags = 0;
-    header.vertexCount = vertexCount;
-    header.indexCount = indexCount;
-    header.submeshCount = static_cast<UInt32>(mesh.submeshes.size());
-    header.materialSlotCount = static_cast<UInt32>(mesh.materialSlots.size());
+    // bounds
     if (mesh.boundsMin[0] != mesh.boundsMax[0]) {
-        header.boundsCenter[0] = (mesh.boundsMin[0] + mesh.boundsMax[0]) * 0.5f;
-        header.boundsCenter[1] = (mesh.boundsMin[1] + mesh.boundsMax[1]) * 0.5f;
-        header.boundsCenter[2] = (mesh.boundsMin[2] + mesh.boundsMax[2]) * 0.5f;
-        header.boundsHalfExtent[0] = (mesh.boundsMax[0] - mesh.boundsMin[0]) * 0.5f;
-        header.boundsHalfExtent[1] = (mesh.boundsMax[1] - mesh.boundsMin[1]) * 0.5f;
-        header.boundsHalfExtent[2] = (mesh.boundsMax[2] - mesh.boundsMin[2]) * 0.5f;
-        header.hasBounds = 1;
-    } else {
-        header.hasBounds = 0;
+        ayt::math::FVector3 c{
+            (mesh.boundsMin[0] + mesh.boundsMax[0]) * 0.5f,
+            (mesh.boundsMin[1] + mesh.boundsMax[1]) * 0.5f,
+            (mesh.boundsMin[2] + mesh.boundsMax[2]) * 0.5f
+        };
+        ayt::math::FVector3 he{
+            (mesh.boundsMax[0] - mesh.boundsMin[0]) * 0.5f,
+            (mesh.boundsMax[1] - mesh.boundsMin[1]) * 0.5f,
+            (mesh.boundsMax[2] - mesh.boundsMin[2]) * 0.5f
+        };
+        tmp._setForTestBounds(c, he);
     }
-    header.hasSkinWeights = hasSkinWeights ? 1 : 0;
 
-    // 输出: header + contentData
-    outData.resize(sizeof(MeshBinaryHeader) + dataSize);
-    UInt8* outPtr = outData.data();
-    memcpy(outPtr, &header, sizeof(header)); outPtr += sizeof(header);
-    memcpy(outPtr, contentData.data(), dataSize);
+    // 调 Mesh 自带的 chunked saveToBinary
+    if (!tmp.saveToBinary(outData)) {
+        return false;
+    }
+
+    // 用 content 重新计算 GUID（覆盖 header.guid 字节）
+    lastGuid = ayt::storage::Guid::computeFromData(outData.data() + sizeof(MeshBinaryHeader),
+                                                    outData.size() - sizeof(MeshBinaryHeader));
+    MeshBinaryHeader header;
+    std::memcpy(&header, outData.data(), sizeof(header));
+    header.guid = lastGuid;
+    std::memcpy(outData.data(), &header, sizeof(header));
 
     return true;
 }

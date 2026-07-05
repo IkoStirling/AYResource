@@ -9,25 +9,63 @@
 namespace ayt::resource
 {
 
-// ===== Mesh 文件头 (二进制格式) =====
+// ===== Mesh 文件头 (二进制格式 v1-chunked) =====
+//
+// 文件 layout:
+//   [MeshBinaryHeader] [ChunkDirectory][N × 12 bytes] [ChunkData...]
+//
+// Chunk-directory entry 顺序可任意；load 时按 four-cc 查表加载。
+// 多通道 (pos/norm/uv/tangent/color) 不再直接拼成 interleaved bytes 写进文件，
+// 而是以独立 chunk 存放，由 loader 在内存中重新交错。
+//
+// Flags:
+//   bit 0: hasBounds
+//   bit 1: hasSkinWeights      (与 attributeMask 的 SkinWeight 位冗余；保留以便快速 refuse)
+//
+// attributeMask (8-bit) 与原版兼容——位 5 (SkinWeight) 与 chunk 'SKIN' 同时表示。
+//
 #pragma pack(push, 1)
 struct MeshBinaryHeader {
     UInt32 magic;              // 'AYMH' = 0x484D5941
-    UInt16 version;            // 版本 = 1
+    UInt16 version;            // 版本 = 1 (chunked v1)
+    UInt16 headerSize;         // = sizeof(MeshBinaryHeader)，loader 用它向前兼容
     FGuid guid;                // 资源唯一标识 (16 bytes)
+    UInt32 flags;              // bit 0: hasBounds, bit 1: hasSkinWeights
     UInt8  attributeMask;      // MeshAttribute 位掩码
-    UInt8  flags;               // 标志 (bit 0: hasSkinWeights)
+    UInt8  reserved;           // 对齐 / 未来用
+    UInt16 chunkCount;         // chunk 目录项数
+    UInt32 chunkTableOffset;   // chunk 表相对文件起始的偏移
     UInt32 vertexCount;        // 顶点数量
-    UInt32 indexCount;          // 索引数量
-    UInt32 submeshCount;        // Submesh 数量
-    UInt32 materialSlotCount;   // Material slot 数量
-    Float32 boundsCenter[3];    // 包围盒中心
+    UInt32 indexCount;         // 索引数量
+    UInt32 submeshCount;       // Submesh 数量
+    UInt32 materialSlotCount;  // Material slot 数量
+    Float32 boundsCenter[3];   // 包围盒中心
     Float32 boundsHalfExtent[3]; // 包围盒半尺寸
-    UInt8  hasBounds;          // 是否有预计算包围盒
-    UInt8  hasSkinWeights;      // 是否有骨骼权重
-    UInt8  padding[2];          // 对齐填充 (调整后共48 bytes)
-};
+};                            // 总 76 bytes (UInt32/16, FGuid=16, Float32×6=24, ...，无 padding)
 #pragma pack(pop)
+
+// ===== Mesh Chunk 目录项 (12 bytes) =====
+#pragma pack(push, 1)
+struct MeshChunkDirEntry {
+    UInt32 fourCC;     // 'POSN' / 'NORM' / 'UV0 ' / 'TANG' / 'COLR' / 'IDX ' / 'MATL' / 'SUBM' / 'BOUN' / 'SKIN'
+    UInt32 offset;     // 相对文件起始的字节偏移
+    UInt32 size;       // chunk 字节数
+};                      // 总 12 bytes
+#pragma pack(pop)
+
+// ===== Mesh Chunk four-cc 常量 (大写 ASCII / little-endian) =====
+namespace MeshChunkFourCC {
+    constexpr UInt32 POSN = 0x4E534F50; // 'POSN'
+    constexpr UInt32 NORM = 0x4D524F4E; // 'NORM'
+    constexpr UInt32 UV0  = 0x20305655; // 'UV0 ' (UV + space)
+    constexpr UInt32 TANG = 0x474E4154; // 'TANG'
+    constexpr UInt32 COLR = 0x524C4F43; // 'COLR'
+    constexpr UInt32 IDX  = 0x20584449; // 'IDX ' (IDX + space)
+    constexpr UInt32 MATL = 0x4C54414D; // 'MATL'
+    constexpr UInt32 SUBM = 0x4D425553; // 'SUBM'
+    constexpr UInt32 BOUN = 0x4E554F42; // 'BOUN'
+    constexpr UInt32 SKIN = 0x4E494B53; // 'SKIN'
+}
 
 // ===== Mesh — IMesh 实现类 =====
 class Mesh : public IMesh {
@@ -94,6 +132,35 @@ public:
     // ===== 创建测试数据 =====
     void createCube(Float32 size = 1.0f);
     void createSphere(Float32 radius = 1.0f, UInt32 segments = 16);
+
+    // Phase 0 RD-02: construct a skinned mesh in unit tests without going through
+    // the binary format. Sets _hasSkinWeights=true, sets the SkinWeight bit in the
+    // attribute mask, and resizes the interleaved vertex buffer to match the new
+    // stride (pos+norm+uv=32 + skin=24 = 56 bytes/vertex).
+    //
+    // Existing vertex attributes are preserved; the new skin-weights block is
+    // appended to the interleaved stream at offset 32 (i.e. immediately after the
+    // UV channel). This mirrors the layout that MeshConverter emits and keeps
+    // Phase 1's repack path happy.
+    //
+    // Production code should NOT call this — the converter sets skin weights via
+    // the binary load path. This exists only to let AYRenderer unit tests exercise
+    // the upload pipeline deterministically.
+    void debugSetSkinWeights(const std::vector<VertexSkinWeight>& weights);
+
+    // ===== Test-only setters for MeshConverter-style input =====
+    //
+    // These let MeshConverter::saveToBinary build a chunked .aymesh without
+    // going through FBX / glTF parse. They are deliberately not in IAYMesh —
+    // MeshConverter is the only legitimate caller outside unit tests.
+    void _setForTestAttributeMask(UInt8 mask) { _attributeMask = mask; }
+    void _setForTestVertexLayout(UInt8 mask, UInt32 vertexCount, UInt32 stride);
+    void _setForTestVertexData(const void* data, size_t sizeBytes);
+    void _setForTestIndices(const UInt32* indices, UInt32 count);
+    void _setForTestSubmeshes(const Submesh* submeshes, UInt32 count);
+    void _addForTestMaterialSlot(const std::string& slot);
+    void _setForTestSkinWeights(const std::vector<VertexSkinWeight>& weights);
+    void _setForTestBounds(const ayt::math::FVector3& center, const ayt::math::FVector3& halfExtent);
 
 private:
     void _computeBounds();
