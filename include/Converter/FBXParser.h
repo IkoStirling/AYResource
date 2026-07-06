@@ -10,6 +10,8 @@ struct aiScene;
 struct aiNode;
 struct aiMesh;
 struct aiMaterial;
+struct aiAnimation;
+struct aiNodeAnim;
 
 namespace ayt::resource
 {
@@ -52,6 +54,9 @@ private:
     void _collectSkeletonBones(const aiNode* node, int parentIndex,
                                const std::unordered_set<std::string>& boneNodeNames,
                                SkeletonData& skeleton);
+    // R-02: 把 aiNodeAnim 的 channel 转换为 3 条 KeyframeTrack (position/rotation/scale)
+    // valueType 由 property 推断 (rotation → Quaternion, 其它 → Vector3)
+    void _parseAnimations(const aiScene* scene);
     UInt8 _getMeshAttributeMask(const aiMesh* m);
 };
 

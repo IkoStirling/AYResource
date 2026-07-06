@@ -30,9 +30,10 @@ bool FBXParser::parse(const std::string& sourcePath) {
     if (_loadOption == IConverter::LoadOption::MeshOnly) {
         // MeshOnly: 最小后处理
     } else {
-        // Full: 保留所有数据
+        // Full: 保留所有数据 (R-02: 加 ValidateDataStructure 拦截坏骨骼/空轨道)
         flags |= aiProcess_GenSmoothNormals;
         flags |= aiProcess_CalcTangentSpace;
+        flags |= aiProcess_ValidateDataStructure;
     }
 
     const aiScene* scene = importer.ReadFile(_sourcePath, flags);
@@ -69,6 +70,11 @@ bool FBXParser::parse(const std::string& sourcePath) {
 
     // 解析所有 Skeleton
     _parseSkeletons(scene);
+
+    // R-02: 解析 Animations (MeshOnly 跳过;Full 时全量提取)
+    if (_loadOption != IConverter::LoadOption::MeshOnly) {
+        _parseAnimations(scene);
+    }
 
     return !_result->meshes.empty();
 }
@@ -800,6 +806,17 @@ void FBXParser::_collectSkeletonBones(const aiNode* node, int parentIndex,
             }
         }
 
+        // R-02: 从 aiNode::mTransformation 分解 TRS,作为本地 rest pose
+        // Assimp 的 Decompose 返回 void,对正常 TRS 输入总是写入值;
+        // 极端退化情况(如全 0 缩放)由调用方在后续步过滤,这里直接采信。
+        aiVector3D trans;
+        aiQuaternion rot;
+        aiVector3D scale;
+        node->mTransformation.Decompose(scale, rot, trans);
+        bone.localPosition = ayt::math::FVector3(trans.x, trans.y, trans.z);
+        bone.localRotation = ayt::math::FQuaternion(rot.x, rot.y, rot.z, rot.w);
+        bone.localScale    = ayt::math::FVector3(scale.x, scale.y, scale.z);
+
         thisIndex = static_cast<int>(skeleton.bones.size());
         skeleton.bones.push_back(std::move(bone));
     }
@@ -807,6 +824,97 @@ void FBXParser::_collectSkeletonBones(const aiNode* node, int parentIndex,
     // 递归处理子节点
     for (unsigned int i = 0; i < node->mNumChildren; i++) {
         _collectSkeletonBones(node->mChildren[i], thisIndex, boneNodeNames, skeleton);
+    }
+}
+
+// R-02: scene->mAnimations → IntermediateAsset::animations
+// 每个 aiAnimation = 一个 take,转换为一条 AnimationData。
+// 每个 aiNodeAnim channel 对应一个骨骼;按 position/rotation/scale 拆为 3 条 KeyframeTrack
+// (空 track 跳过;valueType 按 property 推断)。
+void FBXParser::_parseAnimations(const aiScene* scene) {
+    if (!scene) return;
+    if (scene->mNumAnimations == 0) return;
+
+    for (unsigned int ai = 0; ai < scene->mNumAnimations; ++ai) {
+        const aiAnimation* anim = scene->mAnimations[ai];
+        if (!anim) continue;
+
+        AnimationData data;
+        data.name = std::string(anim->mName.C_Str());
+        data.duration = static_cast<Float32>(anim->mDuration);
+        // mTicksPerSecond == 0 在 Assimp 契约里表示 "use scene default",fallback 30
+        data.ticksPerSecond = anim->mTicksPerSecond != 0.0
+            ? static_cast<Float32>(anim->mTicksPerSecond)
+            : 30.0f;
+
+        const double ticks = (anim->mTicksPerSecond != 0.0)
+            ? anim->mTicksPerSecond
+            : 30.0;
+
+        for (unsigned int ci = 0; ci < anim->mNumChannels; ++ci) {
+            const aiNodeAnim* chan = anim->mChannels[ci];
+            if (!chan) continue;
+
+            const std::string nodeName = chan->mNodeName.C_Str();
+
+            // ---- Position track (Vector3) ----
+            if (chan->mNumPositionKeys > 0) {
+                KeyframeTrack tr;
+                tr.targetNode = nodeName;
+                tr.property = "position";
+                tr.valueType = AnimTrackType::Vector3;
+                tr.times.reserve(chan->mNumPositionKeys);
+                tr.values.reserve(chan->mNumPositionKeys * 3);
+                for (unsigned int k = 0; k < chan->mNumPositionKeys; ++k) {
+                    tr.times.push_back(static_cast<Float32>(chan->mPositionKeys[k].mTime / ticks));
+                    tr.values.push_back(chan->mPositionKeys[k].mValue.x);
+                    tr.values.push_back(chan->mPositionKeys[k].mValue.y);
+                    tr.values.push_back(chan->mPositionKeys[k].mValue.z);
+                }
+                data.tracks.push_back(std::move(tr));
+            }
+
+            // ---- Rotation track (Quaternion) ----
+            if (chan->mNumRotationKeys > 0) {
+                KeyframeTrack tr;
+                tr.targetNode = nodeName;
+                tr.property = "rotation";
+                tr.valueType = AnimTrackType::Quaternion;
+                tr.times.reserve(chan->mNumRotationKeys);
+                tr.values.reserve(chan->mNumRotationKeys * 4);
+                for (unsigned int k = 0; k < chan->mNumRotationKeys; ++k) {
+                    tr.times.push_back(static_cast<Float32>(chan->mRotationKeys[k].mTime / ticks));
+                    // assimp quat: (x, y, z, w); 我们 IAnimation 期望 (x, y, z, w) 顺序,直接 memcpy
+                    tr.values.push_back(chan->mRotationKeys[k].mValue.x);
+                    tr.values.push_back(chan->mRotationKeys[k].mValue.y);
+                    tr.values.push_back(chan->mRotationKeys[k].mValue.z);
+                    tr.values.push_back(chan->mRotationKeys[k].mValue.w);
+                }
+                data.tracks.push_back(std::move(tr));
+            }
+
+            // ---- Scale track (Vector3) ----
+            if (chan->mNumScalingKeys > 0) {
+                KeyframeTrack tr;
+                tr.targetNode = nodeName;
+                tr.property = "scale";
+                tr.valueType = AnimTrackType::Vector3;
+                tr.times.reserve(chan->mNumScalingKeys);
+                tr.values.reserve(chan->mNumScalingKeys * 3);
+                for (unsigned int k = 0; k < chan->mNumScalingKeys; ++k) {
+                    tr.times.push_back(static_cast<Float32>(chan->mScalingKeys[k].mTime / ticks));
+                    tr.values.push_back(chan->mScalingKeys[k].mValue.x);
+                    tr.values.push_back(chan->mScalingKeys[k].mValue.y);
+                    tr.values.push_back(chan->mScalingKeys[k].mValue.z);
+                }
+                data.tracks.push_back(std::move(tr));
+            }
+        }
+
+        // 空 take (零轨道) 不加入 — 让 AnimationConverter 走"无 anim"分支
+        if (!data.tracks.empty()) {
+            _result->animations.push_back(std::move(data));
+        }
     }
 }
 
