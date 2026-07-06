@@ -27,6 +27,7 @@ void FBXConverter::setOutputDir(const std::string& dir) {
     materialConverter.setOutputDir(dir);
     textureConverter.setOutputDir(dir);
     skeletonConverter.setOutputDir(dir);
+    animationConverter.setOutputDir(dir);
 }
 
 ConversionResult FBXConverter::convert() {
@@ -146,6 +147,15 @@ ConversionResult FBXConverter::convert() {
         }
     }
 
+    // 5c. R-02: 转换 Animation (从 scene->mAnimations 提取)
+    if (!asset->animations.empty()) {
+        auto animResources = animationConverter.convertAll(asset->animations, baseName);
+        for (auto& res : animResources) {
+            result.resources.push_back(res);
+        }
+        ayt::log::info("[FBXConverter] Converted %zu animations", animResources.size());
+    }
+
     // 6. 生成依赖关系
     for (size_t i = 0; i < asset->meshes.size(); i++) {
         const auto& mesh = asset->meshes[i];
@@ -183,6 +193,54 @@ ConversionResult FBXConverter::convert() {
             dep.from = matPath;
             dep.to = "textures/" + texName + textureConverter.getUsageSuffix() + ".aytex";
             result.dependencies.push_back(dep);
+        }
+    }
+
+    // 7b. R-02: 生成 mesh → skeleton, skeleton → animation 依赖关系
+    // mesh 路径: meshes/{baseName}_{mesh.name|idx}.aymesh (与 MeshConverter 输出保持一致)
+    // skel 路径: skeletons/{baseName}_{Skeleton}.ayskel (与 SkeletonConverter 输出保持一致)
+    // anim 路径: animations/{baseName}_{take}.ayanm (与 AnimationConverter 输出保持一致)
+    // 注: 仅当有 skin weight 的 mesh 才需要 mesh→skel 边;Phase 0 的 attributeMask 已被 MeshConverter
+    // 用上,但 IntermediateAsset::MeshData 是否暴露 attributeMask?目前保守按"任一 mesh 都加边",
+    // runtime looseDependency 会按 from 路径匹配 — 多余的边只会被忽略,不会破坏加载。
+    if (!asset->skeletons.empty()) {
+        std::string skelPath = "skeletons/" + baseName + "_Skeleton.ayskel";
+
+        for (size_t mi = 0; mi < asset->meshes.size(); ++mi) {
+            const auto& mesh = asset->meshes[mi];
+            std::string meshName = mesh.name.empty() ? (baseName + "_" + std::to_string(mi)) : mesh.name;
+            std::string meshPath = "meshes/" + baseName + "_" + meshName + ".aymesh";
+
+            ConversionResult::Dependency dep;
+            dep.from = meshPath;
+            dep.to = skelPath;
+            result.dependencies.push_back(dep);
+        }
+
+        // skeleton → animation: 每个 anim 可以播放到任何 skeleton,加 (skel, anim) 边
+        // 实际运行 AN-01 时会按 anim 自带的 skeleton binding 字段匹配,这里只覆盖 loose-file path
+        if (!asset->animations.empty()) {
+            // 取所有 animation 的输出 path (从 animationConverter 已生成的 resources 里反向收集)
+            // 简化: 用 baseName + "_take_<index>" 重建
+            for (size_t ai = 0; ai < asset->animations.size(); ++ai) {
+                const auto& anim = asset->animations[ai];
+                std::string take = anim.name.empty() ? ("take_" + std::to_string(ai)) : anim.name;
+                // 简单 sanitize, 与 AnimationConverter::sanitizeTakeName 保持一致语义
+                for (char& c : take) {
+                    if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?'
+                        || c == '"' || c == '<' || c == '>' || c == '|' || c == ' ' || c == '\t') {
+                        c = '_';
+                    }
+                }
+                size_t lead = 0;
+                while (lead < take.size() && take[lead] == '.') ++lead;
+                if (lead > 0) take.erase(0, lead);
+
+                ConversionResult::Dependency dep;
+                dep.from = skelPath;
+                dep.to = "animations/" + baseName + "_" + take + ".ayanm";
+                result.dependencies.push_back(dep);
+            }
         }
     }
 

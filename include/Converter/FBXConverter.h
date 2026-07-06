@@ -5,6 +5,7 @@
 #include "Converter\MaterialConverter.h"
 #include "Converter\TextureConverter.h"
 #include "Converter\SkeletonConverter.h"
+#include "Converter\AnimationConverter.h"
 #include <memory>
 #include <string>
 
@@ -49,6 +50,8 @@ private:
     MaterialConverter materialConverter;
     TextureConverter textureConverter;
     SkeletonConverter skeletonConverter;
+    // R-02: 动画 converter — 之前未接线,FBXParser 现在产出 IntermediateAsset::animations
+    AnimationConverter animationConverter;
 };
 
 } // namespace ayt::resource
