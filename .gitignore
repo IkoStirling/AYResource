@@ -1,5 +1,7 @@
 *.md
 .vs
 test_output
+test_output_animconv
+test_output_static
 !docs/runtime-conventions.md
 !docs/phase0-follow-ups.md
