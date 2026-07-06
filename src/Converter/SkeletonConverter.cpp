@@ -49,19 +49,41 @@ std::vector<ConversionResult::ConvertedResource> SkeletonConverter::convertAll(
             bone.name = boneData.name;
             bone.parentIndex = boneData.parentIndex;
             bone.inverseBindMatrix = boneData.inverseBindMatrix;
+            // R-02: 透传本地 rest pose 字段
+            bone.localPosition = boneData.localPosition;
+            bone.localRotation = boneData.localRotation;
+            bone.localScale = boneData.localScale;
             skeleton.addBone(bone);
         }
 
-        // 计算 GUID（基于骨骼内容数据）
+        // 计算 GUID（基于骨骼内容数据 — 现在包含 local pose 三元组）
         std::vector<UInt8> boneContentData;
         for (const auto& bd : skelData.bones) {
             UInt32 nameLen = static_cast<UInt32>(bd.name.size());
-            boneContentData.resize(boneContentData.size() + sizeof(UInt32) + nameLen + sizeof(Int32) + sizeof(ayt::math::Float4x4));
-            UInt8* ptr = boneContentData.data() + boneContentData.size() - (sizeof(UInt32) + nameLen + sizeof(Int32) + sizeof(ayt::math::Float4x4));
+            const size_t perBone = sizeof(UInt32) + nameLen + sizeof(Int32)
+                                 + sizeof(ayt::math::Float4x4)
+                                 + sizeof(Float32) * 3   // localPosition
+                                 + sizeof(Float32) * 4   // localRotation
+                                 + sizeof(Float32) * 3;  // localScale
+            boneContentData.resize(boneContentData.size() + perBone);
+            UInt8* ptr = boneContentData.data() + boneContentData.size() - perBone;
             *reinterpret_cast<UInt32*>(ptr) = nameLen; ptr += sizeof(UInt32);
             memcpy(ptr, bd.name.data(), nameLen); ptr += nameLen;
             *reinterpret_cast<Int32*>(ptr) = bd.parentIndex; ptr += sizeof(Int32);
             *reinterpret_cast<ayt::math::Float4x4*>(ptr) = bd.inverseBindMatrix;
+            ptr += sizeof(ayt::math::Float4x4);
+            *reinterpret_cast<Float32*>(ptr +  0) = bd.localPosition.x;
+            *reinterpret_cast<Float32*>(ptr +  4) = bd.localPosition.y;
+            *reinterpret_cast<Float32*>(ptr +  8) = bd.localPosition.z;
+            ptr += sizeof(Float32) * 3;
+            *reinterpret_cast<Float32*>(ptr +  0) = bd.localRotation.x;
+            *reinterpret_cast<Float32*>(ptr +  4) = bd.localRotation.y;
+            *reinterpret_cast<Float32*>(ptr +  8) = bd.localRotation.z;
+            *reinterpret_cast<Float32*>(ptr + 12) = bd.localRotation.w;
+            ptr += sizeof(Float32) * 4;
+            *reinterpret_cast<Float32*>(ptr +  0) = bd.localScale.x;
+            *reinterpret_cast<Float32*>(ptr +  4) = bd.localScale.y;
+            *reinterpret_cast<Float32*>(ptr +  8) = bd.localScale.z;
         }
         lastGuid = ayt::storage::Guid::computeFromData(boneContentData.data(), boneContentData.size());
         skeleton.setGuid(lastGuid);

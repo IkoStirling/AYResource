@@ -2,6 +2,7 @@
 #include "AYAnimation.h"
 #include "AYFile.h"
 #include <AYGuid.h>
+#include <unordered_set>
 
 namespace ayt::resource
 {
@@ -23,6 +24,51 @@ static bool writeFile(const std::string& path, const void* data, size_t size) {
     return ayt::io::File::atomicWrite(path, data, size);
 }
 
+// R-02: take 名字清洗 — 与引擎其他资产的 <base>_<name>.<ext> 约定一致
+// 规则:
+//   1. strip 保留字符 '/\:*?"<>|'
+//   2. strip 前导 '.'
+//   3. 折叠空白为 '_'
+//   4. 空名 fallback 到 take_<index>
+//   5. 冲突重命名为 _dup2/_dup3/...
+static std::string sanitizeTakeName(const std::string& in) {
+    std::string s;
+    s.reserve(in.size());
+    for (char c : in) {
+        if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?'
+            || c == '"' || c == '<' || c == '>' || c == '|') {
+            s.push_back('_');
+        } else if (c == ' ' || c == '\t') {
+            s.push_back('_');
+        } else {
+            s.push_back(c);
+        }
+    }
+    // strip leading dots
+    size_t start = 0;
+    while (start < s.size() && s[start] == '.') ++start;
+    if (start > 0) s.erase(0, start);
+    return s;
+}
+
+static std::string makeUniquePath(const std::string& baseName,
+                                  const std::string& sanitizedTake,
+                                  size_t takeIndex,
+                                  std::unordered_set<std::string>& used) {
+    std::string take = sanitizedTake.empty()
+        ? ("take_" + std::to_string(takeIndex))
+        : sanitizedTake;
+    std::string candidate = baseName + "_" + take + ".ayanm";
+    std::string vp = "animations/" + candidate;
+    if (used.insert(vp).second) return vp;
+    // collision: _dup2 / _dup3 / ...
+    for (int n = 2; ; ++n) {
+        candidate = baseName + "_" + take + "_dup" + std::to_string(n) + ".ayanm";
+        vp = "animations/" + candidate;
+        if (used.insert(vp).second) return vp;
+    }
+}
+
 ConversionResult AnimationConverter::convert() {
     ConversionResult result;
     //简单 Converter 直接转换，复杂 Converter 由 Parser 驱动
@@ -34,14 +80,16 @@ std::vector<ConversionResult::ConvertedResource> AnimationConverter::convertAll(
     const std::string& baseName
 ) {
     std::vector<ConversionResult::ConvertedResource> results;
+    std::unordered_set<std::string> usedPaths;
 
     for (size_t i = 0; i < animations.size(); i++) {
         const auto& animData = animations[i];
-        std::string name = animData.name.empty()
-            ? baseName + "_" + std::to_string(i) + ".ayanm"
-            : baseName + "_" + animData.name + ".ayanm";
 
-        std::string virtualPath = "animations/" + name;
+        // R-02: 文件名 sanitize + dedupe (取消原来 <base>_<animName> 的硬编码)
+        std::string sanitized = sanitizeTakeName(animData.name);
+        std::string virtualPath = makeUniquePath(baseName, sanitized, i, usedPaths);
+        std::string fileStem = virtualPath.substr(std::string("animations/").size());
+        fileStem = fileStem.substr(0, fileStem.find_last_of('.'));
 
         // 创建 Animation 并填充数据
         Animation animation;
@@ -53,12 +101,15 @@ std::vector<ConversionResult::ConvertedResource> AnimationConverter::convertAll(
             AnimTrack track;
             track.nodeName = trackData.targetNode;
             track.property = trackData.property;
+            // R-02: 透传 valueType (Phase 0 之前始终默认 Vector3,导致 rotation 被当 Vector3 解释)
+            track.valueType = trackData.valueType;
             track.times = trackData.times;
             track.values = trackData.values;
             animation.addTrack(track);
         }
 
         // 构建动画内容数据并计算 GUID（不包含header）
+        // R-02: 把每条 track 的 valueType 也加进 GUID hash,确保类型变化能改 hash
         std::vector<UInt8> animContentData;
         UInt32 nameLen = static_cast<UInt32>(animData.name.size());
         animContentData.resize(sizeof(UInt32) + nameLen + sizeof(Float32) * 2); // name + duration + ticksPerSecond
@@ -71,12 +122,19 @@ std::vector<ConversionResult::ConvertedResource> AnimationConverter::convertAll(
         for (const auto& trackData : animData.tracks) {
             UInt32 nodeLen = static_cast<UInt32>(trackData.targetNode.size());
             UInt32 propLen = static_cast<UInt32>(trackData.property.size());
-            animContentData.resize(animContentData.size() + sizeof(UInt32) * 4 + nodeLen + propLen + trackData.times.size() * sizeof(Float32) + trackData.values.size() * sizeof(Float32));
-            ptr = animContentData.data() + animContentData.size() - (sizeof(UInt32) * 4 + nodeLen + propLen + trackData.times.size() * sizeof(Float32) + trackData.values.size() * sizeof(Float32));
+            const size_t perTrack = sizeof(UInt32) * 4 + nodeLen + propLen
+                                   + sizeof(UInt8) // valueType
+                                   + trackData.times.size() * sizeof(Float32)
+                                   + trackData.values.size() * sizeof(Float32);
+            animContentData.resize(animContentData.size() + perTrack);
+            ptr = animContentData.data() + animContentData.size() - perTrack;
             *reinterpret_cast<UInt32*>(ptr) = nodeLen; ptr += sizeof(UInt32);
             memcpy(ptr, trackData.targetNode.data(), nodeLen); ptr += nodeLen;
             *reinterpret_cast<UInt32*>(ptr) = propLen; ptr += sizeof(UInt32);
             memcpy(ptr, trackData.property.data(), propLen); ptr += propLen;
+            // R-02: valueType 入 hash
+            *reinterpret_cast<UInt8*>(ptr) = static_cast<UInt8>(trackData.valueType);
+            ptr += sizeof(UInt8);
             UInt32 timeCount = static_cast<UInt32>(trackData.times.size());
             *reinterpret_cast<UInt32*>(ptr) = timeCount; ptr += sizeof(UInt32);
             memcpy(ptr, trackData.times.data(), timeCount * sizeof(Float32)); ptr += timeCount * sizeof(Float32);

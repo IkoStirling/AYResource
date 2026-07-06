@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <AYMathTypes.h>
+#include "assetsDefs/IAYAnimation.h"  // for AnimTrackType
 
 namespace ayt::resource
 {
@@ -97,6 +98,7 @@ struct TextureData {
 struct KeyframeTrack {
     std::string targetNode; // bone/node name
     std::string property;  // "position", "rotation", "scale"
+    AnimTrackType valueType = AnimTrackType::Vector3; // R-02: 透传到 IAnimation::AnimTrack
     std::vector<float> times;
     std::vector<float> values;
 };
@@ -151,6 +153,11 @@ struct BoneData {
     std::string name;
     int parentIndex = -1;  // -1 表示根骨骼
     ayt::math::Float4x4 inverseBindMatrix;
+    // R-02: 节点本地 rest pose (FBX aiNode::mTransformation 分解)
+    // 当 FBX 文件中包含骨骼时,由 FBXParser 填充;若 FBX 不带骨骼,保持默认值。
+    FVector3 localPosition = FVector3(0, 0, 0);
+    FQuaternion localRotation = FQuaternion::identity();
+    FVector3 localScale = FVector3(1, 1, 1);
 };
 
 struct SkeletonData {
