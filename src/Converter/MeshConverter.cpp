@@ -100,11 +100,13 @@ bool MeshConverter::saveToBinary(const MeshData& mesh, std::vector<UInt8>& outDa
     tmp._setForTestIndices(mesh.indices.data(), indexCount);
 
     // submeshes (SubmeshData → IMesh::Submesh, 字段对齐：startIndex → indexOffset)
+    // F-01: vertexOffset 透传 (Phase 0 之前被丢弃, R-02 关闭)
     std::vector<IMesh::Submesh> submeshVec(mesh.submeshes.size());
     for (size_t i = 0; i < mesh.submeshes.size(); ++i) {
         submeshVec[i].indexOffset   = mesh.submeshes[i].startIndex;
         submeshVec[i].indexCount    = mesh.submeshes[i].indexCount;
         submeshVec[i].materialIndex = mesh.submeshes[i].materialIndex;
+        submeshVec[i].vertexOffset  = mesh.submeshes[i].vertexOffset;
     }
     tmp._setForTestSubmeshes(submeshVec.data(), static_cast<UInt32>(submeshVec.size()));
 

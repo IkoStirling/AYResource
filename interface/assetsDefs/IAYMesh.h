@@ -65,11 +65,19 @@ public:
     virtual AttributeInfo getAttributeInfo(MeshAttribute attr) const = 0;
 
     // ===== Submesh =====
+    // F-02 close: wrapped in `#pragma pack(push,1)` so the on-disk SUBM chunk
+    // has a deterministic size even if a future field needs 8-byte alignment.
+    // F-01 close: `vertexOffset` is appended (last field) so the v1 layout
+    // (indexOffset, indexCount, materialIndex) is preserved as a prefix.
+#pragma pack(push, 1)
     struct Submesh {
         UInt32 indexOffset;   // 在 indices 数组中的起始位置
         UInt32 indexCount;    // 索引数量
         UInt32 materialIndex; // 索引到 material slots
+        UInt32 vertexOffset = 0u; // F-01: 顶点起点(用于 skin-LOD / 按骨骼分区)
     };
+#pragma pack(pop)
+    static_assert(sizeof(Submesh) == 16, "IMesh::Submesh must be 16 bytes (4 × UInt32 packed)");
     virtual UInt32 getSubmeshCount() const = 0;
     virtual const Submesh* getSubmeshes() const = 0;
 
@@ -142,7 +150,11 @@ public:
     }
 
     // ===== Constants =====
-    static constexpr UInt32 VERSION = 1;  
+    // v1: Submesh 12 bytes (3 × UInt32)
+    // F-01 close: Submesh 16 bytes (4 × UInt32, vertexOffset added; pack(1) for layout safety).
+    // 仍是 VERSION = 1 — chunk size 由 dir[i].size 决定, reader 按 chunk 大小读取,
+    // 旧 reader 只要 chunk size = N × 12 才会错; 我们的 v1 实现只会写入 N × 16。
+    static constexpr UInt32 VERSION = 1;
     static constexpr UInt32 MAGIC = 0x484D5941; // 'AYMH' in little-endian
 };
 

@@ -211,25 +211,30 @@ TEST_CASE(load_ignores_unknown_fourcc)
 // 多 submesh 的 SUBM chunk round-trip。
 // 关键不变量:
 //   1. N 个 Submesh 进、N 个出
-//   2. 每个 Submesh 字段 (indexOffset, indexCount, materialIndex) 完全一致
-//   3. Submesh 的二进制 layout 是 3 × UInt32 = 12 bytes（不带 padding），
+//   2. 每个 Submesh 字段 (indexOffset, indexCount, materialIndex, vertexOffset) 完全一致
+//   3. Submesh 的二进制 layout 是 4 × UInt32 = 16 bytes (F-02 pack(1) 强制对齐)，
 //      所以 chunk 大小 == N × sizeof(Submesh)
+//   4. F-01: vertexOffset 字段被透传
 TEST_CASE(submesh_multi_chunk_round_trip)
 {
     auto mesh = std::make_shared<Mesh>();
     mesh->createCube(1.0f);   // 24 verts, 36 indices, 1 submesh initially
 
+    // F-02: sizeof(Submesh) 现在是 16 字节 (4 × UInt32, pack(1))
+    CHECK(sizeof(IMesh::Submesh) == 16u);
+
     // 构造 3 个非平凡 submesh，验证字段序列化正确
     std::vector<IMesh::Submesh> expected(3);
-    expected[0] = {  0, 12, 0 };   // +X face triangles (12 idx)
-    expected[1] = { 12, 12, 1 };   // -X face (different material)
-    expected[2] = { 24, 12, 2 };   // +Y face
+    expected[0] = {  0, 12, 0, 0u  };   // +X face triangles (12 idx)
+    expected[1] = { 12, 12, 1, 8u  };   // -X face (different material), vertexOffset=8
+    expected[2] = { 24, 12, 2, 16u };   // +Y face, vertexOffset=16
     mesh->_setForTestSubmeshes(expected.data(), static_cast<UInt32>(expected.size()));
 
     // 检查 IMesh 端 submesh 数组是原样
     CHECK(mesh->getSubmeshCount() == 3u);
     CHECK(mesh->getSubmeshes()[0].indexOffset == 0u);
     CHECK(mesh->getSubmeshes()[1].materialIndex == 1u);
+    CHECK(mesh->getSubmeshes()[2].vertexOffset == 16u);
 
     std::vector<UInt8> binary;
     CHECK(mesh->saveToBinary(binary));
@@ -242,14 +247,17 @@ TEST_CASE(submesh_multi_chunk_round_trip)
     CHECK(rd[0].indexOffset   == expected[0].indexOffset);
     CHECK(rd[0].indexCount    == expected[0].indexCount);
     CHECK(rd[0].materialIndex == expected[0].materialIndex);
+    CHECK(rd[0].vertexOffset  == expected[0].vertexOffset);
     CHECK(rd[1].indexOffset   == expected[1].indexOffset);
     CHECK(rd[1].indexCount    == expected[1].indexCount);
     CHECK(rd[1].materialIndex == expected[1].materialIndex);
+    CHECK(rd[1].vertexOffset  == expected[1].vertexOffset);
     CHECK(rd[2].indexOffset   == expected[2].indexOffset);
     CHECK(rd[2].indexCount    == expected[2].indexCount);
     CHECK(rd[2].materialIndex == expected[2].materialIndex);
+    CHECK(rd[2].vertexOffset  == expected[2].vertexOffset);
 
-    // 验证 SUBM chunk 的二进制 size = N × sizeof(Submesh)
+    // 验证 SUBM chunk 的二进制 size = N × sizeof(Submesh) = 3 × 16 = 48
     const auto* header = reinterpret_cast<const MeshBinaryHeader*>(binary.data());
     const auto* dir = reinterpret_cast<const MeshChunkDirEntry*>(
         binary.data() + header->chunkTableOffset);
