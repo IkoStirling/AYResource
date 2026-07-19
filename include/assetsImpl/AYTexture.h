@@ -1,7 +1,7 @@
 #pragma once
 #include "IAYTexture.h"
 #include "IAYResource.h"
-#include "AYMathTypes.h"
+#include "aymath/MathTypes.h"
 #include <memory>
 #include <vector>
 #include <cstdint>

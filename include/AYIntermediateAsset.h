@@ -3,7 +3,7 @@
 #include <vector>
 #include <cstdint>
 #include <memory>
-#include <AYMathTypes.h>
+#include <aymath/MathTypes.h>
 #include "assetsDefs/IAYAnimation.h"  // for AnimTrackType
 
 namespace ayt::resource

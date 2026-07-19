@@ -1,8 +1,8 @@
 #include "Converter\SkeletonConverter.h"
 #include "assetsImpl/AYSkeleton.h"
 #include "IAYSkeleton.h"
-#include "AYFile.h"
-#include <AYGuid.h>
+#include "ayio/File.h"
+#include <aystorage/Guid.h>
 #include <vector>
 
 namespace ayt::resource

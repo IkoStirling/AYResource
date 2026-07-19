@@ -1,6 +1,6 @@
 #pragma once
 #include "IAYPhysics.h"
-#include <AYMathTypes.h>
+#include <aymath/MathTypes.h>
 #include <string>
 #include <vector>
 #include <array>

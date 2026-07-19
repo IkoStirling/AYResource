@@ -1,7 +1,7 @@
 #include "Loader\AudioLoader.h"
 #include "IAYResourceLoader.h"
-#include <AYMathTypes.h>
-#include <AYFile.h>
+#include <aymath/MathTypes.h>
+#include <ayio/File.h>
 #include <cstring>
 #include <cstdio>
 

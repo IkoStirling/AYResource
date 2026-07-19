@@ -1,6 +1,6 @@
 #include "assetsImpl/AYSkeleton.h"
-#include <AYMathTypes.h>
-#include "AYMathUtils.h"
+#include <aymath/MathTypes.h>
+#include "aymath/MathUtils.h"
 #include "AYIO.h"
 #include <AYLog.h>
 #include <cstring>

@@ -1,8 +1,8 @@
 #include "Loader\TextureLoader.h"
 #include "IAYResourceLoader.h"
-#include "AYMathTypes.h"
-#include "AYMathUtils.h"
-#include "AYFile.h"
+#include "aymath/MathTypes.h"
+#include "aymath/MathUtils.h"
+#include "ayio/File.h"
 #define NOMINMAX
 #include <cstring>
 #include <cstdio>

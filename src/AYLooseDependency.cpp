@@ -3,8 +3,8 @@
 #include "AYAssetPath.h"
 #include "IAYConverter.h"
 
-#include <AYFile.h>
-#include <AYPath.h>
+#include <ayio/File.h>
+#include <ayio/Path.h>
 
 namespace ayt::resource
 {

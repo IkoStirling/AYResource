@@ -2,9 +2,9 @@
 #include "AYResourceRegistry.h"
 #include "AYResourceBootstrap.h"
 #include "AYLooseDependency.h"
-#include "IAYStorageDatabase.h"
-#include "IAYPackageReader.h"
-#include <AYPath.h>
+#include "aystorage/IStorageDatabase.h"
+#include "aystorage/IPackageReader.h"
+#include <ayio/Path.h>
 #include <cassert>
 
 namespace ayt::resource

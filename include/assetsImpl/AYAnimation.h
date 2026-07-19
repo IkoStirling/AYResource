@@ -1,6 +1,6 @@
 #pragma once
 #include "IAYAnimation.h"
-#include <AYMathTypes.h>
+#include <aymath/MathTypes.h>
 #include <memory>
 #include <string>
 #include <vector>

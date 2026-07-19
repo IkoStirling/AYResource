@@ -1,6 +1,6 @@
 #include "AYFontAsset.h"
-#include <AYMathTypes.h>
-#include <AYFile.h>
+#include <aymath/MathTypes.h>
+#include <ayio/File.h>
 #include <cstring>
 
 namespace ayt::resource

@@ -1,8 +1,8 @@
 #include "Converter\MaterialConverter.h"
 #include "Loader\MaterialFile.h"
-#include "AYFile.h"
+#include "ayio/File.h"
 #include <AYSerializer.h>
-#include <AYGuid.h>
+#include <aystorage/Guid.h>
 
 namespace ayt::resource
 {

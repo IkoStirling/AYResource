@@ -1,6 +1,6 @@
 #include "AYAssetPath.h"
 
-#include <AYPath.h>
+#include <ayio/Path.h>
 
 namespace ayt::resource
 {

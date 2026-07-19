@@ -1,7 +1,7 @@
 #pragma once
 #include "IAYScript.h"
 #include "IAYResourceLoader.h"
-#include <AYMathTypes.h>
+#include <aymath/MathTypes.h>
 #include <memory>
 #include <string>
 #include <vector>

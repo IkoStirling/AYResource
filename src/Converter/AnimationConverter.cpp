@@ -1,7 +1,7 @@
 #include "Converter\AnimationConverter.h"
 #include "AYAnimation.h"
-#include "AYFile.h"
-#include <AYGuid.h>
+#include "ayio/File.h"
+#include <aystorage/Guid.h>
 #include <unordered_set>
 
 namespace ayt::resource

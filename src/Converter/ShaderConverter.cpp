@@ -1,7 +1,7 @@
 #include "Converter/ShaderConverter.h"
 #include "assetsImpl/AYShader.h"
-#include <AYFile.h>
-#include <AYPath.h>
+#include <ayio/File.h>
+#include <ayio/Path.h>
 #include <cstring>
 
 namespace ayt::resource

@@ -1,9 +1,9 @@
 #include "Loader\MeshLoader.h"
 #include "IAYResourceLoader.h"
 #include "AYMesh.h"
-#include <AYMathTypes.h>
-#include <AYMathUtils.h>
-#include <AYFile.h>
+#include <aymath/MathTypes.h>
+#include <aymath/MathUtils.h>
+#include <ayio/File.h>
 #include <cstring>
 #include <cstdio>
 

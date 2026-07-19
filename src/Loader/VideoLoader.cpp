@@ -1,6 +1,6 @@
 #include "Loader\VideoLoader.h"
 #include "IAYResourceLoader.h"
-#include <AYFile.h>
+#include <ayio/File.h>
 #include <cstring>
 
 namespace ayt::resource

@@ -1,7 +1,7 @@
 #include "AYMesh.h"
 #include "AYIO.h"
-#include "AYMathTypes.h"
-#include "AYMathUtils.h"
+#include "aymath/MathTypes.h"
+#include "aymath/MathUtils.h"
 #include <AYLog.h>
 
 namespace ayt::resource

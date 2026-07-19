@@ -1,7 +1,7 @@
 #pragma once
 #include "IAYResource.h"
 #include "AYIntermediateAsset.h"
-#include "AYMathTypes.h"
+#include "aymath/MathTypes.h"
 #include <cstdint>
 
 namespace ayt::resource

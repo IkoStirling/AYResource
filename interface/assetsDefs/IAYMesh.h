@@ -1,6 +1,6 @@
 #pragma once
 #include "IAYResource.h"
-#include "AYMathTypes.h"
+#include "aymath/MathTypes.h"
 #include <memory>
 #include <vector>
 

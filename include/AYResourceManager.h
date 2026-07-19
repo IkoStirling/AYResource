@@ -8,8 +8,8 @@
 #include "AYResourceHandle.h"
 #include "AYResourceCache.h"
 #include "AYResourceRegistry.h"
-#include "IAYStorageDatabase.h"
-#include "IAYPackageReader.h"
+#include "aystorage/IStorageDatabase.h"
+#include "aystorage/IPackageReader.h"
 #include "AYAsyncLoader.h"
 #include "AYHotReloadWatcher.h"
 
