@@ -3,10 +3,10 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <functional>
-#include <memory>
 #include <chrono>
+#include <optional>
 
-namespace ayt::time { class ITimePoint; }
+#include "aytime/TimePoint.h"
 
 namespace ayt::resource
 {
@@ -40,7 +40,12 @@ public:
 private:
     struct WatchedFile {
         std::string path;
-        std::unique_ptr<ayt::time::ITimePoint> lastModified;
+        // AYTime v1.1 (2026-07-20): value-type TimePoint via std::optional;
+        // nullopt means "file did not exist when watch() was called" or
+        // "the platform couldn't read mtime". The legacy code stored
+        // unique_ptr<ITimePoint> here, which forced a heap alloc per file
+        // and made the equality comparison awkward.
+        std::optional<ayt::time::TimePoint> lastModified;
         bool existed = false;
     };
 

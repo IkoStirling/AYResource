@@ -3,7 +3,7 @@
 #include "AYTest.h"
 #include "AYHotReloadWatcher.h"
 #include "ayio/File.h"
-#include "IAYStorageDatabase.h"
+#include "aystorage/IStorageDatabase.h"
 #include <fstream>
 #include <thread>
 #include <chrono>
@@ -380,7 +380,7 @@ TEST_SUITE(HotReloadWatcherTests)
         }
 
         auto tp = ayt::io::File::lastModifiedTimePoint(tempPath);
-        CHECK(tp != nullptr);
+        CHECK(tp.has_value());
         CHECK(tp->toUnixSeconds() > 0);
 
         std::remove(tempPath.c_str());

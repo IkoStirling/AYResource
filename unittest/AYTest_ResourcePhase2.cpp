@@ -2,7 +2,7 @@
 #include "AYMockResource.h"
 #include "AYTest.h"
 #include "AYLooseDependency.h"
-#include "IAYStorageDatabase.h"
+#include "aystorage/IStorageDatabase.h"
 
 #include <fstream>
 #include <filesystem>

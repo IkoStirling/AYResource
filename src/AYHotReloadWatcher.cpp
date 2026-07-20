@@ -18,7 +18,7 @@ void HotReloadWatcher::watch(const std::string& filepath) {
     WatchedFile wf;
     wf.path = filepath;
     wf.lastModified = ayt::io::File::lastModifiedTimePoint(filepath);
-    wf.existed = wf.lastModified != nullptr;
+    wf.existed = wf.lastModified.has_value();
 
     watchedFiles.emplace(filepath, std::move(wf));
 }
@@ -61,9 +61,10 @@ size_t HotReloadWatcher::watchCount() const {
 
 void HotReloadWatcher::checkForChanges() {
     for (auto& [path, wf] : watchedFiles) {
-        std::unique_ptr<ayt::time::ITimePoint> currentMod(ayt::io::File::lastModifiedTimePoint(path));
+        std::optional<ayt::time::TimePoint> currentMod =
+            ayt::io::File::lastModifiedTimePoint(path);
         if (wf.lastModified && currentMod && *wf.lastModified != *currentMod) {
-            wf.lastModified = std::move(currentMod);
+            wf.lastModified = currentMod;
             pendingReload.insert(path);
             if (onFileChanged) {
                 onFileChanged(path);
