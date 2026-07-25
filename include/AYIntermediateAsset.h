@@ -99,6 +99,9 @@ struct KeyframeTrack {
     std::string targetNode; // bone/node name
     std::string property;  // "position", "rotation", "scale"
     AnimTrackType valueType = AnimTrackType::Vector3; // R-02: 透传到 IAnimation::AnimTrack
+    // Phase 1.2 (P1.2): per-track blend mode passthrough. Default = Override;
+    // an FBX take authored as additive marks this in the converter.
+    AnimBlendMode blendMode = AnimBlendMode::Override;
     std::vector<float> times;
     std::vector<float> values;
 };

@@ -40,6 +40,12 @@ public:
     // ===== Legacy =====
     const Float32* getTrackValues(UInt32 trackIndex) const override;
 
+    // ===== Per-track blend mode (Phase 1.2 — P1.2 Layer 1 MVP) =====
+    // Returns the AnimTrack.blendMode field of the resolved track, or
+    // AnimBlendMode::Override on out-of-range indices so legacy code paths
+    // and v2 binary loads behave bit-identically to pre-P1.2.
+    AnimBlendMode getTrackBlendMode(UInt32 trackIndex) const override;
+
     // ===== Anim Notify markers (Phase 1.5) — IAnimation overrides =====
     UInt32      getNotifyCount()                     const override;
     const char* getNotifyName(UInt32 notifyIndex)    const override;

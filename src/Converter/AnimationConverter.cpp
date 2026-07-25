@@ -103,6 +103,10 @@ std::vector<ConversionResult::ConvertedResource> AnimationConverter::convertAll(
             track.property = trackData.property;
             // R-02: 透传 valueType (Phase 0 之前始终默认 Vector3,导致 rotation 被当 Vector3 解释)
             track.valueType = trackData.valueType;
+            // Phase 1.2 (P1.2): pipe the per-track blend mode too. Default
+            // is Override; intermediate assets authored as additive mark this
+            // explicitly so the writer emits the v3 byte.
+            track.blendMode = trackData.blendMode;
             track.times = trackData.times;
             track.values = trackData.values;
             animation.addTrack(track);
@@ -136,6 +140,7 @@ std::vector<ConversionResult::ConvertedResource> AnimationConverter::convertAll(
             UInt32 propLen = static_cast<UInt32>(trackData.property.size());
             const size_t perTrack = sizeof(UInt32) * 4 + nodeLen + propLen
                                    + sizeof(UInt8) // valueType
+                                   + sizeof(UInt8) // blendMode (Phase 1.2)
                                    + trackData.times.size() * sizeof(Float32)
                                    + trackData.values.size() * sizeof(Float32);
             animContentData.resize(animContentData.size() + perTrack);
@@ -146,6 +151,10 @@ std::vector<ConversionResult::ConvertedResource> AnimationConverter::convertAll(
             memcpy(ptr, trackData.property.data(), propLen); ptr += propLen;
             // R-02: valueType 入 hash
             *reinterpret_cast<UInt8*>(ptr) = static_cast<UInt8>(trackData.valueType);
+            ptr += sizeof(UInt8);
+            // Phase 1.2 (P1.2): blendMode byte also hashed so flipping
+            // a track's blend flag forces a re-import (mirrors saveToBinary).
+            *reinterpret_cast<UInt8*>(ptr) = static_cast<UInt8>(trackData.blendMode);
             ptr += sizeof(UInt8);
             UInt32 timeCount = static_cast<UInt32>(trackData.times.size());
             *reinterpret_cast<UInt32*>(ptr) = timeCount; ptr += sizeof(UInt32);

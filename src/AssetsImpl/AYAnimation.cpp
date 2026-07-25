@@ -40,6 +40,11 @@ size_t Animation::sizeInBytes() const {
         size += sizeof(UInt32) + track.nodeName.size();
         size += sizeof(UInt32) + track.property.size();
         size += sizeof(UInt8); // valueType
+        // Phase 1.2 — per-track blendMode byte (v3 only on disk; sizeInBytes()
+        // is paired with the v3 writer that always emits this byte). Bytes
+        // here MUST match saveToBinary() exactly or the written-bytes guard
+        // at the bottom of saveToBinary trips and outData is discarded.
+        size += sizeof(UInt8); // blendMode
         size += sizeof(UInt32) + track.times.size() * sizeof(Float32);
         size += sizeof(UInt32) + track.values.size() * sizeof(Float32);
     }
@@ -66,6 +71,15 @@ const char* Animation::getTrackProperty(UInt32 trackIndex) const {
 AnimTrackType Animation::getTrackType(UInt32 trackIndex) const {
     if (trackIndex >= _tracks.size()) return AnimTrackType::Vector3;
     return _tracks[trackIndex].valueType;
+}
+
+// Phase 1.2 — per-track blend mode getter. Out-of-range returns Override
+// so v2-style callers (and any accidentally out-of-range trackIndex) see the
+// safe default — bit-identical to pre-P1.2 for any path that wouldn't have
+// written an Additive track.
+AnimBlendMode Animation::getTrackBlendMode(UInt32 trackIndex) const {
+    if (trackIndex >= _tracks.size()) return AnimBlendMode::Override;
+    return _tracks[trackIndex].blendMode;
 }
 
 UInt32 Animation::getTrackKeyframeCount(UInt32 trackIndex) const {
@@ -237,6 +251,24 @@ bool Animation::loadFromBinary(const void* data, size_t size) {
         ptr += sizeof(UInt8);
         remaining -= sizeof(UInt8);
 
+        // Phase 1.2 — optional blendMode byte. v3 binaries always carry it
+        // (after valueType, before timeCount). v1/v2 binaries have no byte
+        // at this slot, so the byte is skipped on read and the field stays
+        // at its default value (Override == 0) — bit-identical to pre-P1.2.
+        if (version >= 3 && version <= IAnimation::VERSION) {
+            if (!need(sizeof(UInt8))) return false;
+            UInt8 bm = 0;
+            memcpy(&bm, ptr, sizeof(UInt8));
+            ptr += sizeof(UInt8);
+            remaining -= sizeof(UInt8);
+            // Clamp to known modes; unknown bytes coerce to Override so a
+            // forward-compatible file (v4+) still loads cleanly.
+            _tracks[i].blendMode = (bm == 1)
+                                      ? AnimBlendMode::Additive
+                                      : AnimBlendMode::Override;
+        }
+        // else: v1/v2 — no byte, blendMode stays at its struct default.
+
         // times
         if (!need(sizeof(UInt32))) return false;
         UInt32 timeCount;
@@ -361,6 +393,12 @@ bool Animation::saveToBinary(std::vector<UInt8>& outData) const {
 
         // valueType
         memcpy(ptr, &track.valueType, sizeof(UInt8));
+        ptr += sizeof(UInt8);
+
+        // Phase 1.2 — per-track blendMode byte. v3 always emits it (sizeInBytes()
+        // accounts for it). Earlier versions of this writer did not emit the byte.
+        UInt8 bm = (track.blendMode == AnimBlendMode::Additive) ? 1u : 0u;
+        memcpy(ptr, &bm, sizeof(UInt8));
         ptr += sizeof(UInt8);
 
         // times

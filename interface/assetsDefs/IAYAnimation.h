@@ -13,11 +13,44 @@ enum class AnimTrackType : UInt8 {
     Float,       // 单浮点数: 1 float
 };
 
+// ===== 动画轨道混合模式 (Phase 1.2 — P1.2 Layer 1 MVP) =====
+//
+// Industrial-grade equivalent: Unreal `UAnimSequence::bAdditive`,
+// Unity `AnimationLayer.Additive`, Godot 4 AnimationTree mix node.
+// v3 binary adds one byte per AnimTrack (between valueType and timeCount).
+//
+//   Override — same as v2: the sampled value REPLACES the bone's local TRS.
+//              Default for any pre-v3 byte stream; default-initialized
+//              AnimTrack structs get this value.
+//
+//   Additive — the sampled value is applied AS A DELTA on top of the bone's
+//              base local TRS at evaluate-time. Math:
+//                position: _localPos[k] += sample[k] * additiveWeight
+//                rotation: result = (base * sample.pow(additiveWeight)).normalize()
+//                          (weight==0 → identity early-return, base unchanged)
+//                scale:    _localScl[k] *= (1.0f + sample[k] * additiveWeight)
+//              additiveWeight is a per-player scalar 0..1 (saturated on write).
+//              Float tracks always go to the host sink regardless of blend mode
+//              (the additive concept is local-TRS only).
+//
+//   Assumption: an additive clip is AUTHORED with ref pose at t=0 — sample at
+//   t=0 should be delta-zero relative to the bound skeleton rest pose. Document
+//   in design.md §4.6. Authored-anywhere-at-t=0 additive clips drift; a
+//   ref-pose capture path is deferred (P2.x).
+enum class AnimBlendMode : UInt8 {
+    Override = 0,  // default; bit-identical to v2 behavior
+    Additive = 1,
+};
+
 // ===== 动画轨道数据 =====
 struct AnimTrack {
     std::string nodeName;        // 目标节点/骨骼名称
     std::string property;        // 属性: "position", "rotation", "scale"
     AnimTrackType valueType;     // 值类型
+    // Phase 1.2 (P1.2): per-track blend mode. Default-init = Override = v2
+    // behavior. The byte is written by IAnimation::VERSION=3 saveToBinary;
+    // v1/v2 loaders ignore it (no byte exists at this slot in their format).
+    AnimBlendMode blendMode = AnimBlendMode::Override;
 
     std::vector<Float32> times;  // 时间点
     std::vector<Float32> values; // 值 (根据 valueType 解释)
@@ -70,6 +103,15 @@ public:
     // ===== Legacy raw values (兼容) =====
     virtual const Float32* getTrackValues(UInt32 trackIndex) const = 0;
 
+    // ===== Per-track blend mode (Phase 1.2 — P1.2 Layer 1 MVP) =====
+    //
+    // Override (0) = the same as v2: the sampled value REPLACES the bone's
+    //               local TRS. Out-of-range trackIndex safely returns Override.
+    // Additive (1) = the sampled value is a delta; AnimationPlayer applies
+    //               it on top of the bone's base local TRS weighted by the
+    //               player's additiveWeight scalar (0..1).
+    virtual AnimBlendMode getTrackBlendMode(UInt32 trackIndex) const = 0;
+
     // ===== Anim Notify markers (Phase 1.5) =====
     //
     // Per-clip array of named, time-keyed events. The list is sorted
@@ -82,9 +124,16 @@ public:
     // ===== Constants =====
     // v1 (2026-06 baseline): tracks only.
     // v2 (2026-07-26, Phase 1.5): tracks + notify markers (this file).
-    // Backward compat: v1 binaries skip the notify block on load; getNotifyCount()
-    // returns 0; markers are simply absent.
-    static constexpr UInt32 VERSION = 2;
+    // v3 (2026-07-26, Phase 1.2 P1.2): tracks + per-track blendMode byte
+    //     + notify markers. Every track record carries a 1-byte blendMode
+    //     slot inserted between valueType and the timeCount UInt32.
+    // Backward compat:
+    //   v1 binaries skip the notify block (getNotifyCount()==0) AND skip
+    //       every track's blendMode byte (no byte exists at that slot).
+    //   v2 binaries read the notify block but skip the blendMode byte
+    //       (no byte in the v2 format).
+    //   v3 binaries read both blocks.
+    static constexpr UInt32 VERSION = 3;
     static constexpr UInt32 MAGIC = 0x4E4D5941; // 'AYNM'
 };
 

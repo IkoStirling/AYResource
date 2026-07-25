@@ -166,6 +166,87 @@ TEST_SUITE(AnimationLoaderTests)
         CHECK(strcmp(loaded.getName(), "LegacyAnim") == 0);
     }
 
+    // Phase 1.2 (P1.2): v2 backward-compat — a v2 .ayanm binary (tracks
+    // followed by an optional notify block, but NO per-track blendMode byte
+    // in the slot P1.2 inserts) must still load successfully. Every track's
+    // blendMode field must default back to AnimBlendMode::Override (==0)
+    // because the v2 file format does not carry the byte.
+    //
+    // We hand-craft a v2 binary with one track that, in v3 land, would
+    // carry a blendMode byte. The v3 loader's `if (version >= 3)` gate must
+    // skip the read for v2 files and leave the field at its struct default.
+    TEST_CASE(LoadFromBinary_AcceptsLegacyV2File_AllTracksOverride) {
+        const UInt32 kMagic   = 0x4E4D5941u;
+        const UInt32 kVersion = 2u;
+        const std::string kName  = "LegacyV2Additive";
+        const std::string kBone  = "Root";
+        const std::string kProp  = "position";
+        const Float32 kDur = 2.0f;
+        const Float32 kTps = 30.0f;
+        const UInt32 kTrackCount = 1u;
+
+        // v2 .ayanm format: header + name + dur + tps + track block (no
+        // blendMode byte between valueType and timeCount) + notify count=0.
+        // We deliberately do NOT append a blendMode byte here so the v3
+        // loadFromBinary must prove it can skip reading it on version==2.
+        std::vector<UInt8> v2Binary;
+        auto append = [&v2Binary](const void* src, size_t n) {
+            const UInt8* p = static_cast<const UInt8*>(src);
+            v2Binary.insert(v2Binary.end(), p, p + n);
+        };
+
+        // header
+        append(&kMagic, sizeof(kMagic));
+        append(&kVersion, sizeof(kVersion));
+
+        // name
+        UInt32 nameLen = static_cast<UInt32>(kName.size());
+        append(&nameLen, sizeof(nameLen));
+        append(kName.data(), nameLen);
+
+        // dur + tps
+        append(&kDur, sizeof(kDur));
+        append(&kTps, sizeof(kTps));
+
+        // tracks
+        append(&kTrackCount, sizeof(kTrackCount));
+        // track 0: bone="Root", property="position", valueType=Vector3(0),
+        //          1 keyframe (t=0, v=(1,2,3)) — smallest possible payload.
+        UInt32 boneLen = static_cast<UInt32>(kBone.size());
+        append(&boneLen, sizeof(boneLen));
+        append(kBone.data(), boneLen);
+        UInt32 propLen = static_cast<UInt32>(kProp.size());
+        append(&propLen, sizeof(propLen));
+        append(kProp.data(), propLen);
+        UInt8 valueType = 0;  // AnimTrackType::Vector3
+        append(&valueType, sizeof(valueType));
+        // [intentionally no blendMode byte here — v2 didn't have it]
+        UInt32 timeCount = 1u;
+        append(&timeCount, sizeof(timeCount));
+        Float32 t0 = 0.0f;
+        append(&t0, sizeof(t0));
+        UInt32 valueCount = 3u;
+        append(&valueCount, sizeof(valueCount));
+        Float32 v0[3] = {1.0f, 2.0f, 3.0f};
+        append(v0, sizeof(v0));
+
+        // notify block (v2 trailing block) — empty
+        UInt32 notifyCount = 0u;
+        append(&notifyCount, sizeof(notifyCount));
+
+        Animation loaded;
+        CHECK(loaded.loadFromBinary(v2Binary.data(), v2Binary.size()) == true);
+        CHECK(loaded.getTrackCount() == 1u);
+        CHECK(strcmp(loaded.getName(), "LegacyV2Additive") == 0);
+        // The whole point of this test: every track's blendMode must be
+        // Override (the default), because v2 had no byte for it.
+        CHECK(loaded.getTrackBlendMode(0) == AnimBlendMode::Override);
+
+        // Negative spot-check: an out-of-range index also returns Override
+        // (the safe default the getter promises).
+        CHECK(loaded.getTrackBlendMode(99u) == AnimBlendMode::Override);
+    }
+
     // Phase 1.5: empty-marker clip must round-trip with no extra bytes.
     TEST_CASE(SaveToBinary_EmptyNotifiesIsMinimal) {
         Animation anim;
