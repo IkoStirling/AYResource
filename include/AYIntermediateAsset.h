@@ -103,11 +103,25 @@ struct KeyframeTrack {
     std::vector<float> values;
 };
 
+// Phase 1.5: anim notify marker on the intermediate asset. Mirror of
+// ayt::resource::AnimNotifyMarker (IAnimation.h). Currently populated only
+// by the converter when a non-empty `notifies` is supplied via AnimationData;
+// FBX has no first-class notify channel — see FBXParser::_parseAnimations
+// TODO note.
+struct AnimNotifyMarkerData {
+    std::string name;     // e.g. "OnFootstep", "OnHit"
+    float       time    = 0.0f;  // seconds on AYAnimation timeline
+    float       payload = 0.0f;  // optional float (SFX volume, damage, ...)
+};
+
 struct AnimationData {
     std::string name;
     float duration = 0.0f;
     float ticksPerSecond = 30.0f;
     std::vector<KeyframeTrack> tracks;
+    // Phase 1.5: optional trailing notify list. Empty for clips authored
+    // without notifies (e.g. FBX takes imported without metadata).
+    std::vector<AnimNotifyMarkerData> notifies;
 };
 
 struct AudioData {

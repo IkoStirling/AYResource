@@ -831,6 +831,19 @@ void FBXParser::_collectSkeletonBones(const aiNode* node, int parentIndex,
 // 每个 aiAnimation = 一个 take,转换为一条 AnimationData。
 // 每个 aiNodeAnim channel 对应一个骨骼;按 position/rotation/scale 拆为 3 条 KeyframeTrack
 // (空 track 跳过;valueType 按 property 推断)。
+//
+// Phase 1.5 TODO: notify markers. FBX has no first-class notify channel.
+// assimp exposes `mAnim->mName` and (via assimp_metadata.h) generic
+// key/value bags on nodes, but no standardized "event" or "curve node"
+// type. Two paths to extend this function when notify authoring becomes
+// a requirement:
+//   (a) scan `scene->mRootNode->mMetaData` / per-channel `mNodeAnim->mMetaData`
+//       for keys like "OnFootstep" / "OnHit" and read their `time` + `payload`
+//       from sibling entries.
+//   (b) accept a sibling `.notifies.json` file at conversion time and merge
+//       into `data.notifies` after the track loop below.
+// For the first cut we leave `data.notifies` empty; AYAnimation handles the
+// zero-marker case trivially (`getNotifyCount() == 0`, no dispatch overhead).
 void FBXParser::_parseAnimations(const aiScene* scene) {
     if (!scene) return;
     if (scene->mNumAnimations == 0) return;

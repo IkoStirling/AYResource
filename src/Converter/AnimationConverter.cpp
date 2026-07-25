@@ -108,6 +108,18 @@ std::vector<ConversionResult::ConvertedResource> AnimationConverter::convertAll(
             animation.addTrack(track);
         }
 
+        // Phase 1.5: also copy any notify markers into the concrete Animation.
+        // The intermediate AnimationData's `notifies` is normally empty for
+        // FBX-derived assets (FBX has no first-class notify channel); any
+        // non-empty list comes from a sidecar or an in-engine author tool.
+        for (const auto& notifyData : animData.notifies) {
+            AnimNotifyMarker n;
+            n.name    = notifyData.name;
+            n.time    = notifyData.time;
+            n.payload = notifyData.payload;
+            animation.addNotify(n);
+        }
+
         // 构建动画内容数据并计算 GUID（不包含header）
         // R-02: 把每条 track 的 valueType 也加进 GUID hash,确保类型变化能改 hash
         std::vector<UInt8> animContentData;
@@ -142,6 +154,26 @@ std::vector<ConversionResult::ConvertedResource> AnimationConverter::convertAll(
             *reinterpret_cast<UInt32*>(ptr) = valueCount; ptr += sizeof(UInt32);
             memcpy(ptr, trackData.values.data(), valueCount * sizeof(Float32));
         }
+        // Phase 1.5: include notify marker bytes in the GUID hash so
+        // re-export with changed notify lists bumps the GUID and forces a
+        // re-import by ResourceManager. Mirrors saveToBinary()'s notify
+        // block layout so the hash stays consistent on disk.
+        {
+            UInt32 notifyCount = static_cast<UInt32>(animData.notifies.size());
+            animContentData.resize(animContentData.size() + sizeof(UInt32));
+            memcpy(animContentData.data() + animContentData.size() - sizeof(UInt32),
+                   &notifyCount, sizeof(UInt32));
+            for (const auto& n : animData.notifies) {
+                UInt32 nameLen = static_cast<UInt32>(n.name.size());
+                const size_t perNotify = sizeof(UInt32) + nameLen + sizeof(Float32) * 2;
+                animContentData.resize(animContentData.size() + perNotify);
+                ptr = animContentData.data() + animContentData.size() - perNotify;
+                *reinterpret_cast<UInt32*>(ptr) = nameLen; ptr += sizeof(UInt32);
+                memcpy(ptr, n.name.data(), nameLen); ptr += nameLen;
+                *reinterpret_cast<Float32*>(ptr) = n.time; ptr += sizeof(Float32);
+                *reinterpret_cast<Float32*>(ptr) = n.payload;
+            }
+        }
         lastGuid = ayt::storage::Guid::computeFromData(animContentData.data(), animContentData.size());
         animation.setGuid(lastGuid);
 
@@ -151,12 +183,13 @@ std::vector<ConversionResult::ConvertedResource> AnimationConverter::convertAll(
             continue;
         }
 
-        // 写入输出目录
+        // Always overwrite. Skipping when the file exists left tests (and
+        // re-cooks) reading stale/corrupt .ayanm from prior runs — that
+        // manifested as heap corruption when the loaded Animation was
+        // destroyed (shared_ptr delete in ValueTypeRoundTrip_*).
         if (!outputDir.empty()) {
             std::string fullPath = outputDir + "/" + virtualPath;
-            if (!ayt::io::File::exists(fullPath)) {
-                writeFile(fullPath, binaryData.data(), binaryData.size());
-            }
+            writeFile(fullPath, binaryData.data(), binaryData.size());
         }
 
         ConversionResult::ConvertedResource res;

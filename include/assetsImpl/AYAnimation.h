@@ -40,6 +40,12 @@ public:
     // ===== Legacy =====
     const Float32* getTrackValues(UInt32 trackIndex) const override;
 
+    // ===== Anim Notify markers (Phase 1.5) — IAnimation overrides =====
+    UInt32      getNotifyCount()                     const override;
+    const char* getNotifyName(UInt32 notifyIndex)    const override;
+    Float32     getNotifyTime(UInt32 notifyIndex)    const override;
+    Float32     getNotifyPayload(UInt32 notifyIndex) const override;
+
     // ===== Binary serialization =====
     bool loadFromBinary(const void* data, size_t size);
     bool saveToBinary(std::vector<UInt8>& outData) const;
@@ -50,9 +56,11 @@ public:
     void setTicksPerSecond(Float32 tps) { _ticksPerSecond = tps; }
     void setGuid(const ayt::math::FGuid& guid) { _guid = guid; }
     void addTrack(const AnimTrack& track);
+    void addNotify(const AnimNotifyMarker& notify) { _notifies.push_back(notify); }
 
     // ===== Getters =====
     const ayt::math::FGuid& getGuid() const { return _guid; }
+    const std::vector<AnimNotifyMarker>& getNotifies() const { return _notifies; }
 
     // ===== 创建测试数据 =====
     void createTestAnimation();
@@ -64,7 +72,15 @@ private:
     Float32 _duration = 0.0f;
     Float32 _ticksPerSecond = 30.0f;
     std::vector<AnimTrack> _tracks;
-    std::string _path;
+    // Phase 1.5: time-keyed event markers. Stored in arbitrary order on
+    // addNotify; loadFromBinary / saveToBinary keep them in insertion order
+    // (sorted-by-time invariant is enforced upstream by the converter when
+    // the file is authored; AnimationPlayer treats the list as sorted and
+    // does an early-exit linear scan, which is correct for unsorted input
+    // too because the notify count per clip is tiny).
+    std::vector<AnimNotifyMarker> _notifies;
+    // Path lives on IResource::_path — do not redeclare (shadowing caused
+    // load() to write a different string than getPath() returned).
     ayt::math::FGuid _guid;  // 资源唯一标识
 };
 
