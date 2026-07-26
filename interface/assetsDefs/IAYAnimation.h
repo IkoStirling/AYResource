@@ -127,13 +127,26 @@ public:
     // v3 (2026-07-26, Phase 1.2 P1.2): tracks + per-track blendMode byte
     //     + notify markers. Every track record carries a 1-byte blendMode
     //     slot inserted between valueType and the timeCount UInt32.
+    // v4 (2026-07-26, Phase 1.3 P1.3): reserved for Cross-Fade Layer 2
+    //     additive-source semantics. **No on-disk change** — v4 writes
+    //     identical bytes to v3 (same track layout, same notify block).
+    //     The version bump locks in the AnimationPlayer-side dual-source
+    //     API contract: from v4 onward, hosts may call setAdditiveSource()
+    //     on a bound player to layer a second clip with discrete
+    //     blendWeight. The on-disk format is unchanged so all v1/v2/v3
+    //     .ayanm files round-trip identically through the v4 loader.
     // Backward compat:
     //   v1 binaries skip the notify block (getNotifyCount()==0) AND skip
     //       every track's blendMode byte (no byte exists at that slot).
     //   v2 binaries read the notify block but skip the blendMode byte
     //       (no byte in the v2 format).
     //   v3 binaries read both blocks.
-    static constexpr UInt32 VERSION = 3;
+    //   v4 binaries read both blocks (same as v3) — no extra bytes.
+    // Forward compat:
+    //   loadFromBinary returns false for any version > VERSION (5, 6, …)
+    //   so a future binary that adds new bytes is caught loudly rather
+    //   than silently mis-parsed.
+    static constexpr UInt32 VERSION = 4;
     static constexpr UInt32 MAGIC = 0x4E4D5941; // 'AYNM'
 };
 

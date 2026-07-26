@@ -274,4 +274,39 @@ TEST_SUITE(AnimationLoaderTests)
         CHECK(anim.getNotifyName(1)     == nullptr);   // == count, also OOB
     }
 
+    // P1.3 — forward-compat tripwire. loadFromBinary must reject any
+    // version > IAnimation::VERSION (currently 4) so a future binary that
+    // adds new bytes is caught loudly rather than silently mis-parsed
+    // and writing corrupted skin matrices downstream.
+    //
+    // Hand-craft a 16-byte header (magic + version) + minimal name to
+    // reach the version check; we don't need real track data — the
+    // check happens BEFORE any track/notify reads.
+    TEST_CASE(LoadFromBinary_RejectsVersionAbove4) {
+        // Build a minimal valid-v4 buffer first, then mutate only the
+        // version UInt32 to 5. The other bytes stay coherent so the
+        // tripwire fires at the version guard, not at some later
+        // length-mismatch guard.
+        Animation ref;
+        ref.createTestAnimation();
+        std::vector<UInt8> good;
+        CHECK(ref.saveToBinary(good) == true);
+        CHECK(good.size() >= sizeof(UInt32) * 2);
+
+        // Copy + patch version=5 (one above VERSION=4).
+        std::vector<UInt8> bad = good;
+        UInt32 futureVersion = 5u;
+        std::memcpy(bad.data() + sizeof(UInt32), &futureVersion, sizeof(UInt32));
+
+        Animation loaded;
+        // The forward-compat guard returns false — caller can detect
+        // a too-new binary instead of silently dropping or munging
+        // track data.
+        CHECK(loaded.loadFromBinary(bad.data(), bad.size()) == false);
+        // A v4 binary (the current VERSION) must still load — pin
+        // the non-tripwire path explicitly so a future regression
+        // that broke both branches is caught.
+        CHECK(ref.loadFromBinary(good.data(), good.size()) == true);
+    }
+
 TEST_SUITE_END

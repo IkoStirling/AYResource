@@ -184,8 +184,14 @@ bool Animation::loadFromBinary(const void* data, size_t size) {
     remaining -= sizeof(UInt32);
 
     if (magic != IAnimation::MAGIC) return false;
-    // Phase 1.5: accept any version in [1, IAnimation::VERSION]. v1 binaries
-    // (tracks only) skip the notify block; v2 binaries read it.
+    // Phase 1.5 + Phase 1.3 (P1.3): accept any version in [1, IAnimation::VERSION].
+    //   v1 binaries (tracks only) skip the notify block;
+    //   v2 binaries read the notify block;
+    //   v3 binaries read both blocks (plus per-track blendMode byte);
+    //   v4 binaries are byte-identical to v3 (forward-compat reservation
+    //   for Cross-Fade Layer 2 additive-source semantics — no new bytes).
+    // Any future version > VERSION (5+) is rejected so a binary that
+    // adds new bytes is caught loudly rather than silently mis-parsed.
     if (version < 1 || version > IAnimation::VERSION) return false;
 
     // 读取 name
