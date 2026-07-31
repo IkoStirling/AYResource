@@ -12,9 +12,12 @@ using namespace ayt::resource;
 TEST_SUITE(TilemapLoaderTests)
 
 TEST_CASE(CreateAndQueryNarrow16) {
-    const UInt32 blocked[] = {1u, 7u};
+    const TileCollisionFlagEntry flags[] = {
+        {1u, TileCollisionFlagBits::Solid},
+        {7u, TileCollisionFlagBits::Solid},
+    };
     TilemapAsset t;
-    t.create(4, 3, 32, 32, TilemapPackMode::Narrow16, 0u, blocked, 2u);
+    t.create(4, 3, 32, 32, TilemapPackMode::Narrow16, 0u, flags, 2u);
 
     CHECK(t.getCols() == 4u);
     CHECK(t.getRows() == 3u);
@@ -25,16 +28,19 @@ TEST_CASE(CreateAndQueryNarrow16) {
     CHECK(t.getTileIdCount() == 12u);
     CHECK(t.getTileIds16() != nullptr);
     CHECK(t.getTileIds32() == nullptr);
-    CHECK(t.getBlockedTileIdCount() == 2u);
-    CHECK(t.getBlockedTileIds()[0] == 1u);
-    CHECK(t.getBlockedTileIds()[1] == 7u);
+    CHECK(t.getTileCollisionFlagCount() == 2u);
+    CHECK(t.getTileCollisionFlags()[0].tileId == 1u);
+    CHECK(t.getTileCollisionFlags()[0].flags == TileCollisionFlagBits::Solid);
+    CHECK(t.getTileCollisionFlags()[1].tileId == 7u);
     CHECK(t.isLoaded() == true);
 }
 
 TEST_CASE(CreateAndQueryWide32) {
-    const UInt32 blocked[] = {65536u};  // > 65535, needs wide mode
+    const TileCollisionFlagEntry flags[] = {
+        {65536u, TileCollisionFlagBits::Solid},  // > 65535, needs wide mode
+    };
     TilemapAsset t;
-    t.create(2, 2, 16, 16, TilemapPackMode::Wide32, 100u, blocked, 1u);
+    t.create(2, 2, 16, 16, TilemapPackMode::Wide32, 100u, flags, 1u);
 
     CHECK(t.getPackMode() == TilemapPackMode::Wide32);
     CHECK(t.getDefaultTileId() == 100u);
@@ -42,14 +48,19 @@ TEST_CASE(CreateAndQueryWide32) {
     CHECK(t.getTileIds32() != nullptr);
     CHECK(t.getTileIds16() == nullptr);
     CHECK(t.getTileIds32()[0] == 100u);
-    CHECK(t.getBlockedTileIdCount() == 1u);
-    CHECK(t.getBlockedTileIds()[0] == 65536u);
+    CHECK(t.getTileCollisionFlagCount() == 1u);
+    CHECK(t.getTileCollisionFlags()[0].tileId == 65536u);
+    CHECK(t.getTileCollisionFlags()[0].flags == TileCollisionFlagBits::Solid);
 }
 
 TEST_CASE(SaveAndLoadBinaryRoundTripNarrow16) {
-    const UInt32 blocked[] = {1u, 2u, 9u};
+    const TileCollisionFlagEntry flags[] = {
+        {1u, TileCollisionFlagBits::Solid},
+        {2u, TileCollisionFlagBits::Solid},
+        {9u, TileCollisionFlagBits::Solid},
+    };
     TilemapAsset original;
-    original.create(4, 4, 32, 32, TilemapPackMode::Narrow16, 0u, blocked, 3u);
+    original.create(4, 4, 32, 32, TilemapPackMode::Narrow16, 0u, flags, 3u);
     // Paint a few cells so the tile-id array is non-trivial.
     UInt16* ids = const_cast<UInt16*>(original.getTileIds16());
     ids[0]  = 1u;   // (0,0) solid
@@ -72,16 +83,17 @@ TEST_CASE(SaveAndLoadBinaryRoundTripNarrow16) {
     CHECK(loaded.getTileIds16() != nullptr);
     CHECK(loaded.getTileIds16()[0] == 1u);
     CHECK(loaded.getTileIds16()[15] == 9u);
-    CHECK(loaded.getBlockedTileIdCount() == 3u);
-    CHECK(loaded.getBlockedTileIds()[0] == 1u);
-    CHECK(loaded.getBlockedTileIds()[1] == 2u);
-    CHECK(loaded.getBlockedTileIds()[2] == 9u);
+    CHECK(loaded.getTileCollisionFlagCount() == 3u);
+    CHECK(loaded.getTileCollisionFlags()[0].tileId == 1u);
+    CHECK(loaded.getTileCollisionFlags()[1].tileId == 2u);
+    CHECK(loaded.getTileCollisionFlags()[2].tileId == 9u);
+    CHECK(loaded.getTileCollisionFlags()[0].flags == TileCollisionFlagBits::Solid);
 }
 
 TEST_CASE(SaveAndLoadBinaryRoundTripWide32) {
-    const UInt32 blocked[] = {70000u};
+    const TileCollisionFlagEntry flags[] = {{70000u, TileCollisionFlagBits::Solid}};
     TilemapAsset original;
-    original.create(2, 2, 16, 16, TilemapPackMode::Wide32, 5u, blocked, 1u);
+    original.create(2, 2, 16, 16, TilemapPackMode::Wide32, 5u, flags, 1u);
     UInt32* ids = const_cast<UInt32*>(original.getTileIds32());
     ids[0] = 70000u;
 
@@ -95,14 +107,15 @@ TEST_CASE(SaveAndLoadBinaryRoundTripWide32) {
     CHECK(loaded.getTileIds32() != nullptr);
     CHECK(loaded.getTileIds32()[0] == 70000u);
     CHECK(loaded.getDefaultTileId() == 5u);
-    CHECK(loaded.getBlockedTileIdCount() == 1u);
-    CHECK(loaded.getBlockedTileIds()[0] == 70000u);
+    CHECK(loaded.getTileCollisionFlagCount() == 1u);
+    CHECK(loaded.getTileCollisionFlags()[0].tileId == 70000u);
+    CHECK(loaded.getTileCollisionFlags()[0].flags == TileCollisionFlagBits::Solid);
 }
 
 TEST_CASE(LoadFromBinaryRejectsBadMagic) {
-    const UInt32 blocked[] = {1u};
+    const TileCollisionFlagEntry flags[] = {{1u, TileCollisionFlagBits::Solid}};
     TilemapAsset original;
-    original.create(2, 2, 16, 16, TilemapPackMode::Narrow16, 0u, blocked, 1u);
+    original.create(2, 2, 16, 16, TilemapPackMode::Narrow16, 0u, flags, 1u);
     std::vector<UInt8> binary;
     original.saveToBinary(binary);
 
@@ -115,13 +128,13 @@ TEST_CASE(LoadFromBinaryRejectsBadMagic) {
 }
 
 TEST_CASE(LoadFromBinaryRejectsBadVersion) {
-    const UInt32 blocked[] = {1u};
+    const TileCollisionFlagEntry flags[] = {{1u, TileCollisionFlagBits::Solid}};
     TilemapAsset original;
-    original.create(2, 2, 16, 16, TilemapPackMode::Narrow16, 0u, blocked, 1u);
+    original.create(2, 2, 16, 16, TilemapPackMode::Narrow16, 0u, flags, 1u);
     std::vector<UInt8> binary;
     original.saveToBinary(binary);
 
-    // Corrupt the version (offset 4, UInt16).
+    // Corrupt the version (offset 4, UInt16) to an unsupported value.
     binary[4] = 0xFF;
     binary[5] = 0x0F;
 
@@ -130,9 +143,9 @@ TEST_CASE(LoadFromBinaryRejectsBadVersion) {
 }
 
 TEST_CASE(LoadFromBinaryRejectsTruncated) {
-    const UInt32 blocked[] = {1u};
+    const TileCollisionFlagEntry flags[] = {{1u, TileCollisionFlagBits::Solid}};
     TilemapAsset original;
-    original.create(4, 4, 32, 32, TilemapPackMode::Narrow16, 0u, blocked, 1u);
+    original.create(4, 4, 32, 32, TilemapPackMode::Narrow16, 0u, flags, 1u);
     std::vector<UInt8> binary;
     original.saveToBinary(binary);
 
@@ -156,9 +169,9 @@ TEST_CASE(GetResourceType) {
 }
 
 TEST_CASE(LoaderLoadFromBinary) {
-    const UInt32 blocked[] = {1u};
+    const TileCollisionFlagEntry flags[] = {{1u, TileCollisionFlagBits::Solid}};
     TilemapAsset original;
-    original.create(2, 2, 16, 16, TilemapPackMode::Narrow16, 0u, blocked, 1u);
+    original.create(2, 2, 16, 16, TilemapPackMode::Narrow16, 0u, flags, 1u);
     std::vector<UInt8> binary;
     original.saveToBinary(binary);
 
@@ -170,7 +183,80 @@ TEST_CASE(LoaderLoadFromBinary) {
     CHECK(tilemap != nullptr);
     CHECK(tilemap->getCols() == 2u);
     CHECK(tilemap->getRows() == 2u);
-    CHECK(tilemap->getBlockedTileIdCount() == 1u);
+    CHECK(tilemap->getTileCollisionFlagCount() == 1u);
+    CHECK(tilemap->getTileCollisionFlags()[0].flags == TileCollisionFlagBits::Solid);
+}
+
+TEST_CASE(SaveAndLoadBinaryRoundTripOneWayAndSlope) {
+    // R3: non-Solid flags round-trip through the v2 binary format.
+    const TileCollisionFlagEntry flags[] = {
+        {1u, TileCollisionFlagBits::Solid},
+        {2u, TileCollisionFlagBits::OneWay},
+        {3u, TileCollisionFlagBits::Slope_L | TileCollisionFlagBits::Solid},
+        {4u, TileCollisionFlagBits::Hazard},
+    };
+    TilemapAsset original;
+    original.create(4, 1, 16, 16, TilemapPackMode::Narrow16, 0u, flags, 4u);
+
+    std::vector<UInt8> binary;
+    CHECK(original.saveToBinary(binary) == true);
+
+    TilemapAsset loaded;
+    CHECK(loaded.loadFromBinary(binary.data(), binary.size()) == true);
+    CHECK(loaded.getTileCollisionFlagCount() == 4u);
+
+    // Order is preserved (writer copies the table verbatim).
+    const TileCollisionFlagEntry* f = loaded.getTileCollisionFlags();
+    CHECK(f[0].tileId == 1u); CHECK(f[0].flags == TileCollisionFlagBits::Solid);
+    CHECK(f[1].tileId == 2u); CHECK(f[1].flags == TileCollisionFlagBits::OneWay);
+    CHECK(f[2].tileId == 3u); CHECK(f[2].flags == (TileCollisionFlagBits::Slope_L | TileCollisionFlagBits::Solid));
+    CHECK(f[3].tileId == 4u); CHECK(f[3].flags == TileCollisionFlagBits::Hazard);
+}
+
+TEST_CASE(LoadFromBinaryV1BlockedListNormalizedToSolid) {
+    // R3 back-compat: a hand-rolled v1 file (bare blocked-id list) loads and
+    // normalizes every blocked id to a v2 entry with flags = Solid.
+    #pragma pack(push, 1)
+    struct V1Header {
+        UInt32 magic; UInt16 version; UInt16 tileWidth; UInt16 tileHeight;
+        UInt32 cols; UInt32 rows; UInt8 mode; UInt8 reserved;
+        UInt32 defaultTileId; UInt32 blockedCount; UInt32 tileIdsCount;
+    };
+    #pragma pack(pop)
+    static_assert(sizeof(V1Header) == 32, "v1 header must be 32 bytes");
+
+    const UInt32 blockedIds[] = {1u, 9u};
+    const UInt16 tileIds[] = {1u, 0u, 0u, 9u};  // 2x2
+
+    V1Header h{};
+    h.magic = ITilemap::MAGIC;
+    h.version = 1u;
+    h.tileWidth = 16; h.tileHeight = 16;
+    h.cols = 2u; h.rows = 2u;
+    h.mode = 0u;  // Narrow16
+    h.defaultTileId = 0u;
+    h.blockedCount = 2u;
+    h.tileIdsCount = 4u;
+
+    std::vector<UInt8> binary;
+    binary.insert(binary.end(), reinterpret_cast<const UInt8*>(&h),
+                   reinterpret_cast<const UInt8*>(&h) + sizeof(h));
+    binary.insert(binary.end(), reinterpret_cast<const UInt8*>(blockedIds),
+                   reinterpret_cast<const UInt8*>(blockedIds) + sizeof(blockedIds));
+    binary.insert(binary.end(), reinterpret_cast<const UInt8*>(tileIds),
+                   reinterpret_cast<const UInt8*>(tileIds) + sizeof(tileIds));
+
+    TilemapAsset loaded;
+    CHECK(loaded.loadFromBinary(binary.data(), binary.size()) == true);
+    CHECK(loaded.getTileIdCount() == 4u);
+    CHECK(loaded.getTileIds16()[0] == 1u);
+    CHECK(loaded.getTileIds16()[3] == 9u);
+    // v1 blocked ids normalized to Solid entries.
+    CHECK(loaded.getTileCollisionFlagCount() == 2u);
+    CHECK(loaded.getTileCollisionFlags()[0].tileId == 1u);
+    CHECK(loaded.getTileCollisionFlags()[0].flags == TileCollisionFlagBits::Solid);
+    CHECK(loaded.getTileCollisionFlags()[1].tileId == 9u);
+    CHECK(loaded.getTileCollisionFlags()[1].flags == TileCollisionFlagBits::Solid);
 }
 
 TEST_CASE(BootstrapRegistersTilemapExtension) {

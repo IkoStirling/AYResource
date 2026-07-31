@@ -49,9 +49,11 @@ public:
                                        : _tileIds32.size());
     }
 
-    const UInt32* getBlockedTileIds() const override { return _blockedTileIds.data(); }
-    UInt32 getBlockedTileIdCount() const override {
-        return static_cast<UInt32>(_blockedTileIds.size());
+    const TileCollisionFlagEntry* getTileCollisionFlags() const override {
+        return _tileCollisionFlags.data();
+    }
+    UInt32 getTileCollisionFlagCount() const override {
+        return static_cast<UInt32>(_tileCollisionFlags.size());
     }
 
     // ===== Binary serialization =====
@@ -63,13 +65,14 @@ public:
     void setGuid(const FGuid& guid) { _guid = guid; }
 
     // ===== Create test data (mirrors Physics::createBox pattern) =====
-    // Fills the grid with `defaultTileId`, sets the blocked list, and marks
-    // the resource loaded. Used by loader round-trip tests and the bridge
-    // end-to-end test to build a `.aytilemap` in memory without file I/O.
+    // Fills the grid with `defaultTileId`, sets the per-tile-id collision-flags
+    // table, and marks the resource loaded. Used by loader round-trip tests and
+    // the bridge end-to-end test to build a `.aytilemap` in memory without file
+    // I/O. `flags` is an array of {tileId, bitmask} entries (TileCollisionFlagBits).
     void create(UInt32 cols, UInt32 rows,
                  UInt16 tileWidth, UInt16 tileHeight,
                  TilemapPackMode mode, UInt32 defaultTileId,
-                 const UInt32* blockedTileIds, UInt32 blockedCount);
+                 const TileCollisionFlagEntry* flags, UInt32 flagCount);
 
 private:
     void clear();
@@ -87,7 +90,7 @@ private:
     std::vector<UInt16> _tileIds16;
     std::vector<UInt32> _tileIds32;
 
-    std::vector<UInt32> _blockedTileIds;
+    std::vector<TileCollisionFlagEntry> _tileCollisionFlags;
 
     std::string _name;
 };
