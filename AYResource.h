@@ -11,6 +11,7 @@
 #include "interface/assetsDefs/IAYFontAsset.h"
 #include "interface/assetsDefs/IAYScript.h"
 #include "interface/assetsDefs/IAYPhysics.h"
+#include "interface/assetsDefs/IAYTilemap.h"
 #include "interface/assetsDefs/IAYSkeleton.h"
 #include "interface/IAYConverter.h"
 #include "interface/IAYResourceLoader.h"

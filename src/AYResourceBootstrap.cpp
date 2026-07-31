@@ -10,6 +10,7 @@
 #include "Loader/FontLoader.h"
 #include "Loader/ScriptLoader.h"
 #include "Loader/PhysicsLoader.h"
+#include "Loader/TilemapLoader.h"
 #include "AYResourceRegistry.h"
 
 #include <memory>
@@ -51,7 +52,8 @@ bool initializeLoaders()
                  && registerLoaderType<VideoLoader>("Video", ".ayvideo")
                  && registerLoaderType<FontLoader>("Font", ".ayfont")
                  && registerLoaderType<ScriptLoader>("Script", ".ayscript")
-                 && registerLoaderType<PhysicsLoader>("Physics", ".ayphys");
+                 && registerLoaderType<PhysicsLoader>("Physics", ".ayphys")
+                 && registerLoaderType<TilemapLoader>("Tilemap", ".aytilemap");
 
     g_loadersInitialized = ok;
     return ok;

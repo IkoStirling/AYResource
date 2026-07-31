@@ -27,6 +27,7 @@ add_executable(${MODULE_NAME}
     AYTest_AudioLoader.cpp
     AYTest_VideoLoader.cpp
     AYTest_FontLoader.cpp
+    AYTest_TilemapLoader.cpp
 )
 
 target_link_libraries(${MODULE_NAME} PRIVATE
