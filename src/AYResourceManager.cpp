@@ -8,6 +8,7 @@
 #include "aystorage/IPackageReader.h"
 #include <ayio/Path.h>
 #include <ayio/File.h>
+#include <AYLog.h>
 #include <cassert>
 #include <cstdio>
 #include <string>
@@ -302,10 +303,10 @@ std::shared_ptr<IResource> ResourceManager::_installPlaceholder(const std::strin
     } else {
         // F3.5: previously swallowed silently — game ran with a missing
         // placeholder and rendered as a black material forever. Now
-        // noisy at least on the path that has no fallback.
-        std::fprintf(stderr,
-                     "[ResourceManager] _installPlaceholder no template for type '%s' (path '%s')\n",
-                     type.c_str(), path.c_str());
+        // routed through AYLog so cook + game both see it on the
+        // ResourceManager channel.
+        ayt::log::warn("[ResourceManager] _installPlaceholder no template for type '%s' (path '%s')",
+                       type.c_str(), path.c_str());
         _loadStates[path] = ResourceLoadState::Failed;
         return nullptr;
     }

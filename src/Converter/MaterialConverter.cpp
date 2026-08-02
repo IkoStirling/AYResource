@@ -3,7 +3,7 @@
 #include "ayio/File.h"
 #include <AYSerializer.h>
 #include <aystorage/Guid.h>
-#include <cstdio>
+#include <AYLog.h>
 
 namespace ayt::resource
 {
@@ -91,13 +91,13 @@ ConversionResult MaterialConverter::convert() {
     serializer->field("name", name);
     serializer->field("shader", shader);
     if (shader.empty()) {
-        // F3.5: previously a silent fallback. Now warn so missing-shader
-        // problems surface in the cook log instead of the material
-        // showing up as a duplicated phantom pbr.phoskia in the cooker.
-        std::fprintf(stderr,
-                     "[MaterialConverter] source '%s' has no 'shader' field; "
-                     "falling back to '%s' — verify the source JSON\n",
-                     sourcePath.c_str(), "shaders/pbr.phoskia");
+        // F3.5: previously a silent fallback. Now routed through AYLog
+        // so missing-shader problems surface in the cook log instead of
+        // the material showing up as a duplicated phantom pbr.phoskia in
+        // the cooker.
+        ayt::log::warn("[MaterialConverter] source '%s' has no 'shader' field; "
+                       "falling back to 'shaders/pbr.phoskia' — verify the source JSON",
+                       sourcePath.c_str());
         shader = "shaders/pbr.phoskia";
     }
 
@@ -333,9 +333,8 @@ std::vector<ConversionResult::ConvertedResource> MaterialConverter::convertAll(
             // don't see a perfect-looking record for a file that isn't
             // actually on disk.
             if (!writeFile(fullPath, binaryData.data(), binaryData.size())) {
-                std::fprintf(stderr,
-                             "[MaterialConverter] failed to write %s; skipping",
-                             fullPath.c_str());
+                ayt::log::warn("[MaterialConverter] failed to write %s; skipping",
+                               fullPath.c_str());
                 return results;
             }
         }

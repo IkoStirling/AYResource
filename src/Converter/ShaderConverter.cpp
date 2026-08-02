@@ -3,7 +3,7 @@
 #include <ayio/File.h>
 #include <ayio/Path.h>
 #include <aystorage/Guid.h>
-#include <cstdio>
+#include <AYLog.h>
 #include <cstring>
 
 namespace ayt::resource
@@ -159,9 +159,8 @@ std::vector<ConversionResult::ConvertedResource> ShaderConverter::convertAll(
             // entry was still pushed; downstream callers would see a
             // perfect-looking res with a path that doesn't exist on disk.
             if (!writeFile(outputPath, binaryData.data(), binaryData.size())) {
-                std::fprintf(stderr,
-                             "[ShaderConverter] failed to write %s; skipping",
-                             outputPath.c_str());
+                ayt::log::warn("[ShaderConverter] failed to write %s; skipping",
+                               outputPath.c_str());
                 continue;
             }
         }
