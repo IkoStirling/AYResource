@@ -39,6 +39,20 @@ ResourceManager::~ResourceManager() = default;
 
 void ResourceManager::setDatabase(std::unique_ptr<ayt::storage::IStorageDatabase> db) {
     _db = std::move(db);
+    _dbBaseDir.clear();
+}
+
+bool ResourceManager::openDatabase(const std::string& dbPath) {
+    if (dbPath.empty()) {
+        return false;
+    }
+    auto db = ayt::storage::IStorageDatabase::open(dbPath);
+    if (!db || !db->isOpen()) {
+        return false;
+    }
+    _dbBaseDir = ayt::io::path::directory(normalizeResourcePath(dbPath));
+    _db = std::move(db);
+    return true;
 }
 
 ResourceManager& ResourceManager::instance() {
@@ -51,15 +65,21 @@ std::shared_ptr<ayt::storage::IPackageReader> ResourceManager::_getOrOpenPak(con
         return nullptr;
     }
 
+    std::string resolved = pakPath;
+    if (!ayt::io::path::isAbsolute(resolved) && !_dbBaseDir.empty()) {
+        resolved = ayt::io::path::join(_dbBaseDir, resolved);
+    }
+    resolved = normalizeResourcePath(resolved);
+
     {
         std::lock_guard<std::mutex> lock(_paksMutex);
-        auto it = _openedPaks.find(pakPath);
+        auto it = _openedPaks.find(resolved);
         if (it != _openedPaks.end()) {
             return it->second;
         }
     }
 
-    auto reader = ayt::storage::IPackageReader::open(pakPath);
+    auto reader = ayt::storage::IPackageReader::open(resolved);
     if (!reader) {
         return nullptr;
     }
@@ -67,12 +87,12 @@ std::shared_ptr<ayt::storage::IPackageReader> ResourceManager::_getOrOpenPak(con
     std::lock_guard<std::mutex> lock(_paksMutex);
     // Double-check after re-acquiring the lock: another thread may
     // have opened the same pak in between. Prefer the existing entry.
-    auto it = _openedPaks.find(pakPath);
+    auto it = _openedPaks.find(resolved);
     if (it != _openedPaks.end()) {
         return it->second;
     }
-    _openedPaks[pakPath] = std::move(reader);
-    return _openedPaks[pakPath];
+    _openedPaks[resolved] = std::move(reader);
+    return _openedPaks[resolved];
 }
 
 void ResourceManager::preloadResourcesWithTag(const std::string& tag, const std::string& category) {
@@ -97,7 +117,8 @@ std::shared_ptr<IResource> ResourceManager::_loadFromDatabase(const std::string&
         return nullptr;
     }
 
-    auto record = _db->getResource(filepath);
+    const std::string path = normalizeResourcePath(filepath);
+    auto record = _db->getResource(path);
     if (!record) {
         return nullptr;
     }
@@ -114,18 +135,30 @@ std::shared_ptr<IResource> ResourceManager::_loadFromDatabase(const std::string&
         if (!pkg) {
             return nullptr;
         }
-        auto data = pkg->read(filepath);
+        auto data = pkg->read(path);
+        if (data.empty()) {
+            // Try forward-slash entry keys (cross-platform cook artifacts).
+            std::string alt = path;
+            for (char& c : alt) {
+                if (c == '\\') {
+                    c = '/';
+                }
+            }
+            if (alt != path) {
+                data = pkg->read(alt);
+            }
+        }
         if (data.empty()) {
             return nullptr;
         }
         resource = loader->loadFromBinary(data.data(), data.size());
     } else {
-        resource = loader->load(filepath);
+        resource = loader->load(path);
     }
 
     if (resource) {
-        _cache.putStrong(filepath, resource);
-        _resourceTypes[filepath] = type;
+        _cache.putStrong(path, resource);
+        _resourceTypes[path] = type;
     }
     return resource;
 }
@@ -252,23 +285,28 @@ std::shared_ptr<IResource> ResourceManager::_loadInternal(const std::string& fil
         if (record) {
             auto deps = _db->getLoadOrder(path);
             for (const auto& dep : deps) {
-                if (!_cache.contains(dep) && _loadingPaths.count(dep) == 0) {
-                    if (auto depRes = _loadFromDatabase(dep)) {
-                        _loadStates[normalizeResourcePath(dep)] = ResourceLoadState::Ready;
+                const std::string depPath = normalizeResourcePath(dep);
+                if (!_cache.contains(depPath) && _loadingPaths.count(depPath) == 0) {
+                    if (auto depRes = _loadFromDatabase(depPath)) {
+                        _loadStates[depPath] = ResourceLoadState::Ready;
                         (void)depRes;
+                    } else if (auto looseDep = _loadInternal(depPath)) {
+                        (void)looseDep;
                     } else {
-                        (void)_installPlaceholder(dep);
+                        (void)_installPlaceholder(depPath);
                     }
                 }
             }
             resource = _loadFromDatabase(path);
             if (resource) {
                 _onResourceLoaded(path, resource);
-            } else {
-                _loadStates[path] = ResourceLoadState::Failed;
+                _loadingPaths.erase(path);
+                return resource;
             }
-            _loadingPaths.erase(path);
-            return resource;
+            // P4: DB/pak miss → fall through to loose disk path.
+            std::fprintf(stderr,
+                         "[ResourceManager] DB/pak load failed '%s'; trying loose file\n",
+                         path.c_str());
         }
     }
 
@@ -314,6 +352,7 @@ void ResourceManager::unloadAll() {
         std::lock_guard<std::mutex> lock(_paksMutex);
         _openedPaks.clear();
     }
+    // Keep _db / _dbBaseDir — ship mount survives unloadAll (tests reset via setDatabase).
 }
 
 void ResourceManager::tagResource(const std::string& filepath, const ResourceTag& tag) {

@@ -118,6 +118,16 @@ FileWatcher / mtime → HotReloadWatcher (debounce)
 | `getCacheStats()` | `memoryBytes/Budget`, hits/misses/resurrects, strong/weak/grace counts |
 | `save/loadPersistentCache` | Writes/reads `AYCACHE 1` residency index; load preloads listed paths |
 
+## 7d. Ship cook / pak (P4)
+
+| Piece | Location |
+|-------|----------|
+| Core API | `AYResource::cookShipPackage` (`AYCookShip.h`) |
+| CLI | `AYTool/cook_tool` → `--assets <cooked> --out <ship>` |
+| Runtime | `ResourceManager::openDatabase("ship/resources.db")` |
+
+Load order after `openDatabase`: **DB record → pak (`in_package`) → loose file fallback**.
+
 ## 8. Public include surface (Phase 3)
 
 Consumers should include `AYResource.h` and link `AYResource`. The following are **PUBLIC**:

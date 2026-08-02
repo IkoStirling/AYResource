@@ -1,6 +1,6 @@
 # AYResource — 完整资源管线路图（P0–P6）
 
-**状态**: 进行中（P0–P3 ✅；P4 待开工）  
+**状态**: 进行中（P0–P4 ✅；P5 待开工）  
 **日期**: 2026-08-02  
 **范围**: 架构一致性与端到端闭环，**不是**再堆具体资源类型（`.aymesh` / `.ayanm` 等）。
 
@@ -93,13 +93,17 @@ Bind:     RenderAssetBridge → GPU                                      ✅ 有
 
 ---
 
-### P4 — Cook / Build + DB / pak 出货路径
+### P4 — Cook / Build + DB / pak 出货路径 ✅
 
-**要做的事**：
+**已做（2026-08-02）**：
 
-- 离线 cook 批处理入口（CLI / Editor）
-- DB 索引 + pak 打包成为可发布产物
-- 运行时从 pak/DB 优先、磁盘 fallback 的稳定路径
+- **库核心** `AYCookShip`（`cookShipPackage`）：扫描 cooked `.ay*` → `content.pak` + `resources.db`（含 `.aydep` 依赖）
+- **工具 exe** `AYTool/cook_tool`（薄 CLI；`package_tool`/`index_tool` 路径修复；根 CMake 接入）
+- **运行时** `ResourceManager::openDatabase`；相对 `in_package` 相对 DB 目录解析；DB/pak 失败 → loose fallback
+
+**约定**：离线 exe 只放 AYTool；打包/索引/转换核心仍在 AYStorage / AYResource。
+
+**仍留给后续 / P5**：批量 FBX→`.ay*` 导入编排、Editor Build UI、index_tool 与 StorageDatabase 统一。
 
 ---
 
@@ -155,7 +159,7 @@ P0 是工业级管线的前提；在 P0 完成前，不要并行大开 P4/P5 新
 | P1 依赖图与加载语义 | ✅ | intrinsic deps + LoadState + placeholders |
 | P2 热重载 E2E | ✅ | FileWatcher + L2 invalidate + L3 re-upload |
 | P3 异步与缓存硬化 | ✅ | AYTask pool + grace resurrect + cache index |
-| P4 Cook/DB/pak | 🔲 | |
+| P4 Cook/DB/pak | ✅ | AYCookShip + cook_tool + openDatabase |
 | P5 Editor/CLI 编排 | 🔲 | |
 | P6 跨模块契约 | 🔲 | |
 

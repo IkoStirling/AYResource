@@ -141,6 +141,11 @@ public:
     // ===== Database injection (for testing) =====
     void setDatabase(std::unique_ptr<ayt::storage::IStorageDatabase> db);
 
+    // ===== P4 ship mount =====
+    /// Open a cooked resources.db and prefer DB/pak loads. Pak paths in
+    /// `in_package` that are relative are resolved against the DB directory.
+    bool openDatabase(const std::string& dbPath);
+
     // ===== Package management =====
     /// @brief Preload resources with specific tag (e.g., "AlwaysLoaded")
     void preloadResourcesWithTag(const std::string& tag, const std::string& category = "");
@@ -178,6 +183,8 @@ private:
     std::unordered_set<std::string> _loadingPaths;
     HotReloadWatcher::FileChangeCallback _userHotReloadCb;
     bool _autoWatchLoaded = true;
+    // Directory containing the opened ship DB (for relative pak resolution).
+    std::string _dbBaseDir;
 };
 
 template<typename T>
