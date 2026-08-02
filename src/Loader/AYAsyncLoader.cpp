@@ -70,8 +70,12 @@ std::shared_future<std::shared_ptr<IResource>> AsyncLoader::loadAsync(
             task->onProgress(taskPath, 0.2f);
         }
 
-        if (task->cancelled) {
-            task->promise.set_value(nullptr);
+        if (task->cancelled.load(std::memory_order_acquire)) {
+            try {
+                task->promise.set_value(nullptr);
+            } catch (const std::future_error&) {
+                // Already satisfied (cancel() could have set it; defensive).
+            }
             if (task->onProgress) {
                 task->onProgress(taskPath, 0.0f);  // Cancelled = 0%
             }
@@ -86,7 +90,12 @@ std::shared_future<std::shared_ptr<IResource>> AsyncLoader::loadAsync(
             task->onProgress(taskPath, 1.0f);
         }
 
-        task->promise.set_value(resource);
+        // F1.1: swallow future_error if cancel() raced us here.
+        try {
+            task->promise.set_value(resource);
+        } catch (const std::future_error&) {
+            // Already satisfied.
+        }
 
         if (task->callback && resource) {
             task->callback(resource);
@@ -112,8 +121,15 @@ void AsyncLoader::cancel(const std::string& path) {
     std::lock_guard<std::mutex> lock(mutex);
     for (auto& task : queue) {
         if (task->path == path) {
-            task->cancelled = true;
-            task->promise.set_value(nullptr);
+            task->cancelled.store(true, std::memory_order_release);
+            // F1.1: ONLY the worker owns the promise set_value going
+            // forward. cancel() flips the atomic flag; the worker
+            // observes it at its next checkpoint and either bails (set
+            // nullptr) or finishes the in-flight load. This kills the
+            // v0 data race that triggered std::future_error on double
+            // set_value. If a task hasn't been popped yet, the worker
+            // will resolve nullptr; if already in-flight, the caller
+            // may discard the eventual result.
         }
     }
 }
@@ -121,8 +137,7 @@ void AsyncLoader::cancel(const std::string& path) {
 void AsyncLoader::cancelAll() {
     std::lock_guard<std::mutex> lock(mutex);
     for (auto& task : queue) {
-        task->cancelled = true;
-        task->promise.set_value(nullptr);
+        task->cancelled.store(true, std::memory_order_release);
     }
     queue.clear();
     running = false;

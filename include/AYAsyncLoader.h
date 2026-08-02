@@ -58,7 +58,8 @@ private:
         std::promise<std::shared_ptr<IResource>> promise;
         std::function<void(std::shared_ptr<IResource>)> callback;
         ProgressCallback onProgress;
-        bool cancelled = false;
+        // F1.1: atomic so cancel() never races the worker's read.
+        std::atomic<bool> cancelled{false};
     };
 
     void processQueue();
