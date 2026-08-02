@@ -11,7 +11,10 @@ namespace ayt::resource
 
 // ===== Texture — ITexture 实现类 =====
 class Texture : public ITexture {
-    friend class TextureConverter;
+    // F2.1: removed `friend class TextureConverter;`. Converter uses the
+    // public setters below (setImageData / setMipmapLayout) plus the
+    // already-public _width/_height/_format fields to populate this asset
+    // without touching private members.
 
 public:
     Texture();
@@ -47,6 +50,40 @@ public:
     // ===== 创建测试数据 =====
     void createSolidColor(UInt32 width, UInt32 height, UInt32 r, UInt32 g, UInt32 b, UInt32 a = 255);
     void createCheckerboard(UInt32 width, UInt32 height, UInt32 checkSize = 8);
+
+    // ===== F2.1: public setters for converter population =====
+    // Replaces direct friend access to _imageData / _mipOffsets / _mipSizes.
+    void setImageData(std::vector<UInt8>&& bytes) { _imageData = std::move(bytes); }
+    void setImageData(const UInt8* bytes, size_t n) {
+        _imageData.assign(bytes, bytes + n);
+    }
+    // Mutable buffer + mipmap-table access for converters that fill the
+    // pixel array in-place (e.g. mipmap chain assembly). Returns a
+    // pointer to the underlying storage sized to `totalSize` and the
+    // mipmap table sized to `mipCount`; the caller writes then calls
+    // commitMipmapLayout() to finalize offsets.
+    UInt8* mutableImageData(size_t totalSize) {
+        _imageData.resize(totalSize);
+        return _imageData.data();
+    }
+    // Bulk-fill the mipmap table from raw arrays (call after running
+    // mutableImageData() + per-mip writes).
+    void setMipmapTable(const UInt32* offsets, const UInt32* sizes, size_t mipCount) {
+        _mipOffsets.assign(offsets, offsets + mipCount);
+        _mipSizes.assign(sizes, sizes + mipCount);
+        _mipmapCount = static_cast<UInt32>(mipCount);
+    }
+    // Set the mipmap table atomically. mipCount is derived from the
+    // vectors' length; offsets/sizes must be the same size.
+    void setMipmapLayout(std::vector<UInt32> offsets, std::vector<UInt32> sizes) {
+        _mipOffsets = std::move(offsets);
+        _mipSizes = std::move(sizes);
+        _mipmapCount = static_cast<UInt32>(_mipOffsets.size());
+    }
+    // Read-only view of the raw image buffer (used by the converter to
+    // compute the content hash without friend access).
+    const UInt8* getImageDataBytes() const { return _imageData.data(); }
+    size_t getImageDataSize() const { return _imageData.size(); }
 
     // ===== 属性访问 (用于 Converter/Loader) =====
     UInt32 _width = 0;

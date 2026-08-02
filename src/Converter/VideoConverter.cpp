@@ -88,20 +88,20 @@ std::vector<ConversionResult::ConvertedResource> VideoConverter::convertAll(
 
         // 创建 Video
         Video video;
-        video._name = videoData.name.empty()
+        video.setName(videoData.name.empty()
             ? baseName + "_" + std::to_string(i)
-            : videoData.name;
-        video._width = static_cast<UInt32>(videoData.width);
-        video._height = static_cast<UInt32>(videoData.height);
-        video._frameRate = videoData.frameRate;
-        video._frameCount = static_cast<UInt32>(videoData.frameData.size() / (videoData.width * videoData.height * 4));
-        video._frameSize = videoData.width * videoData.height * 4;
-        video._duration = static_cast<float>(video._frameCount) / video._frameRate;
-        video._frameData = videoData.frameData;
-        video._loaded = true;
+            : videoData.name);
+        const UInt32 w = static_cast<UInt32>(videoData.width);
+        const UInt32 h = static_cast<UInt32>(videoData.height);
+        const UInt32 frameSize = w * h * 4;
+        const UInt32 frameCount = static_cast<UInt32>(
+            videoData.frameData.size() / (frameSize > 0 ? frameSize : 1));
+        video.setFrameInfo(w, h, videoData.frameRate, frameCount, frameSize);
+        video.setFrameData(videoData.frameData);
+        video.setLoaded(true);
 
         // 计算 GUID
-        lastGuid = ayt::storage::Guid::computeFromData(video._frameData.data(), video._frameData.size());
+        lastGuid = ayt::storage::Guid::computeFromData(video.getFrameDataBytes(), video.getFrameDataBytesSize());
         video.setGuid(lastGuid);
 
         // 保存到二进制
@@ -111,7 +111,7 @@ std::vector<ConversionResult::ConvertedResource> VideoConverter::convertAll(
         }
 
         // 生成虚拟路径: video/{name}.ayvideo
-        std::string outputName = video._name + ".ayvideo";
+        std::string outputName = video.getName() + std::string(".ayvideo");
         std::string virtualPath = "video/" + outputName;
 
         // 写入输出目录

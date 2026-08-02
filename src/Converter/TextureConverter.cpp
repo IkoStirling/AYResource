@@ -472,11 +472,9 @@ ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
         totalSize += Texture::computeMipSize(mipRGBAWidth[i], mipRGBAHeight[i], outputFormat);
     }
 
-    texture._imageData.resize(totalSize);
-    texture._mipOffsets.resize(mipCount);
-    texture._mipSizes.resize(mipCount);
-
-    UInt8* dstPtr = texture._imageData.data();
+    UInt8* dstPtr = texture.mutableImageData(totalSize);
+    std::vector<UInt32> mipOffsets(mipCount);
+    std::vector<UInt32> mipSizes(mipCount);
 
     // 创建压缩器
     TextureCompressor::Format compFormat = (outputFormat == TextureFormat::BC7)
@@ -488,7 +486,7 @@ ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
            width, height, mipCount, compressor->getFormatName());
 
     for (UInt32 i = 0; i < mipCount; i++) {
-        texture._mipOffsets[i] = static_cast<UInt32>(dstPtr - texture._imageData.data());
+        mipOffsets[i] = static_cast<UInt32>(dstPtr - texture.getImageDataBytes());
 
         if (outputFormat == TextureFormat::BC7 || outputFormat == TextureFormat::BC3 ||
             outputFormat == TextureFormat::BC1 || outputFormat == TextureFormat::BC5) {
@@ -497,21 +495,22 @@ ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
             auto compressed = compressor->compress(mipRGBA[i].data(), mipRGBAWidth[i], mipRGBAHeight[i]);
             UInt32 compressedSize = static_cast<UInt32>(compressed.size());
             std::memcpy(dstPtr, compressed.data(), compressedSize);
-            texture._mipSizes[i] = compressedSize;
+            mipSizes[i] = compressedSize;
             dstPtr += compressedSize;
         } else {
             // 非压缩格式：直接复制 RGBA 数据
             UInt32 dataSize = mipRGBAWidth[i] * mipRGBAHeight[i] * 4;
             std::memcpy(dstPtr, mipRGBA[i].data(), dataSize);
-            texture._mipSizes[i] = dataSize;
+            mipSizes[i] = dataSize;
             dstPtr += dataSize;
         }
     }
 
-    texture._loaded = true;
+    texture.setMipmapLayout(std::move(mipOffsets), std::move(mipSizes));
+    texture.setLoaded(true);
 
     // 计算 GUID
-    lastGuid = ayt::storage::Guid::computeFromData(texture._imageData.data(), texture._imageData.size());
+    lastGuid = ayt::storage::Guid::computeFromData(texture.getImageDataBytes(), texture.getImageDataSize());
     texture.setGuid(lastGuid);
 
     // 保存到二进制
@@ -634,22 +633,20 @@ ConversionResult TextureConverter::convert() {
         totalSize += mipSizes[i];
     }
 
-    texture._imageData.resize(totalSize);
-    texture._mipOffsets.resize(mipCount);
-    texture._mipSizes.resize(mipCount);
-
-    UInt8* dstPtr = texture._imageData.data();
+    UInt8* dstPtr = texture.mutableImageData(totalSize);
+    std::vector<UInt32> mipOffsets(mipCount);
+    std::vector<UInt32> mipSizesOut(mipCount);
     for (UInt32 i = 0; i < mipCount; i++) {
-        texture._mipOffsets[i] = static_cast<UInt32>(dstPtr - texture._imageData.data());
-        texture._mipSizes[i] = mipSizes[i];
+        mipOffsets[i] = static_cast<UInt32>(dstPtr - texture.getImageDataBytes());
+        mipSizesOut[i] = mipSizes[i];
         std::memcpy(dstPtr, mipDatas[i].data(), mipSizes[i]);
         dstPtr += mipSizes[i];
     }
-
-    texture._loaded = true;
+    texture.setMipmapLayout(std::move(mipOffsets), std::move(mipSizesOut));
+    texture.setLoaded(true);
 
     // 计算 GUID
-    lastGuid = ayt::storage::Guid::computeFromData(texture._imageData.data(), texture._imageData.size());
+    lastGuid = ayt::storage::Guid::computeFromData(texture.getImageDataBytes(), texture.getImageDataSize());
     texture.setGuid(lastGuid);
 
     // 保存到二进制数据
@@ -751,23 +748,22 @@ std::vector<ConversionResult::ConvertedResource> TextureConverter::convertAll(
                 totalSize += mipSizes[j];
             }
 
-            texture._imageData.resize(totalSize);
-            texture._mipOffsets.resize(mipCount);
-            texture._mipSizes.resize(mipCount);
-
-            UInt8* dstPtr = texture._imageData.data();
+            UInt8* dstPtr = texture.mutableImageData(totalSize);
+            std::vector<UInt32> mipOffsets(mipCount);
+            std::vector<UInt32> mipSizesOut(mipCount);
             for (UInt32 j = 0; j < mipCount; j++) {
-                texture._mipOffsets[j] = static_cast<UInt32>(dstPtr - texture._imageData.data());
-                texture._mipSizes[j] = mipSizes[j];
+                mipOffsets[j] = static_cast<UInt32>(dstPtr - texture.getImageDataBytes());
+                mipSizesOut[j] = mipSizes[j];
                 std::memcpy(dstPtr, mipDatas[j].data(), mipSizes[j]);
                 dstPtr += mipSizes[j];
             }
+            texture.setMipmapLayout(std::move(mipOffsets), std::move(mipSizesOut));
         }
 
-        texture._loaded = true;
+        texture.setLoaded(true);
 
         // 计算 GUID
-        lastGuid = ayt::storage::Guid::computeFromData(texture._imageData.data(), texture._imageData.size());
+        lastGuid = ayt::storage::Guid::computeFromData(texture.getImageDataBytes(), texture.getImageDataSize());
         texture.setGuid(lastGuid);
 
         // 保存到二进制

@@ -27,7 +27,10 @@ struct Glyph {
 // ===== FontAsset — IFontAsset 实现类 =====
 class FontAsset : public IFontAsset {
     friend class FontLoader;
-    friend class FontConverter;
+    // F2.1: removed `friend class FontConverter;`. The audit confirmed
+    // FontConverter does not access any private members of FontAsset;
+    // it uses only the public setters (setName/setFontSize/setAtlasSize
+    // /addGlyph/setAtlasData) already declared below.
 
 public:
     FontAsset();

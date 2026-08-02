@@ -166,17 +166,18 @@ ConversionResult AudioConverter::convert() {
 
     // 创建 Audio
     Audio audio;
-    audio._name = getBaseName(sourcePath);
-    audio._sampleRate = outputSampleRate > 0 ? outputSampleRate : sampleRate;
-    audio._channels = outputChannels > 0 ? outputChannels : channels;
-    audio._bitsPerSample = outputBitsPerSample > 0 ? outputBitsPerSample : bitsPerSample;
-    audio._sampleCount = sampleCount;
-    audio._data = audioData;
+    audio.setName(getBaseName(sourcePath));
+    audio.setFormat(
+        outputSampleRate > 0 ? outputSampleRate : sampleRate,
+        outputChannels > 0 ? outputChannels : channels,
+        outputBitsPerSample > 0 ? outputBitsPerSample : bitsPerSample,
+        sampleCount);
+    audio.setData(audioData);
 
-    audio._loaded = true;
+    audio.setLoaded(true);
 
     // 计算 GUID
-    lastGuid = ayt::storage::Guid::computeFromData(audio._data.data(), audio._data.size());
+    lastGuid = ayt::storage::Guid::computeFromData(audio.getDataBytes(), audio.getDataBytesSize());
     audio.setGuid(lastGuid);
 
     // 保存到二进制数据
@@ -227,17 +228,18 @@ std::vector<ConversionResult::ConvertedResource> AudioConverter::convertAll(
 
         // 创建 Audio
         Audio audio;
-        audio._name = name;
-        audio._sampleRate = outputSampleRate > 0 ? outputSampleRate : static_cast<UInt32>(audioData.sampleRate);
-        audio._channels = outputChannels > 0 ? outputChannels : static_cast<UInt32>(audioData.channels);
-        audio._bitsPerSample = outputBitsPerSample > 0 ? outputBitsPerSample : static_cast<UInt32>(audioData.bitsPerSample);
-        audio._sampleCount = audioData.audioData.size() / ((audio._bitsPerSample / 8) * audio._channels);
-        audio._data = audioData.audioData;
+        audio.setName(name);
+        const UInt32 sr = outputSampleRate > 0 ? outputSampleRate : static_cast<UInt32>(audioData.sampleRate);
+        const UInt32 ch = outputChannels > 0 ? outputChannels : static_cast<UInt32>(audioData.channels);
+        const UInt32 bps = outputBitsPerSample > 0 ? outputBitsPerSample : static_cast<UInt32>(audioData.bitsPerSample);
+        const UInt64 samples = audioData.audioData.size() / ((bps / 8) * ch);
+        audio.setFormat(sr, ch, bps, samples);
+        audio.setData(audioData.audioData);
 
-        audio._loaded = true;
+        audio.setLoaded(true);
 
         // 计算 GUID
-        lastGuid = ayt::storage::Guid::computeFromData(audio._data.data(), audio._data.size());
+        lastGuid = ayt::storage::Guid::computeFromData(audio.getDataBytes(), audio.getDataBytesSize());
         audio.setGuid(lastGuid);
 
         // 保存到二进制

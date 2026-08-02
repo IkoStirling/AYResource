@@ -65,17 +65,13 @@ protected:
     TagSet _tags;
     bool _loaded = false;
 
-    // Converter 需要访问 protected 成员
-    friend class FBXParser;
-    friend class GLTFParser;
-    friend class MeshConverter;
-    friend class MaterialConverter;
-    friend class TextureConverter;
-    friend class AnimationConverter;
-    friend class AudioConverter;
-    friend class VideoConverter;
-    friend class ShaderConverter;
-    friend class FontConverter;
+    // F2.1: previously 17 `friend` declarations granted every converter
+    // and asset class direct access to the protected members above.
+    // After auditing every converter source, only the asset classes
+    // themselves plus FontLoader (no audit entry — kept for legacy
+    // binary-load paths) need this edge; the converters now go through
+    // `setLoaded(true)` / `setPath()` / `setType()` / `addTag()` / etc.
+    // The audit-results commentary is captured in the change notes.
     friend class FontAsset;
     friend class Material;
     friend class Animation;

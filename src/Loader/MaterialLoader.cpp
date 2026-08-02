@@ -29,7 +29,7 @@ struct MaterialBinaryHeader {
 
 Material::Material() = default;
 
-void Material::clear() {
+void Material::clearImpl() {
     _params.clear();
     _name.clear();
     _shader.clear();

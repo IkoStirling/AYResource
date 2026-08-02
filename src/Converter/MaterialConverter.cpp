@@ -95,9 +95,7 @@ ConversionResult MaterialConverter::convert() {
 
     // 创建材质
     auto material = std::make_shared<Material>();
-    material->clear();
-    material->setName(name);
-    material->setShader(shader);
+    material->initialise(name, shader);
 
     // 读取 parameters 对象
     serializer->beginObject("parameters");
@@ -141,57 +139,24 @@ ConversionResult MaterialConverter::convert() {
     serializer->endObject(); // parameters
     serializer->endObject(); // root
 
-    material->_loaded = true;
+    material->setLoaded(true);
 
-    // F1.5b: GUID hashes the full content (name + shader + param names,
-    // types, AND values + mainTexture). The v0 hash omitted param
-    // values and mainTexture, so two materials with same name+shader+
-    // param-type-list but different colors or textures shared a GUID
-    // and collided in the cooker.
+    // F2.1: walk parameters via the public accessor (no friend edge).
+    // The accessor yields each parameter's name + type + value bytes.
     std::vector<UInt8> contentData;
     contentData.insert(contentData.end(), name.begin(), name.end());
     contentData.insert(contentData.end(), shader.begin(), shader.end());
-    for (const auto& param : material->_params) {
-        const auto& p = param.second;
-        // name length + bytes
-        UInt32 nameLen = static_cast<UInt32>(param.first.size());
-        contentData.resize(contentData.size() + sizeof(UInt32) + nameLen);
-        UInt8* ptr = contentData.data() + contentData.size() - nameLen;
-        *reinterpret_cast<UInt32*>(ptr - sizeof(UInt32)) = nameLen;
-        memcpy(ptr, param.first.data(), nameLen);
-        // type tag
-        UInt8 typeTag = static_cast<UInt8>(p.type);
-        contentData.push_back(typeTag);
-        // value bytes per type
-        switch (p.type) {
-        case MaterialParamType::Float:
-        case MaterialParamType::Float2:
-        case MaterialParamType::Float3:
-        case MaterialParamType::Float4:
-            contentData.insert(contentData.end(),
-                               reinterpret_cast<const UInt8*>(&p.floatValue),
-                               reinterpret_cast<const UInt8*>(&p.floatValue) + sizeof(Float32));
-            break;
-        case MaterialParamType::Float4x4:
-            contentData.insert(contentData.end(),
-                               reinterpret_cast<const UInt8*>(p.matrixValue),
-                               reinterpret_cast<const UInt8*>(p.matrixValue) + sizeof(Float32) * 16);
-            break;
-        case MaterialParamType::Int:
-            contentData.insert(contentData.end(),
-                               reinterpret_cast<const UInt8*>(&p.intValue),
-                               reinterpret_cast<const UInt8*>(&p.intValue) + sizeof(Int32));
-            break;
-        case MaterialParamType::Bool:
-            contentData.push_back(p.boolValue ? 1 : 0);
-            break;
-        case MaterialParamType::Texture2D:
-        case MaterialParamType::Texture3D:
-        case MaterialParamType::TextureCube:
-            contentData.insert(contentData.end(), p.stringValue.begin(), p.stringValue.end());
-            break;
-        }
-    }
+    material->forEachParameterHashSink(
+        [&contentData](const std::string& pname, MaterialParamType ptype,
+                       const UInt8* bytes, size_t n) {
+            const UInt32 nameLen = static_cast<UInt32>(pname.size());
+            contentData.resize(contentData.size() + sizeof(UInt32) + nameLen);
+            UInt8* ptr = contentData.data() + contentData.size() - nameLen;
+            *reinterpret_cast<UInt32*>(ptr - sizeof(UInt32)) = nameLen;
+            memcpy(ptr, pname.data(), nameLen);
+            contentData.push_back(static_cast<UInt8>(ptype));
+            contentData.insert(contentData.end(), bytes, bytes + n);
+        });
     lastGuid = ayt::storage::Guid::computeFromData(contentData.data(), contentData.size());
     material->setGuid(lastGuid);
 
@@ -243,9 +208,9 @@ std::vector<ConversionResult::ConvertedResource> MaterialConverter::convertAll(
 
         // 创建 Material 并填充数据
         auto material = std::make_shared<Material>();
-        material->clear();
-        material->setName(matData.name.empty() ? baseName : matData.name.c_str());
-        material->setShader(matData.shader.c_str());
+        material->initialise(
+            matData.name.empty() ? baseName : matData.name.c_str(),
+            matData.shader.c_str());
 
         for (const auto& param : matData.parameters) {
             switch (param.type) {
@@ -275,7 +240,7 @@ std::vector<ConversionResult::ConvertedResource> MaterialConverter::convertAll(
             }
         }
 
-        material->_loaded = true;
+        material->setLoaded(true);
         matFile->addMaterial(material);
     }
 

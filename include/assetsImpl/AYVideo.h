@@ -9,7 +9,9 @@ namespace ayt::resource
 
 // ===== Video — IVideo 实现类 =====
 class Video : public IVideo {
-    friend class VideoConverter;
+    // F2.1: removed `friend class VideoConverter;`. Converter uses the
+    // public setters below (setName / setFrameInfo / setFrameData) to
+    // populate this asset without touching private fields.
 
 public:
     Video();
@@ -44,6 +46,30 @@ public:
 
     // ===== Setters =====
     void setName(const std::string& name) { _name = name; }
+    // F2.1: aggregates the wide fields + frameRate so the converter
+    // doesn't write to each public field directly. duration is computed
+    // here from frameCount/frameRate so converters don't have to repeat
+    // the formula.
+    void setFrameInfo(UInt32 width, UInt32 height, float frameRate,
+                      UInt32 frameCount, UInt32 frameSize) {
+        _width = width;
+        _height = height;
+        _frameRate = frameRate;
+        _frameCount = frameCount;
+        _frameSize = frameSize;
+        _duration = (frameRate > 0.0f)
+            ? static_cast<float>(frameCount) / frameRate
+            : 0.0f;
+    }
+    void setFrameData(std::vector<UInt8>&& bytes) { _frameData = std::move(bytes); }
+    void setFrameData(const std::vector<UInt8>& bytes) { _frameData = bytes; }
+    void setFrameData(const UInt8* bytes, size_t n) {
+        _frameData.assign(bytes, bytes + n);
+    }
+    // F2.1: read-only view of the full frame buffer (for callers that
+    // need to hash the asset bytes end-to-end, e.g. the converter GUID).
+    const UInt8* getFrameDataBytes() const { return _frameData.data(); }
+    size_t getFrameDataBytesSize() const { return _frameData.size(); }
 
     // ===== 属性访问 (用于 Converter/Loader) =====
     UInt32 _width = 0;

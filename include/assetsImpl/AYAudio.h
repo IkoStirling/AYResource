@@ -11,7 +11,9 @@ namespace ayt::resource
 
 // ===== Audio — IAudio 实现类 =====
 class Audio : public IAudio {
-    friend class AudioConverter;
+    // F2.1: removed `friend class AudioConverter;`. The converter now
+    // uses the public setters below (setName / setFormat / setData) to
+    // populate the asset without touching private members.
 
 public:
     Audio();
@@ -44,6 +46,24 @@ public:
     // ===== 创建测试数据 =====
     void createSineWave(Float32 frequency = 440.0f, Float32 duration = 1.0f);
     void createSilence(UInt64 sampleCount = 44100);
+
+    // ===== F2.1: public setters for converter population =====
+    void setName(const std::string& n) { _name = n; }
+    void setFormat(UInt32 sampleRate, UInt32 channels, UInt32 bitsPerSample, UInt64 sampleCount) {
+        _sampleRate = sampleRate;
+        _channels = channels;
+        _bitsPerSample = bitsPerSample;
+        _sampleCount = sampleCount;
+    }
+    void setData(std::vector<UInt8>&& bytes) { _data = std::move(bytes); }
+    void setData(const std::vector<UInt8>& bytes) { _data = bytes; }
+    void setData(const UInt8* bytes, size_t n) {
+        _data.assign(bytes, bytes + n);
+    }
+    // F2.1: read-only view of the raw PCM buffer (used by the converter
+    // to compute the content hash without friend access).
+    const UInt8* getDataBytes() const { return _data.data(); }
+    size_t getDataBytesSize() const { return _data.size(); }
 
     // ===== 属性访问 (用于 Converter/Loader) =====
     std::string _name;

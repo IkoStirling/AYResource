@@ -13,7 +13,10 @@ namespace ayt::resource
 
 // ===== Material — IMaterial 实现类 =====
 class Material : public IMaterial {
-    friend class MaterialConverter;
+    // F2.1: removed `friend class MaterialConverter;`. The converter now
+    // uses `forEachParameterHashSink(...)` (defined inline below) to walk
+    // `_params` for the F1.5b content-hash without touching private fields
+    // directly.
 
 public:
     Material();
@@ -92,6 +95,16 @@ public:
     // ===== 创建测试材质 =====
     void createDefault();
 
+    // F2.1: replace friend access for converter reset paths.
+    void clear() { clearImpl(); }
+    // Initialise a fresh Material with a name + shader (replaces the
+    // converter's old pattern of `material->clear(); setName(); setShader();`).
+    void initialise(const std::string& name, const std::string& shader) {
+        clearImpl();
+        _name = name;
+        _shader = shader;
+    }
+
     template<typename Fn>
     void forEachParameter(Fn&& fn) const
     {
@@ -100,8 +113,67 @@ public:
         }
     }
 
+    // F2.1: serialize all parameter values into a binary buffer usable
+    // for content-hashing (the F1.5b MaterialConverter fix). The callback
+    // is invoked once per parameter in iteration order with the type tag
+    // and a byte span of the parameter's value storage. The caller can
+    // stream the bytes into a SHA-256 / FGuid accumulator without ever
+    // reaching into the private `_params` map.
+    template<typename Fn>
+    void forEachParameterHashSink(Fn&& fn) const
+    {
+        for (const auto& entry : _params) {
+            const auto& pv = entry.second;
+            const std::string& name = entry.first;
+            switch (pv.type) {
+            case MaterialParamType::Float:
+                fn(name, pv.type,
+                   reinterpret_cast<const UInt8*>(&pv.floatValue),
+                   sizeof(Float32));
+                break;
+            case MaterialParamType::Float2:
+                fn(name, pv.type,
+                   reinterpret_cast<const UInt8*>(pv.float2Value),
+                   sizeof(Float32) * 2);
+                break;
+            case MaterialParamType::Float3:
+                fn(name, pv.type,
+                   reinterpret_cast<const UInt8*>(pv.float3Value),
+                   sizeof(Float32) * 3);
+                break;
+            case MaterialParamType::Float4:
+                fn(name, pv.type,
+                   reinterpret_cast<const UInt8*>(pv.float4Value),
+                   sizeof(Float32) * 4);
+                break;
+            case MaterialParamType::Float4x4:
+                fn(name, pv.type,
+                   reinterpret_cast<const UInt8*>(pv.matrixValue),
+                   sizeof(Float32) * 16);
+                break;
+            case MaterialParamType::Int:
+                fn(name, pv.type,
+                   reinterpret_cast<const UInt8*>(&pv.intValue),
+                   sizeof(Int32));
+                break;
+            case MaterialParamType::Bool:
+                fn(name, pv.type,
+                   reinterpret_cast<const UInt8*>(&pv.boolValue),
+                   sizeof(Bool));
+                break;
+            case MaterialParamType::Texture2D:
+            case MaterialParamType::Texture3D:
+            case MaterialParamType::TextureCube:
+                fn(name, pv.type,
+                   reinterpret_cast<const UInt8*>(pv.stringValue.data()),
+                   pv.stringValue.size());
+                break;
+            }
+        }
+    }
+
 private:
-    void clear();
+    void clearImpl();
 
     FGuid _guid;  // 资源唯一标识
 
