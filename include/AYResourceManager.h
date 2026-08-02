@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -18,6 +19,43 @@
 
 namespace ayt::resource
 {
+
+// F3.3: small LRU for the open-pak reader map. Reset on every touch()
+// and pops the oldest entry when evictOldestExcept() is called. Tracks
+// only ordering — the actual lookup is still _openedPaks.find().
+class OpenPaksLru {
+public:
+    void touch(const std::string& key) {
+        auto it = std::find(_order.begin(), _order.end(), key);
+        if (it != _order.end()) {
+            _order.erase(it);
+        }
+        _order.push_back(key);
+    }
+
+    void forget(const std::string& key) {
+        auto it = std::find(_order.begin(), _order.end(), key);
+        if (it != _order.end()) {
+            _order.erase(it);
+        }
+    }
+
+    std::string evictOldestExcept(const std::string& keep) {
+        for (auto it = _order.begin(); it != _order.end(); ++it) {
+            if (*it != keep) {
+                const std::string victim = *it;
+                _order.erase(it);
+                return victim;
+            }
+        }
+        return {};
+    }
+
+    void clear() { _order.clear(); }
+
+private:
+    std::vector<std::string> _order;
+};
 
 // P1: unified load lifecycle for Manager-owned paths.
 // Failed may still have a placeholder in cache (magenta tex / default mat).
@@ -156,6 +194,18 @@ public:
     /// @brief Preload resources with specific tag (e.g., "AlwaysLoaded")
     void preloadResourcesWithTag(const std::string& tag, const std::string& category = "");
 
+    // ===== F3.3: cap + invalidate pak reader cache =====
+    /// Drop a single pak reader from the LRU cache (file descriptor
+    /// released). Safe to call while other loads are in flight; the
+    /// next _getOrOpenPak will reopen. Pass empty string to drop all.
+    /// Returns true if a reader was actually removed.
+    bool invalidatePak(const std::string& pakPath = {});
+    /// Cap the open-pak count. 0 = unlimited (legacy default).
+    /// When the cap is exceeded, the least-recently-touched pak is
+    /// closed (the underlying IPackageReader's destructor closes the fd).
+    void setOpenPaksCap(size_t cap) { _openPaksCap = cap; }
+    size_t openPaksCount() const;
+
 private:
     ResourceManager();
     ~ResourceManager();
@@ -181,6 +231,9 @@ private:
     // when written from a load worker.
     mutable std::mutex _paksMutex;
     std::unordered_map<std::string, std::shared_ptr<ayt::storage::IPackageReader>> _openedPaks;
+    // F3.3: cap + LRU for the pak reader map. 0 = unlimited.
+    size_t _openPaksCap = 0;
+    std::unique_ptr<OpenPaksLru> _openPaksLru;
     AsyncLoader _asyncLoader;
     HotReloadWatcher _hotReloadWatcher;
     std::unordered_map<std::string, std::string> _resourceTypes;

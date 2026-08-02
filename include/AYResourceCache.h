@@ -60,6 +60,15 @@ public:
 
     void trimToConfig();
     void clear();
+    /// F3.4: replace the cache's config + state synchronously under the
+    /// internal mutex. The previous setCacheConfig on ResourceManager
+    /// used placement-new on the non-trivially-destructible member,
+    /// which is UB if any other thread is reading the cache at the
+    /// moment the destructor runs. The lock here only serialises calls
+    /// to rebuild() — the long-standing getStrongCache() returning a
+    /// reference while releasing the lock is a separate concern (see
+    /// the existing WARNING comment in this header).
+    void rebuild(const Config& config);
     /// Expire grace pins; call from ResourceManager::update.
     void tick(float deltaTime);
 

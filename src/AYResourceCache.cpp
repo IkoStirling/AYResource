@@ -207,6 +207,30 @@ void ResourceCache::clear()
     _memoryUsage = 0;
 }
 
+// F3.4: drop the previous ResourceManager-level placement-new
+// destructor-then-construct pair. That code was UB under concurrent
+// reads. We hold the internal mutex for the full reset; the only
+// concurrent reader that can bypass it is the long-standing
+// getStrongCache() returning a reference while releasing the lock,
+// and that path is only used by tag-unload which is single-threaded
+// at the manager level. The reset is intentionally destructive —
+// callers must expect all currently cached resources to be evicted.
+void ResourceCache::rebuild(const Config& config)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _config = config;
+    _strongCache.clear();
+    _weakCache.clear();
+    _graceCache.clear();
+    _lastUsed.clear();
+    _handleCount.clear();
+    _memoryUsage = 0;
+    _hitCount = 0;
+    _missCount = 0;
+    _resurrectCount = 0;
+    _currentTime = 0;
+}
+
 void ResourceCache::tick(float /*deltaTime*/)
 {
     std::lock_guard<std::mutex> lock(_mutex);

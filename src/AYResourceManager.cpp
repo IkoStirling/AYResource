@@ -75,6 +75,9 @@ std::shared_ptr<ayt::storage::IPackageReader> ResourceManager::_getOrOpenPak(con
         std::lock_guard<std::mutex> lock(_paksMutex);
         auto it = _openedPaks.find(resolved);
         if (it != _openedPaks.end()) {
+            if (_openPaksLru) {
+                _openPaksLru->touch(resolved);
+            }
             return it->second;
         }
     }
@@ -89,10 +92,60 @@ std::shared_ptr<ayt::storage::IPackageReader> ResourceManager::_getOrOpenPak(con
     // have opened the same pak in between. Prefer the existing entry.
     auto it = _openedPaks.find(resolved);
     if (it != _openedPaks.end()) {
+        if (_openPaksLru) {
+            _openPaksLru->touch(resolved);
+        }
         return it->second;
+    }
+
+    // F3.3: cap the open-pak count via LRU eviction. When the cap is
+    // reached, the next insertion drops the least-recently-touched
+    // pak's reader (closes its file descriptor).
+    if (_openPaksCap > 0 && _openedPaks.size() >= _openPaksCap) {
+        if (!_openPaksLru) {
+            _openPaksLru = std::make_unique<OpenPaksLru>();
+        }
+        const std::string evictPath = _openPaksLru->evictOldestExcept(resolved);
+        if (!evictPath.empty()) {
+            _openedPaks.erase(evictPath);
+        }
+    }
+    if (_openPaksLru) {
+        _openPaksLru->touch(resolved);
     }
     _openedPaks[resolved] = std::move(reader);
     return _openedPaks[resolved];
+}
+
+size_t ResourceManager::openPaksCount() const {
+    std::lock_guard<std::mutex> lock(_paksMutex);
+    return _openedPaks.size();
+}
+
+bool ResourceManager::invalidatePak(const std::string& pakPath) {
+    std::lock_guard<std::mutex> lock(_paksMutex);
+    if (pakPath.empty()) {
+        const size_t n = _openedPaks.size();
+        _openedPaks.clear();
+        if (_openPaksLru) {
+            _openPaksLru->clear();
+        }
+        return n > 0;
+    }
+    std::string resolved = pakPath;
+    if (!ayt::io::path::isAbsolute(resolved) && !_dbBaseDir.empty()) {
+        resolved = ayt::io::path::join(_dbBaseDir, resolved);
+    }
+    resolved = normalizeResourcePath(resolved);
+    auto it = _openedPaks.find(resolved);
+    if (it == _openedPaks.end()) {
+        return false;
+    }
+    _openedPaks.erase(it);
+    if (_openPaksLru) {
+        _openPaksLru->forget(resolved);
+    }
+    return true;
 }
 
 void ResourceManager::preloadResourcesWithTag(const std::string& tag, const std::string& category) {
@@ -247,6 +300,12 @@ std::shared_ptr<IResource> ResourceManager::_installPlaceholder(const std::strin
         mat->createDefault();
         placeholder = mat;
     } else {
+        // F3.5: previously swallowed silently — game ran with a missing
+        // placeholder and rendered as a black material forever. Now
+        // noisy at least on the path that has no fallback.
+        std::fprintf(stderr,
+                     "[ResourceManager] _installPlaceholder no template for type '%s' (path '%s')\n",
+                     type.c_str(), path.c_str());
         _loadStates[path] = ResourceLoadState::Failed;
         return nullptr;
     }
@@ -387,9 +446,11 @@ void ResourceManager::unloadTaggedCategory(const std::string& category) {
 }
 
 void ResourceManager::setCacheConfig(const ResourceCache::Config& config) {
-    // 使用placement new重建_cache（因为mutex不可复制）
-    _cache.~ResourceCache();
-    new (&_cache) ResourceCache(config);
+    // F3.4: previously did placement-new on the non-trivially-destructible
+    // member, which is UB if any other thread is reading the cache at
+    // the moment the destructor runs. Now delegated to ResourceCache::rebuild
+    // which holds the cache's internal mutex for the full reset.
+    _cache.rebuild(config);
 }
 
 void ResourceManager::trimCache() {

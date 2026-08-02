@@ -3,6 +3,7 @@
 #include "ayio/File.h"
 #include <AYSerializer.h>
 #include <aystorage/Guid.h>
+#include <cstdio>
 
 namespace ayt::resource
 {
@@ -90,6 +91,13 @@ ConversionResult MaterialConverter::convert() {
     serializer->field("name", name);
     serializer->field("shader", shader);
     if (shader.empty()) {
+        // F3.5: previously a silent fallback. Now warn so missing-shader
+        // problems surface in the cook log instead of the material
+        // showing up as a duplicated phantom pbr.phoskia in the cooker.
+        std::fprintf(stderr,
+                     "[MaterialConverter] source '%s' has no 'shader' field; "
+                     "falling back to '%s' — verify the source JSON\n",
+                     sourcePath.c_str(), "shaders/pbr.phoskia");
         shader = "shaders/pbr.phoskia";
     }
 
