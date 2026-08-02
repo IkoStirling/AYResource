@@ -1,6 +1,6 @@
 # AYResource — 完整资源管线路图（P0–P6）
 
-**状态**: 进行中（P0–P4 ✅；P5 待开工）  
+**状态**: 进行中（P0–P5 ✅；P6 待开工）  
 **日期**: 2026-08-02  
 **范围**: 架构一致性与端到端闭环，**不是**再堆具体资源类型（`.aymesh` / `.ayanm` 等）。
 
@@ -107,13 +107,19 @@ Bind:     RenderAssetBridge → GPU                                      ✅ 有
 
 ---
 
-### P5 — Editor / CLI 导入编排
+### P5 — Editor / CLI 导入编排 ✅
 
 **要做的事**：
 
 - 统一 import 编排（FBX → Intermediate → converters → cache 目录）
 - 进度 / 取消 / 错误报告对 Editor 可用
 - 与现有 `EditorShellDemo` 默认 import 路径对齐
+
+**落地**：
+
+- **库核心** `AYImportJob`（`importAsset` / `importAssetBatch` + `ImportProgress` / `ImportCancelToken`）
+- **工具 exe** `AYTool/import_tool`（薄 CLI；`--in` / `--out` / `--force`；支持 batch）
+- **Editor** `ayt::editor::Importer` 改为调用 `importAsset`；默认仍写 `ayeditor_cache/assets\`（`--import` / Sour.fbx 不变）
 
 ---
 
@@ -160,7 +166,7 @@ P0 是工业级管线的前提；在 P0 完成前，不要并行大开 P4/P5 新
 | P2 热重载 E2E | ✅ | FileWatcher + L2 invalidate + L3 re-upload |
 | P3 异步与缓存硬化 | ✅ | AYTask pool + grace resurrect + cache index |
 | P4 Cook/DB/pak | ✅ | AYCookShip + cook_tool + openDatabase |
-| P5 Editor/CLI 编排 | 🔲 | |
+| P5 Editor/CLI 编排 | ✅ | AYImportJob + import_tool + Editor façade |
 | P6 跨模块契约 | 🔲 | |
 
 ---

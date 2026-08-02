@@ -128,12 +128,23 @@ FileWatcher / mtime → HotReloadWatcher (debounce)
 
 Load order after `openDatabase`: **DB record → pak (`in_package`) → loose file fallback**.
 
+## 7e. Import orchestration (P5)
+
+| Piece | Location |
+|-------|----------|
+| Core API | `AYResource::importAsset` / `importAssetBatch` (`AYImportJob.h`) |
+| CLI | `AYTool/import_tool` → `--in <src> --out <assetsDir>` |
+| Editor | `ayt::editor::Importer::importFile` → thin wrapper (cache: `ayeditor_cache/assets\`) |
+
+Progress via `ImportProgressFn`; cooperative cancel via `ImportCancelToken` (between stages).
+`.aydep.json` sidecar enables cache reuse (same rules as Editor character import).
+
 ## 8. Public include surface (Phase 3)
 
 Consumers should include `AYResource.h` and link `AYResource`. The following are **PUBLIC**:
 
 - `AYResource.h`, `interface/**`, `interface/assetsDefs/**`
-- `include/AYResource*.h`, `include/AYAssetPath.h`, `include/AYAsyncLoader.h`, `include/AYHotReloadWatcher.h`, `include/AYLooseDependency.h`
+- `include/AYResource*.h`, `include/AYAssetPath.h`, `include/AYAsyncLoader.h`, `include/AYHotReloadWatcher.h`, `include/AYLooseDependency.h`, `include/AYCookShip.h`, `include/AYImportJob.h`
 
 The following are **PRIVATE** to the library and unit tests (not propagated to dependents):
 
