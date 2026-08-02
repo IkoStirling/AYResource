@@ -87,6 +87,9 @@ public:
     std::shared_ptr<ResourceHandle<T>> createHandle(const std::string& filepath);
 
     // ===== Unload/Reload =====
+    // L2-only: removes cache residency. Does NOT notify L3 / setOnHotReload.
+    // GPU handles remain valid until Renderer destroy* or hot-reload refresh.
+    // See docs/ownership-contracts.md (P6).
     void unloadResource(const std::string& filepath);
     void reloadResource(const std::string& filepath);
     void unloadAll();
@@ -99,6 +102,7 @@ public:
 
     // ===== LRU management =====
     void setCacheConfig(const ResourceCache::Config& config);
+    /// Demote under budget; does NOT notify L3 (same contract as unload*).
     void trimCache();
 
     // ===== Persistent cache =====
@@ -109,6 +113,8 @@ public:
     void watchResource(const std::string& filepath);
     void unwatchResource(const std::string& filepath);
     /// Invoked after L2 invalidate+reload for a changed path (L3 / game hooks).
+    /// This is the only automatic L2→L3 sync path (Renderer: onResourceFileChanged).
+    /// Not called from unload*/trimCache.
     void setOnHotReload(HotReloadWatcher::FileChangeCallback callback);
     /// When true (default), successful loads auto-watch the loose file path.
     void setAutoWatchLoadedResources(bool enabled);

@@ -1,6 +1,6 @@
 # AYResource — 完整资源管线路图（P0–P6）
 
-**状态**: 进行中（P0–P5 ✅；P6 待开工）  
+**状态**: P0–P6 ✅（路线图收束）  
 **日期**: 2026-08-02  
 **范围**: 架构一致性与端到端闭环，**不是**再堆具体资源类型（`.aymesh` / `.ayanm` 等）。
 
@@ -123,13 +123,19 @@ Bind:     RenderAssetBridge → GPU                                      ✅ 有
 
 ---
 
-### P6 — 跨模块 load / own / unload 契约
+### P6 — 跨模块 load / own / unload 契约 ✅
 
 **要做的事**：
 
 - 明确谁持有 L2 `shared_ptr`、谁持有 L3 handle
 - unload / trim 时的跨模块通知约定
 - 文档化「游戏代码只 include `interface/assetsDefs/IAY*.h`」的强制边界（CR / 测试已有部分）
+
+**落地**：
+
+- 契约文档 `docs/ownership-contracts.md`（L2 cache/handle vs L3 RRM；unload/trim 不通知 L3；仅热更 `setOnHotReload`）
+- API 注释：`ResourceManager` unload/trim/hot-reload；`RenderResourceManager` L3 寿命
+- 测试：`AYTest_ResourcePipelineP6` + `PublicApiSurface` 扫描（allowlist：`docs/private-include-allowlist.txt`）
 
 ---
 
@@ -167,7 +173,7 @@ P0 是工业级管线的前提；在 P0 完成前，不要并行大开 P4/P5 新
 | P3 异步与缓存硬化 | ✅ | AYTask pool + grace resurrect + cache index |
 | P4 Cook/DB/pak | ✅ | AYCookShip + cook_tool + openDatabase |
 | P5 Editor/CLI 编排 | ✅ | AYImportJob + import_tool + Editor façade |
-| P6 跨模块契约 | 🔲 | |
+| P6 跨模块契约 | ✅ | ownership-contracts + PublicApiSurface scan |
 
 ---
 
@@ -175,4 +181,5 @@ P0 是工业级管线的前提；在 P0 完成前，不要并行大开 P4/P5 新
 
 - `AYResource/design.md` — 三层模型与 API
 - `AYResource/docs/runtime-conventions.md` — 运行时约定
+- `AYResource/docs/ownership-contracts.md` — L2/L3 持有与 unload/热更契约（P6）
 - `AYResource/docs/phase0-follow-ups.md` — Phase 0 遗留 F-01..F-03

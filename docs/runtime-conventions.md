@@ -139,6 +139,17 @@ Load order after `openDatabase`: **DB record → pak (`in_package`) → loose fi
 Progress via `ImportProgressFn`; cooperative cancel via `ImportCancelToken` (between stages).
 `.aydep.json` sidecar enables cache reuse (same rules as Editor character import).
 
+## 7f. Ownership / unload (P6)
+
+Full contract: [`ownership-contracts.md`](ownership-contracts.md).
+
+| Holder | Owns |
+|--------|------|
+| `ResourceCache` + `ResourceHandle` | L2 `shared_ptr<IResource>` |
+| `RenderResourceManager` | L3 opaque GPU handles (no retained L2 ptr) |
+
+`unload*` / `trimCache` → **L2 only** (no L3 notify). Hot-reload → `setOnHotReload` → Renderer `onResourceFileChanged` (stable ids).
+
 ## 8. Public include surface (Phase 3)
 
 Consumers should include `AYResource.h` and link `AYResource`. The following are **PUBLIC**:
@@ -152,6 +163,8 @@ The following are **PRIVATE** to the library and unit tests (not propagated to d
 - `include/Loader/**`, `include/Converter/**` — loaders and offline converters
 
 Legacy `.ayshader` / `ShaderLoader` / `ShaderConverter` remain for offline tooling only; they are **not** registered in `initializeLoaders()`. Prefer **not** to `#include "assetsImpl/..."` from engine code; use `interface/assetsDefs/I*.h` instead.
+
+Enforcement (P6): `AYTest_PublicApiSurface` scans `AYRuntime` production sources; exceptions live in [`private-include-allowlist.txt`](private-include-allowlist.txt).
 
 ## 9. Legacy
 

@@ -6,3 +6,5 @@ test_output_static
 !docs/runtime-conventions.md
 !docs/phase0-follow-ups.md
 !docs/pipeline-roadmap.md
+!docs/ownership-contracts.md
+!docs/private-include-allowlist.txt

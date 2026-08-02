@@ -17,6 +17,7 @@ add_executable(${MODULE_NAME}
     AYTest_ResourcePipelineP3.cpp
     AYTest_ResourcePipelineP4.cpp
     AYTest_ResourcePipelineP5.cpp
+    AYTest_ResourcePipelineP6.cpp
     AYTest_MaterialFile.cpp
     AYTest_AssetPath.cpp
     AYTest_MeshLoader.cpp
@@ -47,6 +48,12 @@ target_include_directories(${MODULE_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../interface
     ${CMAKE_CURRENT_SOURCE_DIR}/../interface/assetsDefs
     ${AYRESOURCE_INTERNAL_INCLUDE_DIRS}
+)
+
+# Absolute AYRuntime root for PublicApiSurface private-include scan (P6).
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../.." _ay_runtime_root)
+target_compile_definitions(${MODULE_NAME} PRIVATE
+    AY_RUNTIME_ROOT="${_ay_runtime_root}"
 )
 
 ay_configure_test_tmpdir(${MODULE_NAME})
