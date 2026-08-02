@@ -14,6 +14,7 @@
 #include "aystorage/IPackageReader.h"
 #include "AYAsyncLoader.h"
 #include "AYHotReloadWatcher.h"
+#include <ayio/Path.h>
 
 namespace ayt::resource
 {
@@ -112,10 +113,17 @@ public:
     void savePersistentCache(const std::string& path);
     void loadPersistentCache(const std::string& path);
 
-    // ===== Hot reload =====
+    // ===== Hot reload (P2) =====
     void watchResource(const std::string& filepath);
     void unwatchResource(const std::string& filepath);
+    /// Invoked after L2 invalidate+reload for a changed path (L3 / game hooks).
     void setOnHotReload(HotReloadWatcher::FileChangeCallback callback);
+    /// When true (default), successful loads auto-watch the loose file path.
+    void setAutoWatchLoadedResources(bool enabled);
+    bool autoWatchLoadedResources() const { return _autoWatchLoaded; }
+    /// Hot-reload quiet window (default ~0.1s). Tests may set 0.
+    void setHotReloadDebounceSeconds(float seconds);
+    void setHotReloadPollIntervalSeconds(float seconds);
 
     // ===== Update loop =====
     void update(float deltaTime);
@@ -156,6 +164,7 @@ private:
     void _loadIntrinsicDependencies(const std::string& filepath, const IResource& resource);
     void _onResourceLoaded(const std::string& filepath, std::shared_ptr<IResource> resource);
     std::shared_ptr<IResource> _installPlaceholder(const std::string& filepath);
+    void _handleHotReload(const std::string& filepath);
     std::shared_ptr<ayt::storage::IPackageReader> _getOrOpenPak(const std::string& pakPath);
     std::shared_ptr<IResource> _loadFromDatabase(const std::string& filepath);
 
@@ -174,16 +183,21 @@ private:
     std::unordered_map<std::string, ResourceLoadState> _loadStates;
     // Guards recursive dep loads against cycles (mesh→mat→…→mesh).
     std::unordered_set<std::string> _loadingPaths;
+    HotReloadWatcher::FileChangeCallback _userHotReloadCb;
+    bool _autoWatchLoaded = true;
 };
 
 template<typename T>
 std::shared_ptr<ResourceHandle<T>> ResourceManager::createHandle(const std::string& filepath) {
-    // P1: Handle loads must share the Manager graph (sidecar + intrinsic deps).
-    auto loaderCb = [this](const std::string& path) -> std::shared_ptr<IResource> {
-        return _loadInternal(path);
+    // P1/P2: Normalize so handle path matches cache keys used by _loadInternal /
+    // hot-reload eviction (otherwise Handle sticks to a stale duplicate entry).
+    const std::string path =
+        filepath.empty() ? filepath : ayt::io::path::normalize(filepath);
+    auto loaderCb = [this](const std::string& p) -> std::shared_ptr<IResource> {
+        return _loadInternal(p);
     };
 
-    return std::make_shared<ResourceHandle<T>>(filepath, &_cache, std::move(loaderCb), true);
+    return std::make_shared<ResourceHandle<T>>(path, &_cache, std::move(loaderCb), true);
 }
 
 } // namespace ayt::resource

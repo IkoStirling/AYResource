@@ -25,7 +25,12 @@ std::string normalizeResourcePath(const std::string& path)
 ResourceManager::ResourceManager()
     : _cache(ResourceCache::Config{})
     , _db(ayt::storage::IStorageDatabase::create(":memory:"))
-    , _hotReloadWatcher(HotReloadWatcher{}) {
+    , _hotReloadWatcher()
+{
+    // P2: Manager owns L2 invalidate; user callback is post-reload notify.
+    _hotReloadWatcher.setOnFileChanged([this](const std::string& path) {
+        _handleHotReload(path);
+    });
 }
 
 ResourceManager::~ResourceManager() = default;
@@ -158,6 +163,31 @@ void ResourceManager::_onResourceLoaded(const std::string& filepath,
     if (resource) {
         _loadIntrinsicDependencies(filepath, *resource);
     }
+    if (_autoWatchLoaded) {
+        watchResource(filepath);
+    }
+}
+
+void ResourceManager::_handleHotReload(const std::string& filepath) {
+    const std::string path = normalizeResourcePath(filepath);
+    if (path.empty()) {
+        return;
+    }
+
+    std::fprintf(stderr, "[ResourceManager] hot-reload L2 '%s'\n", path.c_str());
+
+    // Evict stale L2 instance (handles re-fetch via ResourceHandle::get).
+    unloadResource(path);
+
+    // Eager reload so dependents / L3 see fresh data on the same tick.
+    std::shared_ptr<IResource> reloaded = _loadInternal(path);
+    if (!reloaded) {
+        (void)_installPlaceholder(path);
+    }
+
+    if (_userHotReloadCb) {
+        _userHotReloadCb(path);
+    }
 }
 
 std::shared_ptr<IResource> ResourceManager::_installPlaceholder(const std::string& filepath) {
@@ -273,6 +303,7 @@ void ResourceManager::reloadResource(const std::string& filepath) {
 }
 
 void ResourceManager::unloadAll() {
+    _hotReloadWatcher.unwatchAll();
     _cache.clear();
     _resourceTypes.clear();
     _loadStates.clear();
@@ -333,18 +364,31 @@ void ResourceManager::loadPersistentCache(const std::string& path) {
 }
 
 void ResourceManager::watchResource(const std::string& filepath) {
-    _hotReloadWatcher.watch(filepath);
+    _hotReloadWatcher.watch(normalizeResourcePath(filepath));
 }
 
 void ResourceManager::unwatchResource(const std::string& filepath) {
-    _hotReloadWatcher.unwatch(filepath);
+    _hotReloadWatcher.unwatch(normalizeResourcePath(filepath));
 }
 
 void ResourceManager::setOnHotReload(HotReloadWatcher::FileChangeCallback callback) {
-    _hotReloadWatcher.setOnFileChanged(callback);
+    _userHotReloadCb = std::move(callback);
+}
+
+void ResourceManager::setAutoWatchLoadedResources(bool enabled) {
+    _autoWatchLoaded = enabled;
+}
+
+void ResourceManager::setHotReloadDebounceSeconds(float seconds) {
+    _hotReloadWatcher.setDebounceSeconds(seconds);
+}
+
+void ResourceManager::setHotReloadPollIntervalSeconds(float seconds) {
+    _hotReloadWatcher.setPollInterval(seconds);
 }
 
 void ResourceManager::update(float deltaTime) {
+    (void)deltaTime;
     _hotReloadWatcher.update();
     _asyncLoader.update(deltaTime);
 }

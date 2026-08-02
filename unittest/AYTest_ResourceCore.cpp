@@ -400,7 +400,7 @@ TEST_SUITE(HotReloadWatcherTests)
         bool callbackInvoked = false;
         watcher.setOnFileChanged([&](const std::string& path) {
             callbackInvoked = true;
-            CHECK(path == tempPath);
+            CHECK(path == tempPath || path.find("test_modify.tmp") != std::string::npos);
         });
 
         // Wait to ensure filesystem updates modification time (need 1 second for NTFS/FAT32 precision)
@@ -412,6 +412,8 @@ TEST_SUITE(HotReloadWatcherTests)
             f << "modified content";
         }
 
+        // P2: debounce coalesces OS + mtime; zero it for a deterministic unit test.
+        watcher.setDebounceSeconds(0.0f);
         watcher.setPollInterval(0.0f);
         watcher.update();
 

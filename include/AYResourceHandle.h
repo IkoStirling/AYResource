@@ -93,6 +93,21 @@ ResourceHandle<T>::~ResourceHandle() {
 
 template<typename T>
 std::shared_ptr<T> ResourceHandle<T>::get() {
+    // P2: after hot-reload the cache holds a new instance; don't stick
+    // to a stale shared_ptr forever.
+    if (cache) {
+        auto current = cache->get(path);
+        if (current) {
+            if (current != resource) {
+                resource = current;
+                if (onLoaded) {
+                    onLoaded(std::static_pointer_cast<T>(resource));
+                }
+            }
+            return std::static_pointer_cast<T>(resource);
+        }
+        resource = nullptr;
+    }
     if (!resource) {
         loadNow();
     }
@@ -107,7 +122,6 @@ void ResourceHandle<T>::loadNow() {
     if (cache) {
         resource = cache->get(path);
         if (resource) {
-            // Notify callback if set
             if (onLoaded) {
                 onLoaded(std::static_pointer_cast<T>(resource));
             }
@@ -115,15 +129,13 @@ void ResourceHandle<T>::loadNow() {
         }
     }
 
-    // Not in cache, use loader callback to load
+    // Not in cache, use loader callback to load (Manager::_loadInternal).
     if (loaderCallback) {
         resource = loaderCallback(path);
         if (resource) {
-            // Add to strong cache if cache is available
             if (cache) {
                 cache->putStrong(path, resource);
             }
-            // Notify callback if set
             if (onLoaded) {
                 onLoaded(std::static_pointer_cast<T>(resource));
             }

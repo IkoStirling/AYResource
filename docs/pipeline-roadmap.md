@@ -1,6 +1,6 @@
 # AYResource — 完整资源管线路图（P0–P6）
 
-**状态**: 进行中（P0 ✅；P1 ✅ 依赖图 + LoadState/placeholder；P2 待开工）  
+**状态**: 进行中（P0–P2 ✅；P3 待开工）  
 **日期**: 2026-08-02  
 **范围**: 架构一致性与端到端闭环，**不是**再堆具体资源类型（`.aymesh` / `.ayanm` 等）。
 
@@ -66,13 +66,17 @@ Bind:     RenderAssetBridge → GPU                                      ✅ 有
 
 ---
 
-### P2 — 热重载端到端
+### P2 — 热重载端到端 ✅
 
-**要做的事**：
+**已做（2026-08-02）**：
 
-- watch → invalidate L2 → 通知 L3 丢弃 GPU 句柄 → 重新 load + re-upload
-- 覆盖 mesh / material / texture / shader 关联材料
-- 与 `HotReloadWatcher` + `FileWatcher`（AYIO）打通
+- `HotReloadWatcher` → AYIO `FileWatcher` + mtime fallback + debounce
+- Manager：load 后 auto-watch；变更时 unload→`_loadInternal`；`setOnHotReload` 为 post-L2 通知
+- `ResourceHandle::get` 检测 cache 实例替换
+- Renderer：`pollResourceHotReload` + `onResourceFileChanged`（mesh/mat/tex 保 handle id 重传）
+- Shader→material 仍走既有 `pollShaderHotReload`（AYShader 独立路径）
+
+**仍留给后续**：反向依赖扇出（tex 变更刷新引用它的 mat）、pak 内资源热更、AY2D tilemap 订阅。
 
 ---
 
@@ -146,7 +150,7 @@ P0 是工业级管线的前提；在 P0 完成前，不要并行大开 P4/P5 新
 |----|------|------|
 | P0 统一运行时入口 | ✅ | `loadMesh` / `loadMaterial` / `loadTexture` → `ResourceManager` |
 | P1 依赖图与加载语义 | ✅ | intrinsic deps + LoadState + placeholders |
-| P2 热重载 E2E | 🔲 | AYIO FileWatcher harden ✅（P2 接线待做） |
+| P2 热重载 E2E | ✅ | FileWatcher + L2 invalidate + L3 re-upload |
 | P3 异步与缓存硬化 | 🔲 部分 | F1.1 cancel race ✅；F1.4 pak mutex ✅ |
 | P4 Cook/DB/pak | 🔲 | |
 | P5 Editor/CLI 编排 | 🔲 | |

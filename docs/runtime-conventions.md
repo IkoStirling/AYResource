@@ -96,6 +96,19 @@ Missing typed deps (`.aymat` / `.aytex`) are marked `ResourceLoadState::Failed` 
 receive a placeholder in cache (default material / magenta 1×1 texture) so L3 bind
 does not see a null. Primary load failure still returns `nullptr`.
 
+## 7b. Hot reload (P2)
+
+```
+FileWatcher / mtime → HotReloadWatcher (debounce)
+  → ResourceManager unload + _loadInternal          (L2)
+  → setOnHotReload callback
+       → RenderResourceManager.onResourceFileChanged (L3, stable ids)
+```
+
+- Successful loose loads auto-`watchResource` (disable via `setAutoWatchLoadedResources(false)`).
+- Call `Renderer::pollResourceHotReload()` each frame (wired in `RendererSubSystem`).
+- Shader source hot-reload remains `pollShaderHotReload()` (AYShader pool).
+
 ## 8. Public include surface (Phase 3)
 
 Consumers should include `AYResource.h` and link `AYResource`. The following are **PUBLIC**:

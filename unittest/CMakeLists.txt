@@ -13,6 +13,7 @@ add_executable(${MODULE_NAME}
     AYTest_ResourceBootstrap.cpp
     AYTest_ResourcePhase2.cpp
     AYTest_ResourcePipelineP1.cpp
+    AYTest_ResourcePipelineP2.cpp
     AYTest_MaterialFile.cpp
     AYTest_AssetPath.cpp
     AYTest_MeshLoader.cpp
