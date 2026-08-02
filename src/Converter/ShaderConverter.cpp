@@ -2,6 +2,7 @@
 #include "assetsImpl/AYShader.h"
 #include <ayio/File.h>
 #include <ayio/Path.h>
+#include <aystorage/Guid.h>
 #include <cstring>
 
 namespace ayt::resource
@@ -49,6 +50,12 @@ std::string ShaderConverter::_generateOutputPath(const std::string& name) const 
         return fullPath;
     }
     return name + ".ayshader";
+}
+
+static bool writeFile(const std::string& path, const void* data, size_t size) {
+    // F1.8: was raw BinaryWrite (crash leaves half-written file). Use
+    // atomicWrite so a crash mid-write leaves the prior file intact.
+    return ayt::io::File::atomicWrite(path, data, size);
 }
 
 ConversionResult ShaderConverter::convert() {
@@ -113,17 +120,15 @@ ConversionResult ShaderConverter::convert() {
 
     // 写入文件（跳过已存在）
     if (!ayt::io::File::exists(outputPath)) {
-        ayt::io::File outFile(outputPath, ayt::io::File::Mode::BinaryWrite);
-        if (outFile.isOpen()) {
-            outFile.write(binaryData.data(), binaryData.size());
-        }
+        writeFile(outputPath, binaryData.data(), binaryData.size());
     }
 
-    // 添加转换结果
+    // 添加转换结果（含 GUID，便于 sidecar + cache 去重）
     ConversionResult::ConvertedResource res;
     res.path = outputPath;
     res.type = "Shader";
-    res.size = binaryData.size();
+    res.size = static_cast<int64_t>(binaryData.size());
+    res.guid = ayt::storage::Guid::computeFromData(binaryData.data(), binaryData.size());
     result.resources.push_back(res);
 
     return result;
@@ -149,16 +154,14 @@ std::vector<ConversionResult::ConvertedResource> ShaderConverter::convertAll(
         std::string outputPath = _generateOutputPath(shader.getNameStr());
 
         if (!ayt::io::File::exists(outputPath)) {
-            ayt::io::File outFile(outputPath, ayt::io::File::Mode::BinaryWrite);
-            if (outFile.isOpen()) {
-                outFile.write(binaryData.data(), binaryData.size());
-            }
+            writeFile(outputPath, binaryData.data(), binaryData.size());
         }
 
         ConversionResult::ConvertedResource res;
         res.path = outputPath;
         res.type = "Shader";
-        res.size = binaryData.size();
+        res.size = static_cast<int64_t>(binaryData.size());
+        res.guid = ayt::storage::Guid::computeFromData(binaryData.data(), binaryData.size());
         results.push_back(res);
     }
 
