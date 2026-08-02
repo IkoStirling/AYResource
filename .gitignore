@@ -3,6 +3,7 @@
 test_output
 test_output_animconv
 test_output_static
+!design.md
 !docs/runtime-conventions.md
 !docs/phase0-follow-ups.md
 !docs/pipeline-roadmap.md
