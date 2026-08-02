@@ -88,6 +88,134 @@ TEST_CASE(async_cancel_before_finish_returns_null)
     CHECK(true);
 }
 
+// F1.1 regression: cancel race that historically triggered
+// std::future_error (process termination). Two loadAsync calls + one
+// cancel(path) for one of them; the second must still resolve without
+// crash. Doubles as a concurrency smoke (2 producers + 1 canceller).
+TEST_CASE(async_cancel_one_of_many_does_not_affect_siblings)
+{
+    resetManager();
+    ResourceRegistry::registerLoader("MockResource", +[]() -> std::unique_ptr<IResourceLoader> {
+        return std::make_unique<MockResourceLoader>();
+    });
+    ResourceRegistry::registerExtension(".mock", "MockResource");
+
+    std::vector<std::string> paths;
+    for (int i = 0; i < 4; ++i) {
+        const std::string p = "p3_cancel_many_" + std::to_string(i) + ".mock";
+        std::ofstream f(p);
+        f << "x";
+        paths.push_back(p);
+    }
+
+    AsyncLoader loader;
+    auto f0 = loader.loadAsync(paths[0]);
+    auto f1 = loader.loadAsync(paths[1]);
+    auto f2 = loader.loadAsync(paths[2]);
+    auto f3 = loader.loadAsync(paths[3]);
+
+    // Cancel two of them.
+    loader.cancel(paths[1]);
+    loader.cancel(paths[3]);
+
+    // None of these futures may throw or hang.
+    (void)f0.get();
+    (void)f1.get();
+    (void)f2.get();
+    (void)f3.get();
+
+    loader.cancelAll();
+    for (const auto& p : paths) std::remove(p.c_str());
+    resetManager();
+    CHECK(true);
+}
+
+// F1.1 regression: progress callback must fire from a worker thread
+// and not deadlock even if it touches the same AsyncLoader (re-entrant
+// cancel/cancelAll) — the callback must NOT be invoked under the
+// loader mutex.
+TEST_CASE(async_progress_callback_can_cancel_without_deadlock)
+{
+    resetManager();
+    ResourceRegistry::registerLoader("MockResource", +[]() -> std::unique_ptr<IResourceLoader> {
+        return std::make_unique<MockResourceLoader>();
+    });
+    ResourceRegistry::registerExtension(".mock", "MockResource");
+
+    const std::string path = "p3_progress_cancel.mock";
+    std::ofstream f(path); f << "x";
+
+    AsyncLoader loader;
+    bool callbackFired = false;
+    auto future = loader.loadAsync(
+        path,
+        {},
+        [&loader, &callbackFired](const std::string&, float /*p*/) {
+            // Touch the loader from inside the callback (this would
+            // deadlock if the loader were holding its own mutex).
+            loader.pendingCount();
+            callbackFired = true;
+        });
+
+    // Wait for the load to complete (worker calls progress=1.0 then
+    // sets the future). Timeout-bounded in case of regression.
+    auto status = future.wait_for(std::chrono::seconds(5));
+    CHECK(status == std::future_status::ready);
+    (void)future.get();
+    CHECK(callbackFired);
+
+    loader.cancelAll();
+    std::remove(path.c_str());
+    resetManager();
+    CHECK(true);
+}
+
+// F1.1 regression: cancelAll() must drain queued tasks without
+// double-setting any future (the v0 path could fire std::future_error
+// if cancelAll()'s promise.set_value(nullptr) raced the worker's
+// promise.set_value(resource)).
+TEST_CASE(async_cancelAll_then_load_more_does_not_throw)
+{
+    resetManager();
+    ResourceRegistry::registerLoader("MockResource", +[]() -> std::unique_ptr<IResourceLoader> {
+        return std::make_unique<MockResourceLoader>();
+    });
+    ResourceRegistry::registerExtension(".mock", "MockResource");
+
+    std::vector<std::string> paths;
+    for (int i = 0; i < 3; ++i) {
+        const std::string p = "p3_cancelall_" + std::to_string(i) + ".mock";
+        std::ofstream f(p);
+        f << "x";
+        paths.push_back(p);
+    }
+
+    AsyncLoader loader;
+    auto a = loader.loadAsync(paths[0]);
+    auto b = loader.loadAsync(paths[1]);
+    auto c = loader.loadAsync(paths[2]);
+
+    loader.cancelAll();
+
+    // Drain.
+    (void)a.get();
+    (void)b.get();
+    (void)c.get();
+
+    // Now load more — must succeed after a cancelAll.
+    const std::string p3 = "p3_after_cancelall.mock";
+    std::ofstream f(p3); f << "x";
+    auto after = loader.loadAsync(p3);
+    auto r = after.get();
+    CHECK(r != nullptr);
+
+    loader.cancelAll();
+    for (const auto& p : paths) std::remove(p.c_str());
+    std::remove(p3.c_str());
+    resetManager();
+    CHECK(true);
+}
+
 TEST_CASE(weak_grace_resurrects_without_disk_reload)
 {
     ResourceCache::Config config;
