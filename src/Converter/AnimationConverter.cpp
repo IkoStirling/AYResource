@@ -205,7 +205,7 @@ std::vector<ConversionResult::ConvertedResource> AnimationConverter::convertAll(
         res.guid = lastGuid;
         res.path = virtualPath;
         res.type = "Animation";
-        res.size = static_cast<int64_t>(binaryData.size());
+        res.size = static_cast<uint64_t>(binaryData.size());
         results.push_back(res);
     }
 

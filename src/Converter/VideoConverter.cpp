@@ -126,7 +126,7 @@ std::vector<ConversionResult::ConvertedResource> VideoConverter::convertAll(
         res.guid = lastGuid;
         res.path = virtualPath;
         res.type = "Video";
-        res.size = static_cast<int64_t>(binaryData.size());
+        res.size = static_cast<uint64_t>(binaryData.size());
         results.push_back(res);
     }
 

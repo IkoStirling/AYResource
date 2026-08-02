@@ -34,7 +34,8 @@ bool parseJsonStringField(const std::string& json, size_t searchFrom, const char
     return true;
 }
 
-bool parseJsonInt64Field(const std::string& json, size_t searchFrom, const char* key, int64_t& out)
+// F2.3: ConvertedResource.size is now uint64_t; parse with strtoull.
+bool parseJsonUInt64Field(const std::string& json, size_t searchFrom, const char* key, uint64_t& out)
 {
     const std::string keyTok = std::string("\"") + key + "\":";
     size_t pos = json.find(keyTok, searchFrom);
@@ -45,15 +46,15 @@ bool parseJsonInt64Field(const std::string& json, size_t searchFrom, const char*
     while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) {
         ++pos;
     }
-    if (pos >= json.size() || ((json[pos] < '0' || json[pos] > '9') && json[pos] != '-')) {
+    if (pos >= json.size() || (json[pos] < '0' || json[pos] > '9')) {
         return false;
     }
     char* end = nullptr;
-    const long long v = std::strtoll(json.c_str() + pos, &end, 10);
+    const unsigned long long v = std::strtoull(json.c_str() + pos, &end, 10);
     if (end == json.c_str() + pos) {
         return false;
     }
-    out = static_cast<int64_t>(v);
+    out = static_cast<uint64_t>(v);
     return true;
 }
 
@@ -143,10 +144,7 @@ ConversionResult ConversionResult::fromJson(const std::string& json) {
                     || !parseJsonStringField(json, objStart, "type", res.type)) {
                     return;
                 }
-                int64_t sz = 0;
-                if (parseJsonInt64Field(json, objStart, "size", sz)) {
-                    res.size = sz;
-                }
+                (void)parseJsonUInt64Field(json, objStart, "size", res.size);
                 result.resources.push_back(std::move(res));
             });
         }

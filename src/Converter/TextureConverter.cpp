@@ -400,7 +400,7 @@ ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
         ConversionResult::ConvertedResource res;
         res.path = virtualPath;
         res.type = "Texture";
-        res.size = static_cast<int64_t>(fileSize);
+        res.size = static_cast<uint64_t>(fileSize);
         result.resources.push_back(res);
         return result;
     }
@@ -529,7 +529,7 @@ ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
     res.guid = lastGuid;
     res.path = virtualPath;
     res.type = "Texture";
-    res.size = static_cast<int64_t>(binaryData.size());
+    res.size = static_cast<uint64_t>(binaryData.size());
     result.resources.push_back(res);
     return result;
 }
@@ -668,7 +668,7 @@ ConversionResult TextureConverter::convert() {
     res.guid = lastGuid;
     res.path = virtualPath;
     res.type = "Texture";
-    res.size = static_cast<int64_t>(binaryData.size());
+    res.size = static_cast<uint64_t>(binaryData.size());
     result.resources.push_back(res);
 
     return result;
@@ -785,7 +785,7 @@ std::vector<ConversionResult::ConvertedResource> TextureConverter::convertAll(
         res.guid = lastGuid;
         res.path = virtualPath;
         res.type = "Texture";
-        res.size = static_cast<int64_t>(binaryData.size());
+        res.size = static_cast<uint64_t>(binaryData.size());
         results.push_back(res);
     }
 

@@ -16,7 +16,11 @@ struct ConversionResult {
         ayt::math::FGuid guid;  // 资源唯一标识
         std::string path;
         std::string type;
-        int64_t size = 0;
+        // F2.3: was int64_t mismatched with IResource::sizeInBytes() (size_t).
+        // Coerce to size_t's underlying unsigned counterpart here so the
+        // shared payload (toJson/fromJson, cache stats, cook log) has
+        // a single numeric type. JSON round-trip uses unsigned strtoull.
+        uint64_t size = 0;
     };
 
     struct Dependency {

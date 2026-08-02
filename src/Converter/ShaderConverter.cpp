@@ -127,7 +127,7 @@ ConversionResult ShaderConverter::convert() {
     ConversionResult::ConvertedResource res;
     res.path = outputPath;
     res.type = "Shader";
-    res.size = static_cast<int64_t>(binaryData.size());
+    res.size = static_cast<uint64_t>(binaryData.size());
     res.guid = ayt::storage::Guid::computeFromData(binaryData.data(), binaryData.size());
     result.resources.push_back(res);
 
@@ -160,7 +160,7 @@ std::vector<ConversionResult::ConvertedResource> ShaderConverter::convertAll(
         ConversionResult::ConvertedResource res;
         res.path = outputPath;
         res.type = "Shader";
-        res.size = static_cast<int64_t>(binaryData.size());
+        res.size = static_cast<uint64_t>(binaryData.size());
         res.guid = ayt::storage::Guid::computeFromData(binaryData.data(), binaryData.size());
         results.push_back(res);
     }

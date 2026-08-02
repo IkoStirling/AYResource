@@ -186,7 +186,7 @@ ConversionResult FontConverter::convert() {
     ConversionResult::ConvertedResource res;
     res.path = virtualPath;
     res.type = "Font";
-    res.size = static_cast<int64_t>(binaryData.size());
+    res.size = static_cast<uint64_t>(binaryData.size());
     // F1.9: previously res.guid was left default-constructed; sidecar
     // + DB indexes then collided. Hash the saved binary data.
     res.guid = ayt::storage::Guid::computeFromData(binaryData.data(), binaryData.size());
@@ -244,7 +244,7 @@ std::vector<ConversionResult::ConvertedResource> FontConverter::convertAll(
         ConversionResult::ConvertedResource res;
         res.path = virtualPath;
         res.type = "Font";
-        res.size = static_cast<int64_t>(binaryData.size());
+        res.size = static_cast<uint64_t>(binaryData.size());
         // F1.9: hash the saved bytes; v0 left res.guid default.
         res.guid = ayt::storage::Guid::computeFromData(binaryData.data(), binaryData.size());
         results.push_back(res);

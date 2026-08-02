@@ -227,7 +227,7 @@ std::vector<ConversionResult::ConvertedResource> MeshConverter::convertAll(
         res.guid = lastGuid;
         res.path = virtualPath;
         res.type = "Mesh";
-        res.size = static_cast<int64_t>(binaryData.size());
+        res.size = static_cast<uint64_t>(binaryData.size());
         results.push_back(res);
         lastOutputPath = virtualPath;
     }

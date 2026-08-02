@@ -88,7 +88,7 @@ ConversionResult GLTFConverter::convert() {
     ConversionResult::ConvertedResource res;
     res.path = virtualPath;
     res.type = "Mesh";
-    res.size = static_cast<int64_t>(binaryData.size());
+    res.size = static_cast<uint64_t>(binaryData.size());
     result.resources.push_back(res);
 
     return result;

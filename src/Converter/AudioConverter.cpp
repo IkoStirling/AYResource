@@ -205,7 +205,7 @@ ConversionResult AudioConverter::convert() {
     res.guid = lastGuid;
     res.path = virtualPath;
     res.type = "Audio";
-    res.size = static_cast<int64_t>(binaryData.size());
+    res.size = static_cast<uint64_t>(binaryData.size());
     result.resources.push_back(res);
 
     return result;
@@ -258,7 +258,7 @@ std::vector<ConversionResult::ConvertedResource> AudioConverter::convertAll(
         res.guid = lastGuid;
         res.path = virtualPath;
         res.type = "Audio";
-        res.size = static_cast<int64_t>(binaryData.size());
+        res.size = static_cast<uint64_t>(binaryData.size());
         results.push_back(res);
     }
 
