@@ -59,6 +59,8 @@ TEST_SUITE(ResourceCacheTests)
         ResourceCache::Config config;
         config.maxResourceCount = 2;
         config.enableLRU = true;
+        // No grace pin so demoted entries expire immediately (legacy assert).
+        config.weakGraceSeconds = 0.0f;
 
         ResourceCache cache(config);
 

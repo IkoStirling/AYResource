@@ -109,6 +109,15 @@ FileWatcher / mtime → HotReloadWatcher (debounce)
 - Call `Renderer::pollResourceHotReload()` each frame (wired in `RendererSubSystem`).
 - Shader source hot-reload remains `pollShaderHotReload()` (AYShader pool).
 
+## 7c. Async + cache (P3)
+
+| API | Behavior |
+|-----|----------|
+| `ResourceManager::loadAsync<T>` | Submits to `AYTask` default pool; typed future completes on worker callback |
+| `ResourceCache` grace | After LRU demote / last `ResourceHandle` drop, short pin (`weakGraceSeconds`, default 2s) |
+| `getCacheStats()` | `memoryBytes/Budget`, hits/misses/resurrects, strong/weak/grace counts |
+| `save/loadPersistentCache` | Writes/reads `AYCACHE 1` residency index; load preloads listed paths |
+
 ## 8. Public include surface (Phase 3)
 
 Consumers should include `AYResource.h` and link `AYResource`. The following are **PUBLIC**:

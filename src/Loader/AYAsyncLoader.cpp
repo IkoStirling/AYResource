@@ -1,161 +1,187 @@
 #include "AYAsyncLoader.h"
 #include "AYResourceManager.h"
-#include "AYResourceRegistry.h"
-#include <algorithm>
-#include <thread>
-#include <condition_variable>
+
+#include "aytask/ITaskScheduler.h"
+#include "aytask/LambdaTask.h"
+
+#include <utility>
 
 namespace ayt::resource
 {
 
 AsyncLoader::AsyncLoader()
-    : running(false)
-    , deltaTime(0.0f) {
+    : AsyncLoader(ayt::task::ITaskScheduler::defaultScheduler())
+{
 }
 
-AsyncLoader::~AsyncLoader() {
+AsyncLoader::AsyncLoader(ayt::task::ITaskScheduler& scheduler)
+    : _scheduler(&scheduler)
+{
+}
+
+AsyncLoader::~AsyncLoader()
+{
     cancelAll();
+    waitAndClearInflight();
 }
 
 std::shared_future<std::shared_ptr<IResource>> AsyncLoader::loadAsync(
     const std::string& path,
     std::function<void(std::shared_ptr<IResource>)> callback,
-    ProgressCallback onProgress) {
-    auto task = std::make_unique<LoadTask>();
-    task->path = path;
-    task->callback = std::move(callback);
-    task->onProgress = std::move(onProgress);
+    ProgressCallback onProgress)
+{
+    auto load = std::make_shared<LoadTask>();
+    load->path = path;
+    load->callback = std::move(callback);
+    load->onProgress = std::move(onProgress);
 
-    auto future = task->promise.get_future();
+    auto future = std::shared_future<std::shared_ptr<IResource>>(load->promise.get_future());
 
-    {
-        std::lock_guard<std::mutex> lock(mutex);
-        queue.push_back(std::move(task));
-        running = true;
+    if (load->onProgress) {
+        load->onProgress(path, 0.0f); // Queued
     }
 
-    // Report progress: Queued
-    {
-        std::lock_guard<std::mutex> lock(mutex);
-        for (const auto& t : queue) {
-            if (t->path == path && t->onProgress) {
-                t->onProgress(path, 0.0f);
-                break;
-            }
-        }
-    }
-
-    // 启动后台线程处理加载
-    std::thread([this]() {
-        std::unique_ptr<LoadTask> task;
-        std::string taskPath;
-
-        {
-            std::unique_lock<std::mutex> lock(mutex);
-            if (queue.empty()) {
-                running = false;
-                return;
-            }
-
-            task = std::move(queue.front());
-            queue.pop_front();
-            taskPath = task->path;
-
-            // 如果队列空了，停止运行
-            running = !queue.empty();
-        }
-
-        // Report progress: Loading started (20%)
-        if (task->onProgress) {
-            task->onProgress(taskPath, 0.2f);
-        }
-
-        if (task->cancelled.load(std::memory_order_acquire)) {
+    // NOTE: Do not call ITask::cancel() — LambdaTask skips execute() body when
+    // cancelled, which would leave the promise unsatisfied. Cancellation is
+    // cooperative via LoadTask::cancelled only.
+    ayt::task::ITask* ayTask = ayt::task::makeTask([load]() {
+        auto complete = [&](std::shared_ptr<IResource> resource, float progress) {
             try {
-                task->promise.set_value(nullptr);
+                load->promise.set_value(resource);
             } catch (const std::future_error&) {
-                // Already satisfied (cancel() could have set it; defensive).
             }
-            if (task->onProgress) {
-                task->onProgress(taskPath, 0.0f);  // Cancelled = 0%
+            load->completed.store(true, std::memory_order_release);
+            if (load->onProgress) {
+                load->onProgress(load->path, progress);
             }
+            if (load->callback) {
+                load->callback(std::move(resource));
+            }
+        };
+
+        if (load->onProgress) {
+            load->onProgress(load->path, 0.2f); // Loading
+        }
+
+        if (load->cancelled.load(std::memory_order_acquire)) {
+            complete(nullptr, 0.0f);
             return;
         }
 
-        ResourceManager& rm = ResourceManager::instance();
-        auto resource = rm._loadInternal(task->path);
+        auto resource = ResourceManager::instance()._loadInternal(load->path);
 
-        // Report progress: Loading completed (100%)
-        if (task->onProgress) {
-            task->onProgress(taskPath, 1.0f);
+        if (load->cancelled.load(std::memory_order_acquire)) {
+            complete(nullptr, 0.0f);
+            return;
         }
 
-        // F1.1: swallow future_error if cancel() raced us here.
-        try {
-            task->promise.set_value(resource);
-        } catch (const std::future_error&) {
-            // Already satisfied.
-        }
+        complete(std::move(resource), 1.0f);
+    }, "AYResource.AsyncLoad");
 
-        if (task->callback && resource) {
-            task->callback(resource);
-        }
-    }).detach();
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _inflight.push_back(Inflight{load, ayTask});
+    }
 
-    return std::shared_future<std::shared_ptr<IResource>>(std::move(future));
+    _scheduler->submit(ayTask);
+    return future;
 }
 
 std::shared_future<std::shared_ptr<IResource>> AsyncLoader::loadAsync(
     const std::string& path,
-    std::function<void(std::shared_ptr<IResource>)> callback) {
+    std::function<void(std::shared_ptr<IResource>)> callback)
+{
     return loadAsync(path, std::move(callback), nullptr);
 }
 
-void AsyncLoader::update(float deltaTime) {
-    deltaTime = deltaTime;
-    // update 现在只检查状态，不再执行加载
-    // 加载已在后台线程异步执行
+void AsyncLoader::update(float /*deltaTime*/)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    reapCompletedUnlocked();
 }
 
-void AsyncLoader::cancel(const std::string& path) {
-    std::lock_guard<std::mutex> lock(mutex);
-    for (auto& task : queue) {
-        if (task->path == path) {
-            task->cancelled.store(true, std::memory_order_release);
-            // F1.1: ONLY the worker owns the promise set_value going
-            // forward. cancel() flips the atomic flag; the worker
-            // observes it at its next checkpoint and either bails (set
-            // nullptr) or finishes the in-flight load. This kills the
-            // v0 data race that triggered std::future_error on double
-            // set_value. If a task hasn't been popped yet, the worker
-            // will resolve nullptr; if already in-flight, the caller
-            // may discard the eventual result.
+void AsyncLoader::cancel(const std::string& path)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    for (auto& entry : _inflight) {
+        if (entry.load && entry.load->path == path) {
+            entry.load->cancelled.store(true, std::memory_order_release);
         }
     }
 }
 
-void AsyncLoader::cancelAll() {
-    std::lock_guard<std::mutex> lock(mutex);
-    for (auto& task : queue) {
-        task->cancelled.store(true, std::memory_order_release);
+void AsyncLoader::cancelAll()
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    for (auto& entry : _inflight) {
+        if (entry.load) {
+            entry.load->cancelled.store(true, std::memory_order_release);
+        }
     }
-    queue.clear();
-    running = false;
 }
 
-size_t AsyncLoader::pendingCount() const {
-    std::lock_guard<std::mutex> lock(mutex);
-    return queue.size();
+size_t AsyncLoader::pendingCount() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    size_t n = 0;
+    for (const auto& entry : _inflight) {
+        if (entry.load && !entry.load->completed.load(std::memory_order_acquire)) {
+            ++n;
+        }
+    }
+    return n;
 }
 
-bool AsyncLoader::isLoading(const std::string& path) const {
-    std::lock_guard<std::mutex> lock(mutex);
-    for (const auto& task : queue) {
-        if (task->path == path) {
+bool AsyncLoader::isLoading(const std::string& path) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    for (const auto& entry : _inflight) {
+        if (entry.load && entry.load->path == path
+            && !entry.load->completed.load(std::memory_order_acquire)) {
             return true;
         }
     }
     return false;
+}
+
+void AsyncLoader::reapCompletedUnlocked()
+{
+    for (auto it = _inflight.begin(); it != _inflight.end();) {
+        if (it->ayTask && it->ayTask->isComplete()) {
+            delete it->ayTask;
+            it->ayTask = nullptr;
+            it = _inflight.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void AsyncLoader::waitAndClearInflight()
+{
+    std::vector<ayt::task::ITask*> toWait;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        toWait.reserve(_inflight.size());
+        for (auto& entry : _inflight) {
+            if (entry.ayTask) {
+                toWait.push_back(entry.ayTask);
+                entry.ayTask = nullptr;
+            }
+        }
+        _inflight.clear();
+    }
+
+    for (ayt::task::ITask* t : toWait) {
+        if (t) {
+            _scheduler->wait(t);
+            // If the task never ran (cancelled before execute), ensure
+            // we don't leak an unsatisfied promise — execute() usually
+            // still runs and checks isCancelled. Defensive: if somehow
+            // not completed, still delete.
+            delete t;
+        }
+    }
 }
 
 } // namespace ayt::resource

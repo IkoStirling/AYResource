@@ -4,7 +4,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <functional>
-#include <thread>
+#include <future>
 #include <cstdint>
 #include "IAYResource.h"
 #include "AYResourceHandle.h"
@@ -28,24 +28,6 @@ enum class ResourceLoadState : uint8_t {
     Failed = 3,
 };
 
-namespace detail {
-
-template<typename T>
-std::shared_future<std::shared_ptr<T>> castResourceFuture(
-    std::shared_future<std::shared_ptr<IResource>> baseFuture)
-{
-    auto typedPromise = std::make_shared<std::promise<std::shared_ptr<T>>>();
-    std::shared_future<std::shared_ptr<T>> typedFuture(typedPromise->get_future());
-
-    std::thread([baseFuture = std::move(baseFuture), typedPromise]() mutable {
-        typedPromise->set_value(std::dynamic_pointer_cast<T>(baseFuture.get()));
-    }).detach();
-
-    return typedFuture;
-}
-
-} // namespace detail
-
 // ============================================================
 // ResourceManager - 单例资源管理器
 // ============================================================
@@ -64,21 +46,31 @@ public:
         return std::dynamic_pointer_cast<T>(resource);
     }
 
-    // ===== Async loading with progress =====
+    // ===== Async loading with progress (P3: no extra cast thread) =====
     template<typename T, typename... Args>
     std::shared_future<std::shared_ptr<T>> loadAsync(
         const std::string& filepath,
         std::function<void(std::shared_ptr<T>)> callback = {},
         std::function<void(const std::string& path, float progress)> onProgress = {}
     ) {
-        return detail::castResourceFuture<T>(_asyncLoader.loadAsync(
+        auto typedPromise = std::make_shared<std::promise<std::shared_ptr<T>>>();
+        std::shared_future<std::shared_ptr<T>> typedFuture(typedPromise->get_future());
+
+        (void)_asyncLoader.loadAsync(
             filepath,
-            [callback](std::shared_ptr<IResource> resource) {
+            [callback, typedPromise](std::shared_ptr<IResource> resource) {
+                auto typed = std::dynamic_pointer_cast<T>(resource);
+                try {
+                    typedPromise->set_value(typed);
+                } catch (const std::future_error&) {
+                }
                 if (callback) {
-                    callback(std::dynamic_pointer_cast<T>(resource));
+                    callback(typed);
                 }
             },
-            std::move(onProgress)));
+            std::move(onProgress));
+
+        return typedFuture;
     }
 
     // Legacy overload without progress (for backward compatibility)
@@ -133,6 +125,7 @@ public:
     size_t getResourceCount() const;
     bool isLoaded(const std::string& filepath) const;
     std::shared_ptr<IResource> getResource(const std::string& filepath);
+    CacheStats getCacheStats() const;
 
     // ===== P1 load state / placeholders =====
     ResourceLoadState getLoadState(const std::string& filepath) const;

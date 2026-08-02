@@ -1,6 +1,6 @@
 # AYResource — 完整资源管线路图（P0–P6）
 
-**状态**: 进行中（P0–P2 ✅；P3 待开工）  
+**状态**: 进行中（P0–P3 ✅；P4 待开工）  
 **日期**: 2026-08-02  
 **范围**: 架构一致性与端到端闭环，**不是**再堆具体资源类型（`.aymesh` / `.ayanm` 等）。
 
@@ -80,13 +80,16 @@ Bind:     RenderAssetBridge → GPU                                      ✅ 有
 
 ---
 
-### P3 — 异步与缓存硬化
+### P3 — 异步与缓存硬化 ✅
 
-**要做的事**：
+**已做（2026-08-02）**：
 
-- AsyncLoader 真正线程池（避免 ad-hoc `std::thread`）
-- weak-cache resurrection（引用归零后短时可复活）
-- 持久化缓存策略与内存预算可观测
+- `AsyncLoader` → `AYTask` `defaultScheduler`（无 per-job `std::thread`）
+- typed `loadAsync<T>` 在 worker 回调里 cast（去掉 `castResourceFuture` 第二线程）
+- `ResourceCache`：LRU demote → grace/weak；`get` 可 resurrect；`CacheStats` 可观测
+- `savePersistentCache` / `loadPersistentCache`：轻量 residency 索引（`AYCACHE 1`）
+
+**仍留给后续**：真正序列化 L2 blob 到二级缓存目录、按压力自动 trim 策略调参、AsyncLoader 可注入自定义 scheduler。
 
 ---
 
@@ -151,7 +154,7 @@ P0 是工业级管线的前提；在 P0 完成前，不要并行大开 P4/P5 新
 | P0 统一运行时入口 | ✅ | `loadMesh` / `loadMaterial` / `loadTexture` → `ResourceManager` |
 | P1 依赖图与加载语义 | ✅ | intrinsic deps + LoadState + placeholders |
 | P2 热重载 E2E | ✅ | FileWatcher + L2 invalidate + L3 re-upload |
-| P3 异步与缓存硬化 | 🔲 部分 | F1.1 cancel race ✅；F1.4 pak mutex ✅ |
+| P3 异步与缓存硬化 | ✅ | AYTask pool + grace resurrect + cache index |
 | P4 Cook/DB/pak | 🔲 | |
 | P5 Editor/CLI 编排 | 🔲 | |
 | P6 跨模块契约 | 🔲 | |

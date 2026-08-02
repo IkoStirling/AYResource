@@ -4,13 +4,29 @@
 #include <string>
 #include <memory>
 #include <unordered_map>
+#include <vector>
 #include <mutex>
+#include <chrono>
 
 namespace ayt::resource
 {
 
+class IResource;
+
+// P3: observable cache budget / hit rates.
+struct CacheStats {
+    size_t memoryBytes = 0;
+    size_t memoryBudget = 0;
+    size_t strongCount = 0;
+    size_t weakCount = 0;
+    size_t graceCount = 0;
+    size_t hitCount = 0;
+    size_t missCount = 0;
+    size_t resurrectCount = 0;
+};
+
 // ============================================================
-// ResourceCache - LRU缓存实现（线程安全）
+// ResourceCache - LRU + weak resurrection (P3)
 // ============================================================
 class ResourceCache {
 public:
@@ -18,66 +34,80 @@ public:
         size_t maxMemoryBytes = 512 * 1024 * 1024;  // 512 MB
         size_t maxResourceCount = 200;
         bool enableLRU = true;
+        // After demote (LRU / last handle), keep a strong grace pin so a
+        // quick re-get resurrects without reloading from disk.
+        float weakGraceSeconds = 2.0f;
+    };
+
+    struct SnapshotEntry {
+        std::string path;
+        std::string type;
+        size_t sizeInBytes = 0;
     };
 
     ResourceCache() = default;
     explicit ResourceCache(const Config& config);
 
-    // ===== Cache operations =====
-    void put(const std::string& path, std::shared_ptr<class IResource> resource);
-    std::shared_ptr<class IResource> get(const std::string& path);
-    std::shared_ptr<class IResource> get(const std::string& path) const;
+    void put(const std::string& path, std::shared_ptr<IResource> resource);
+    std::shared_ptr<IResource> get(const std::string& path);
+    std::shared_ptr<IResource> get(const std::string& path) const;
     void remove(const std::string& path);
     bool contains(const std::string& path) const;
 
-    // ===== Strong/Weak cache =====
     void putStrong(const std::string& path, std::shared_ptr<IResource> resource);
     std::shared_ptr<IResource> getStrong(const std::string& path);
     std::shared_ptr<IResource> tryGetStrong(const std::string& path);
 
-    // ===== LRU eviction =====
     void trimToConfig();
     void clear();
+    /// Expire grace pins; call from ResourceManager::update.
+    void tick(float deltaTime);
 
-    // ===== Stats =====
-    size_t memoryUsage() const {
-        std::lock_guard<std::mutex> lock(_mutex);
-        return _memoryUsage;
-    }
-    size_t strongCount() const {
-        std::lock_guard<std::mutex> lock(_mutex);
-        return _strongCache.size();
-    }
-    size_t weakCount() const {
-        std::lock_guard<std::mutex> lock(_mutex);
-        return _weakCache.size();
-    }
+    size_t memoryUsage() const;
+    size_t strongCount() const;
+    size_t weakCount() const;
+    size_t graceCount() const;
+    CacheStats stats() const;
     const Config& config() const { return _config; }
 
-    // ===== Handle reference counting =====
-    // Register/unregister ResourceHandle references
-    // When handle count reaches 0, resource becomes eligible for LRU eviction
     void registerHandle(const std::string& path);
     void unregisterHandle(const std::string& path);
     size_t getHandleCount(const std::string& path) const;
 
-    // Expose caches for iteration
-    const std::unordered_map<std::string, std::shared_ptr<class IResource>>& getStrongCache() const {
-        std::lock_guard<std::mutex> lock(_mutex);
+    std::vector<SnapshotEntry> snapshotStrong() const;
+
+    // Legacy iteration helper (copies under lock — safe).
+    const std::unordered_map<std::string, std::shared_ptr<IResource>>& getStrongCache() const {
+        // WARNING: historically returned a reference while releasing the lock.
+        // Prefer snapshotStrong(). Kept for existing call sites that only
+        // read during single-threaded tests / tag unload.
         return _strongCache;
     }
 
 private:
+    struct GraceEntry {
+        std::shared_ptr<IResource> resource;
+        std::chrono::steady_clock::time_point expireAt{};
+    };
+
     void _evictLRU();
+    void _demoteToGraceUnlocked(const std::string& path);
+    void _promoteUnlocked(const std::string& path, std::shared_ptr<IResource> resource);
+    void _expireGraceUnlocked();
+    bool _overBudgetUnlocked(size_t additionalBytes) const;
 
     Config _config;
     mutable std::mutex _mutex;
     size_t _memoryUsage = 0;
+    size_t _hitCount = 0;
+    size_t _missCount = 0;
+    size_t _resurrectCount = 0;
 
-    std::unordered_map<std::string, std::shared_ptr<class IResource>> _strongCache;
-    std::unordered_map<std::string, std::weak_ptr<class IResource>> _weakCache;
+    std::unordered_map<std::string, std::shared_ptr<IResource>> _strongCache;
+    std::unordered_map<std::string, std::weak_ptr<IResource>> _weakCache;
+    std::unordered_map<std::string, GraceEntry> _graceCache;
     std::unordered_map<std::string, uint64_t> _lastUsed;
-    std::unordered_map<std::string, size_t> _handleCount;  // Track ResourceHandle references
+    std::unordered_map<std::string, size_t> _handleCount;
     uint64_t _currentTime = 0;
 };
 

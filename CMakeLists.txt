@@ -37,6 +37,7 @@ target_link_libraries(${MODULE_NAME}
         AYSerializer
         AYIO
         AYStorage
+        AYTask
     PRIVATE
         AYLog
         assimp::assimp

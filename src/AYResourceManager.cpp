@@ -7,8 +7,10 @@
 #include "aystorage/IStorageDatabase.h"
 #include "aystorage/IPackageReader.h"
 #include <ayio/Path.h>
+#include <ayio/File.h>
 #include <cassert>
 #include <cstdio>
+#include <string>
 
 namespace ayt::resource
 {
@@ -356,11 +358,68 @@ void ResourceManager::trimCache() {
 }
 
 void ResourceManager::savePersistentCache(const std::string& path) {
-    (void)path;
+    if (path.empty()) {
+        return;
+    }
+    // P3: persist a lightweight residency index (paths already on disk/pak).
+    // Format: line-oriented, versioned.
+    //   AYCACHE 1
+    //   <path>\t<type>\t<sizeInBytes>
+    std::string out = "AYCACHE 1\n";
+    for (const auto& entry : _cache.snapshotStrong()) {
+        out += entry.path;
+        out += '\t';
+        out += entry.type;
+        out += '\t';
+        out += std::to_string(entry.sizeInBytes);
+        out += '\n';
+    }
+    (void)ayt::io::File::writeAllText(path, out);
 }
 
 void ResourceManager::loadPersistentCache(const std::string& path) {
-    (void)path;
+    if (path.empty() || !ayt::io::File::exists(path)) {
+        return;
+    }
+    const std::string text = ayt::io::File::readAllText(path);
+    if (text.size() < 8 || text.compare(0, 8, "AYCACHE ") != 0) {
+        return;
+    }
+
+    // Disable auto-watch during bulk preload to avoid watch storms.
+    const bool prevWatch = _autoWatchLoaded;
+    _autoWatchLoaded = false;
+
+    size_t pos = 0;
+    // Skip header line.
+    const size_t nl = text.find('\n', pos);
+    if (nl == std::string::npos) {
+        _autoWatchLoaded = prevWatch;
+        return;
+    }
+    pos = nl + 1;
+
+    while (pos < text.size()) {
+        size_t end = text.find('\n', pos);
+        if (end == std::string::npos) {
+            end = text.size();
+        }
+        std::string line = text.substr(pos, end - pos);
+        pos = end + 1;
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        const size_t t1 = line.find('\t');
+        if (t1 == std::string::npos) {
+            continue;
+        }
+        const std::string assetPath = line.substr(0, t1);
+        if (!assetPath.empty()) {
+            (void)_loadInternal(assetPath);
+        }
+    }
+
+    _autoWatchLoaded = prevWatch;
 }
 
 void ResourceManager::watchResource(const std::string& filepath) {
@@ -388,9 +447,9 @@ void ResourceManager::setHotReloadPollIntervalSeconds(float seconds) {
 }
 
 void ResourceManager::update(float deltaTime) {
-    (void)deltaTime;
     _hotReloadWatcher.update();
     _asyncLoader.update(deltaTime);
+    _cache.tick(deltaTime);
 }
 
 size_t ResourceManager::getMemoryUsage() const {
@@ -399,6 +458,10 @@ size_t ResourceManager::getMemoryUsage() const {
 
 size_t ResourceManager::getResourceCount() const {
     return _cache.strongCount();
+}
+
+CacheStats ResourceManager::getCacheStats() const {
+    return _cache.stats();
 }
 
 bool ResourceManager::isLoaded(const std::string& filepath) const {
