@@ -2,6 +2,7 @@
 #include "assetsImpl/AYSkeleton.h"
 #include "IAYSkeleton.h"
 #include "ayio/File.h"
+#include <AYLog.h>
 #include <aystorage/Guid.h>
 #include <vector>
 
@@ -99,11 +100,14 @@ std::vector<ConversionResult::ConvertedResource> SkeletonConverter::convertAll(
         std::string outputName = baseName + "_" + skelName + ".ayskel";
         std::string virtualPath = "skeletons/" + outputName;
 
-        // 写入输出目录
+        // 写入输出目录。Always replace — a prior truncated v1 .ayskel
+        // (UInt8 boneCount) would otherwise be left in place forever
+        // because `exists()` short-circuits the write (Sour.fbx case).
         if (!outputDir.empty()) {
             std::string fullPath = outputDir + "/" + virtualPath;
-            if (!ayt::io::File::exists(fullPath)) {
-                writeFile(fullPath, binaryData.data(), binaryData.size());
+            if (!writeFile(fullPath, binaryData.data(), binaryData.size())) {
+                ayt::log::error("[SkeletonConverter] write failed: %s", fullPath.c_str());
+                continue;
             }
         }
 

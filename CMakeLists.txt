@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.12)
-project(AYResource)
+project(AYResource
+    VERSION 2.0.0
+    DESCRIPTION "AYResource — asset registry / GUID / IAnimation VERSION 4 + .aytilemap loader"
+)
 
 set(MODULE_NAME AYResource)
 
@@ -43,3 +46,5 @@ target_link_libraries(${MODULE_NAME}
 
 enable_testing()
 add_subdirectory(unittest)
+
+message(STATUS "AYResource v2.0.0 (IAnimation V4 + IFBX/IMesh + .aytilemap loader + per-tile collision flags) — see ${CMAKE_CURRENT_SOURCE_DIR}/design.md")

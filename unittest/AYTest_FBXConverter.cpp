@@ -21,6 +21,14 @@ static bool fileExists(const std::string& path) {
     return f.is_open();
 }
 
+static std::string fbxTestOutputDir() {
+    return ayt::test::testTmpPath("test_output");
+}
+
+static std::string fbxTestOutputStaticDir() {
+    return ayt::test::testTmpPath("test_output_static");
+}
+
 TEST_SUITE(FBXConverterTests)
 
 // 注释掉 — 该 case 依赖磁盘上旧版 (Submesh 12 字节) .aymesh 文件
@@ -46,13 +54,13 @@ TEST_CASE(FileValide) {
         CHECK(converter.isValid() == true);
 
         // 设置输出目录
-        converter.setOutputDir("D:/Projects/AYRuntime/AYResource/test_output");
+        converter.setOutputDir(fbxTestOutputDir());
 
         ConversionResult result = converter.convert();
         CHECK(result.resources.size() > 0);
 
         // 验证输出文件存在
-        std::string outPath = "D:/Projects/AYRuntime/AYResource/test_output/" + result.resources[0].path;
+        std::string outPath = fbxTestOutputDir() + "/" + result.resources[0].path;
         CHECK(fileExists(outPath) == true);
 
         // 验证资源信息
@@ -70,13 +78,13 @@ TEST_CASE(FileValide) {
         FBXConverter converter(fbxPath);
         CHECK(converter.isValid() == true);
 
-        converter.setOutputDir("D:/Projects/AYRuntime/AYResource/test_output");
+        converter.setOutputDir(fbxTestOutputDir());
 
         ConversionResult result = converter.convert();
         CHECK(result.resources.size() > 0);
 
         // 验证输出文件
-        std::string outPath = "D:/Projects/AYRuntime/AYResource/test_output/" + result.resources[0].path;
+        std::string outPath = fbxTestOutputDir() + "/" + result.resources[0].path;
         CHECK(fileExists(outPath) == true);
     }
 
@@ -116,7 +124,7 @@ TEST_CASE(FileValide) {
             printf("  Testing Mesh[%zu]: path=%s size=%lld\n", i, res.path.c_str(), (long long)res.size);
 
             // 验证文件存在
-            std::string fullPath = "D:/Projects/AYRuntime/AYResource/test_output/" + res.path;
+            std::string fullPath = fbxTestOutputDir() + "/" + res.path;
             CHECK(fileExists(fullPath) == true);
             printf("    [OK] File exists\n");
 
@@ -169,7 +177,7 @@ TEST_CASE(FileValide) {
             const auto& res = result.resources[i];
             if (res.type != "Material") continue;
 
-            std::string fullPath = "D:/Projects/AYRuntime/AYResource/test_output/" + res.path;
+            std::string fullPath = fbxTestOutputDir() + "/" + res.path;
             CHECK(fileExists(fullPath) == true);
             printf("    Material: %s (size=%lld) [OK]\n", res.path.c_str(), (long long)res.size);
         }
@@ -183,7 +191,7 @@ TEST_CASE(FileValide) {
                 const auto& res = result.resources[i];
                 if (res.type != "Texture") continue;
 
-                std::string fullPath = "D:/Projects/AYRuntime/AYResource/test_output/" + res.path;
+                std::string fullPath = fbxTestOutputDir() + "/" + res.path;
                 CHECK(fileExists(fullPath) == true);
                 printf("    Texture: %s (size=%lld) [OK]\n", res.path.c_str(), (long long)res.size);
             }
@@ -201,7 +209,7 @@ TEST_CASE(FileValide) {
 
                 printf("  Testing Skeleton[%zu]: path=%s size=%lld\n", i, res.path.c_str(), (long long)res.size);
 
-                std::string fullPath = "D:/Projects/AYRuntime/AYResource/test_output/" + res.path;
+                std::string fullPath = fbxTestOutputDir() + "/" + res.path;
                 CHECK(fileExists(fullPath) == true);
                 printf("    [OK] File exists\n");
 
@@ -256,7 +264,7 @@ TEST_CASE(FileValide) {
     //        FBXConverter converter(fbxPath);
     //        converter.setLoadOption(IConverter::LoadOption::Full);
     //        converter.setSeparateModels(separate);
-    //        converter.setOutputDir("D:/Projects/AYRuntime/AYResource/test_output/" + std::string(separate ? "separate" : "merged"));
+    //        converter.setOutputDir(fbxTestOutputDir() + "/" + std::string(separate ? "separate" : "merged"));
     //        ConversionResult result = converter.convert();
     //        size_t meshCount = 0;
     //        for (const auto& res : result.resources) {
@@ -295,7 +303,7 @@ TEST_CASE(FileValide) {
         FBXConverter converter(fbxPath);
         converter.setLoadOption(IConverter::LoadOption::Full);
         converter.setSeparateModels(true);
-        converter.setOutputDir("D:/Projects/AYRuntime/AYResource/test_output");
+        converter.setOutputDir(fbxTestOutputDir());
 
         ConversionResult result = converter.convert();
         CHECK(result.resources.size() > 0);
@@ -306,7 +314,7 @@ TEST_CASE(FileValide) {
             ++animCount;
 
             // 文件存在
-            std::string fullPath = "D:/Projects/AYRuntime/AYResource/test_output/" + res.path;
+            std::string fullPath = fbxTestOutputDir() + "/" + res.path;
             CHECK(fileExists(fullPath) == true);
 
             // magic == 'AYNM' (0x4E4D5941 little-endian)
@@ -332,7 +340,7 @@ TEST_CASE(FileValide) {
         FBXConverter converter(fbxPath);
         converter.setLoadOption(IConverter::LoadOption::Full);
         converter.setSeparateModels(true);
-        converter.setOutputDir("D:/Projects/AYRuntime/AYResource/test_output");
+        converter.setOutputDir(fbxTestOutputDir());
 
         ConversionResult result = converter.convert();
 
@@ -375,7 +383,7 @@ TEST_CASE(FileValide) {
         FBXConverter converter(fbxPath);
         converter.setLoadOption(IConverter::LoadOption::Full);
         converter.setSeparateModels(true);
-        converter.setOutputDir("D:/Projects/AYRuntime/AYResource/test_output_static");
+        converter.setOutputDir(fbxTestOutputStaticDir());
 
         ConversionResult result = converter.convert();
         for (const auto& res : result.resources) {

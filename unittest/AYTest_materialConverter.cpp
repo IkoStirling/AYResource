@@ -5,6 +5,7 @@
 #include "AYTest.h"
 #include <vector>
 #include <fstream>
+#include <filesystem>
 
 using namespace ayt::resource;
 
@@ -162,17 +163,10 @@ TEST_SUITE(MaterialConverterTests)
     }
 
     TEST_CASE(ConvertJsonToAymat) {
-        // 创建测试 JSON 文件
-        std::string testJsonPath = "D:/Projects/AYResource/test_output/test_material.json";
-        std::string outputDir = "D:/Projects/AYResource/test_output";
-
-        // 确保输出目录存在
-        std::ifstream dirCheck(outputDir);
-        if (!dirCheck.good()) {
-            // 目录可能不存在，跳过此测试
-            CHECK(true);
-            return;
-        }
+        namespace fs = std::filesystem;
+        const std::string outputDir = ayt::test::testTmpPath("test_output");
+        fs::create_directories(outputDir);
+        const std::string testJsonPath = outputDir + "/test_material.json";
 
         // 创建 JSON 测试文件
         std::ofstream jsonFile(testJsonPath);

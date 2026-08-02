@@ -4,25 +4,43 @@
 #include "AYIO.h"
 #include <AYLog.h>
 #include <cstring>
+#include <vector>
 
 namespace ayt::resource
 {
 
 // ===== 常量 =====
 static constexpr UInt32 SKELETON_MAGIC = 0x534B4C4E;  // 'SKLN'
-static constexpr UInt16 SKELETON_VERSION = 1;
+// v1: boneCount was UInt8 (truncates at 256) — still readable via boneDataSize scan.
+// v2: boneCount is UInt32.
+static constexpr UInt16 SKELETON_VERSION_V1 = 1;
+static constexpr UInt16 SKELETON_VERSION    = 2;
 
-// ===== Skeleton 文件头 =====
 #pragma pack(push, 1)
-struct SkeletonBinaryHeader {
+// On-disk v1 (legacy). Do not change layout — existing .ayskel files use this.
+struct SkeletonBinaryHeaderV1 {
     UInt32 magic;
     UInt16 version;
-    FGuid guid;                // 资源唯一标识 (16 bytes)
+    FGuid  guid;
     UInt8  flags;
-    UInt8  boneCount;
+    UInt8  boneCount;      // truncated for skeletons with >255 bones
+    UInt32 boneDataSize;
+};
+
+// On-disk v2.
+struct SkeletonBinaryHeaderV2 {
+    UInt32 magic;
+    UInt16 version;
+    FGuid  guid;
+    UInt8  flags;
+    UInt8  reserved;       // was v1 boneCount slot; unused
+    UInt32 boneCount;
     UInt32 boneDataSize;
 };
 #pragma pack(pop)
+
+static_assert(sizeof(SkeletonBinaryHeaderV1) == 28, "v1 .ayskel header size");
+static_assert(sizeof(SkeletonBinaryHeaderV2) == 32, "v2 .ayskel header size");
 
 // ===== Skeleton =====
 
@@ -104,71 +122,84 @@ void Skeleton::addBone(const Bone& bone) {
 
 void Skeleton::createTestSkeleton() {
     clear();
-
-    // 创建简单的手臂骨骼层级
-    // Root -> UpperArm -> LowerArm -> Hand
     Bone root;
     root.name = "Root";
     root.parentIndex = -1;
-    root.inverseBindMatrix = ayt::math::Float4x4::identity();
     root.localPosition = ayt::math::FVector3(0, 0, 0);
-    root.localRotation = ayt::math::FQuaternion(0, 0, 0, 1);
+    root.localRotation = ayt::math::FQuaternion::identity();
     root.localScale = ayt::math::FVector3(1, 1, 1);
+    root.inverseBindMatrix = ayt::math::Float4x4::identity();
     addBone(root);
-
-    Bone upperArm;
-    upperArm.name = "UpperArm";
-    upperArm.parentIndex = 0;  // Root
-    upperArm.inverseBindMatrix = ayt::math::Float4x4::identity();
-    upperArm.localPosition = ayt::math::FVector3(0, 1, 0);
-    upperArm.localRotation = ayt::math::FQuaternion(0, 0, 0, 1);
-    upperArm.localScale = ayt::math::FVector3(1, 1, 1);
-    addBone(upperArm);
-
-    Bone lowerArm;
-    lowerArm.name = "LowerArm";
-    lowerArm.parentIndex = 1;  // UpperArm
-    lowerArm.inverseBindMatrix = ayt::math::Float4x4::identity();
-    lowerArm.localPosition = ayt::math::FVector3(0, 1, 0);
-    lowerArm.localRotation = ayt::math::FQuaternion(0, 0, 0, 1);
-    lowerArm.localScale = ayt::math::FVector3(1, 1, 1);
-    addBone(lowerArm);
-
-    Bone hand;
-    hand.name = "Hand";
-    hand.parentIndex = 2;  // LowerArm
-    hand.inverseBindMatrix = ayt::math::Float4x4::identity();
-    hand.localPosition = ayt::math::FVector3(0, 1, 0);
-    hand.localRotation = ayt::math::FQuaternion(0, 0, 0, 1);
-    hand.localScale = ayt::math::FVector3(1, 1, 1);
-    addBone(hand);
-
-    _loaded = true;
 }
 
 bool Skeleton::load(const std::string& path) {
     _path = path;
-
-    ayt::io::File file(_path, ayt::io::File::Mode::BinaryRead);
+    ayt::io::File file(path, ayt::io::File::Mode::BinaryRead);
     if (!file.isOpen()) {
+        ayt::log::error("[Skeleton] load failed: cannot open '%s'", path.c_str());
         return false;
     }
-
-    size_t fileSize = file.size();
-    if (fileSize < sizeof(SkeletonBinaryHeader)) {
+    const size_t size = static_cast<size_t>(file.size());
+    std::vector<UInt8> data(size);
+    if (file.read(data.data(), size) != size) {
+        ayt::log::error("[Skeleton] load failed: short read '%s'", path.c_str());
         return false;
     }
-
-    std::vector<UInt8> data(fileSize);
-    if (file.read(data.data(), fileSize) != fileSize) {
-        return false;
-    }
-
     return loadFromBinary(data.data(), data.size());
 }
 
+namespace {
+
+// Read one bone record at *offset. Uses sizeof(FVector3/FQuaternion/Float4x4)
+// to match Skeleton::saveToBinary (SSE-padded math types).
+bool readBoneRecord(const UInt8* ptr, size_t size, UInt32& offset, Bone& out)
+{
+    if (offset + sizeof(UInt32) > size) return false;
+    const UInt32 nameLength = *reinterpret_cast<const UInt32*>(ptr + offset);
+    offset += sizeof(UInt32);
+
+    if (nameLength > 512 || offset + nameLength > size) return false;
+    out.name.assign(reinterpret_cast<const char*>(ptr + offset), nameLength);
+    offset += nameLength;
+
+    if (offset + sizeof(Int32) > size) return false;
+    std::memcpy(&out.parentIndex, ptr + offset, sizeof(Int32));
+    offset += sizeof(Int32);
+
+    // memcpy — do NOT load SSE math types via unaligned pointer deref
+    // (AYMATH AVX2 builds may use aligned loads → AV on odd offsets).
+    if (offset + sizeof(ayt::math::Float4x4) > size) return false;
+    std::memcpy(&out.inverseBindMatrix, ptr + offset, sizeof(ayt::math::Float4x4));
+    offset += sizeof(ayt::math::Float4x4);
+
+    if (offset + sizeof(ayt::math::FVector3) > size) return false;
+    std::memcpy(&out.localPosition, ptr + offset, sizeof(ayt::math::FVector3));
+    offset += sizeof(ayt::math::FVector3);
+
+    if (offset + sizeof(ayt::math::FQuaternion) > size) return false;
+    std::memcpy(&out.localRotation, ptr + offset, sizeof(ayt::math::FQuaternion));
+    offset += sizeof(ayt::math::FQuaternion);
+
+    if (offset + sizeof(ayt::math::FVector3) > size) return false;
+    std::memcpy(&out.localScale, ptr + offset, sizeof(ayt::math::FVector3));
+    offset += sizeof(ayt::math::FVector3);
+
+    return true;
+}
+
+size_t boneRecordBytes(const Bone& bone)
+{
+    return sizeof(UInt32) + bone.name.size() + sizeof(Int32)
+         + sizeof(ayt::math::Float4x4)
+         + sizeof(ayt::math::FVector3)
+         + sizeof(ayt::math::FQuaternion)
+         + sizeof(ayt::math::FVector3);
+}
+
+} // namespace
+
 bool Skeleton::loadFromBinary(const void* data, size_t size) {
-    if (!data || size < sizeof(SkeletonBinaryHeader)) {
+    if (!data || size < sizeof(SkeletonBinaryHeaderV1)) {
         ayt::log::error("[Skeleton] loadFromBinary failed: invalid data or size=%zu", size);
         return false;
     }
@@ -176,143 +207,143 @@ bool Skeleton::loadFromBinary(const void* data, size_t size) {
     clear();
 
     const UInt8* ptr = static_cast<const UInt8*>(data);
-    const SkeletonBinaryHeader* header = reinterpret_cast<const SkeletonBinaryHeader*>(ptr);
+    const UInt32 magic = *reinterpret_cast<const UInt32*>(ptr);
+    const UInt16 version = *reinterpret_cast<const UInt16*>(ptr + 4);
 
-    // 验证 magic
-    if (header->magic != SKELETON_MAGIC) {
+    if (magic != SKELETON_MAGIC) {
         ayt::log::error("[Skeleton] loadFromBinary failed: magic=0x%08X expected=0x%08X",
-                        header->magic, SKELETON_MAGIC);
+                        magic, SKELETON_MAGIC);
         return false;
     }
 
-    // 验证版本
-    if (header->version != SKELETON_VERSION) {
-        ayt::log::error("[Skeleton] loadFromBinary failed: version=%d expected=%d",
-                        header->version, SKELETON_VERSION);
-        return false;
-    }
+    UInt32 offset = 0;
+    UInt32 dataEnd = 0;
+    UInt32 headerBoneCount = 0;
 
-    // 读取 GUID
-    _guid = header->guid;
-
-    UInt32 offset = sizeof(SkeletonBinaryHeader);
-    UInt32 boneCount = header->boneCount;
-
-    _bones.resize(boneCount);
-    _inverseBindMatrices.resize(boneCount);
-    _localPositions.resize(boneCount);
-    _localRotations.resize(boneCount);
-    _localScales.resize(boneCount);
-    _boneNameMap.reserve(boneCount);
-
-    for (UInt32 i = 0; i < boneCount; i++) {
-        if (offset + sizeof(UInt32) > size) return false;
-        UInt32 nameLength = *reinterpret_cast<const UInt32*>(ptr + offset);
-        offset += sizeof(UInt32);
-
-        if (offset + nameLength > size) return false;
-        _bones[i].name = std::string(reinterpret_cast<const char*>(ptr + offset), nameLength);
-        offset += nameLength;
-
-        if (offset + sizeof(Int32) > size) return false;
-        _bones[i].parentIndex = *reinterpret_cast<const Int32*>(ptr + offset);
-        offset += sizeof(Int32);
-
-        if (offset + sizeof(ayt::math::Float4x4) > size) return false;
-        _bones[i].inverseBindMatrix = *reinterpret_cast<const ayt::math::Float4x4*>(ptr + offset);
-        offset += sizeof(ayt::math::Float4x4);
-
-        // 新版本: local transforms
-        if (offset + sizeof(ayt::math::FVector3) > size) return false;
-        _bones[i].localPosition = *reinterpret_cast<const ayt::math::FVector3*>(ptr + offset);
-        offset += sizeof(ayt::math::FVector3);
-
-        if (offset + sizeof(ayt::math::FQuaternion) > size) return false;
-        _bones[i].localRotation = *reinterpret_cast<const ayt::math::FQuaternion*>(ptr + offset);
-        offset += sizeof(ayt::math::FQuaternion);
-
-        if (offset + sizeof(ayt::math::FVector3) > size) return false;
-        _bones[i].localScale = *reinterpret_cast<const ayt::math::FVector3*>(ptr + offset);
-        offset += sizeof(ayt::math::FVector3);
-
-        _inverseBindMatrices[i] = _bones[i].inverseBindMatrix;
-        _localPositions[i] = _bones[i].localPosition;
-        _localRotations[i] = _bones[i].localRotation;
-        _localScales[i] = _bones[i].localScale;
-        _boneNameMap[_bones[i].name] = i;
-
-        if (_bones[i].parentIndex < 0) {
-            _rootIndices.push_back(static_cast<int>(i));
+    if (version == SKELETON_VERSION_V1) {
+        if (size < sizeof(SkeletonBinaryHeaderV1)) return false;
+        const auto* header = reinterpret_cast<const SkeletonBinaryHeaderV1*>(ptr);
+        _guid = header->guid;
+        headerBoneCount = header->boneCount;
+        offset = sizeof(SkeletonBinaryHeaderV1);
+        dataEnd = offset + header->boneDataSize;
+        if (dataEnd > size) {
+            ayt::log::error("[Skeleton] loadFromBinary v1: boneDataSize overflows file");
+            return false;
         }
+        // v1 boneCount is UInt8 and silently truncates (>255 → low byte).
+        // Always scan the full bone payload; do not trust headerBoneCount.
+        std::vector<Bone> scanned;
+        UInt32 scan = offset;
+        while (scan < dataEnd) {
+            Bone bone;
+            const UInt32 before = scan;
+            if (!readBoneRecord(ptr, dataEnd, scan, bone)) {
+                ayt::log::error("[Skeleton] loadFromBinary v1: corrupt bone at offset %u "
+                                "(headerCount=%u scanned=%zu)",
+                                before, headerBoneCount, scanned.size());
+                return false;
+            }
+            scanned.push_back(std::move(bone));
+        }
+        if (headerBoneCount != scanned.size()) {
+            ayt::log::warn("[Skeleton] loadFromBinary v1: header boneCount=%u truncated; "
+                           "recovered %zu bones from boneDataSize",
+                           headerBoneCount, scanned.size());
+        }
+        setBoneCount(scanned.size());
+        for (size_t i = 0; i < scanned.size(); ++i) {
+            setBone(i, scanned[i]);
+        }
+        _loaded = true;
+        return true;
     }
 
-    _loaded = true;
-    return true;
+    if (version == SKELETON_VERSION) {
+        if (size < sizeof(SkeletonBinaryHeaderV2)) return false;
+        const auto* header = reinterpret_cast<const SkeletonBinaryHeaderV2*>(ptr);
+        _guid = header->guid;
+        headerBoneCount = header->boneCount;
+        offset = sizeof(SkeletonBinaryHeaderV2);
+        dataEnd = offset + header->boneDataSize;
+        if (dataEnd > size) {
+            ayt::log::error("[Skeleton] loadFromBinary v2: boneDataSize overflows file");
+            return false;
+        }
+
+        setBoneCount(headerBoneCount);
+        for (UInt32 i = 0; i < headerBoneCount; ++i) {
+            Bone bone;
+            if (!readBoneRecord(ptr, dataEnd, offset, bone)) {
+                ayt::log::error("[Skeleton] loadFromBinary v2: corrupt bone %u/%u",
+                                i, headerBoneCount);
+                clear();
+                return false;
+            }
+            // Clamp illegal parent refs (defensive — bad FBX / truncated v1 upgrades).
+            if (bone.parentIndex >= 0
+                && static_cast<UInt32>(bone.parentIndex) >= headerBoneCount) {
+                ayt::log::warn("[Skeleton] bone %u '%s' parentIndex=%d OOB; treating as root",
+                               i, bone.name.c_str(), bone.parentIndex);
+                bone.parentIndex = -1;
+            }
+            setBone(i, bone);
+        }
+        _loaded = true;
+        return true;
+    }
+
+    ayt::log::error("[Skeleton] loadFromBinary failed: version=%d (supported 1..%d)",
+                    version, SKELETON_VERSION);
+    return false;
 }
 
 bool Skeleton::saveToBinary(std::vector<UInt8>& outData) const {
-    // 计算总大小
-    size_t totalSize = sizeof(SkeletonBinaryHeader);
+    size_t boneDataSize = 0;
     for (const auto& bone : _bones) {
-        totalSize += sizeof(UInt32);  // name length
-        totalSize += bone.name.size();  // name
-        totalSize += sizeof(Int32);  // parent index
-        totalSize += sizeof(ayt::math::Float4x4);  // inverse bind matrix
-        totalSize += sizeof(ayt::math::FVector3);  // local position
-        totalSize += sizeof(ayt::math::FQuaternion);  // local rotation
-        totalSize += sizeof(ayt::math::FVector3);  // local scale
+        boneDataSize += boneRecordBytes(bone);
     }
 
+    const size_t totalSize = sizeof(SkeletonBinaryHeaderV2) + boneDataSize;
     outData.resize(totalSize);
     UInt8* ptr = outData.data();
 
-    // 写入 Header
-    SkeletonBinaryHeader header;
+    SkeletonBinaryHeaderV2 header;
     std::memset(&header, 0, sizeof(header));
     header.magic = SKELETON_MAGIC;
     header.version = SKELETON_VERSION;
     header.guid = _guid;
     header.flags = 0;
-    header.boneCount = static_cast<UInt8>(_bones.size());
-
-    // 计算 bone data size
-    size_t boneDataSize = 0;
-    for (const auto& bone : _bones) {
-        boneDataSize += sizeof(UInt32) + bone.name.size() + sizeof(Int32)
-                      + sizeof(ayt::math::Float4x4)
-                      + sizeof(ayt::math::FVector3)  // local position
-                      + sizeof(ayt::math::FQuaternion)  // local rotation
-                      + sizeof(ayt::math::FVector3);  // local scale
-    }
+    header.reserved = 0;
+    header.boneCount = static_cast<UInt32>(_bones.size());
     header.boneDataSize = static_cast<UInt32>(boneDataSize);
 
     std::memcpy(ptr, &header, sizeof(header));
-    UInt32 offset = sizeof(SkeletonBinaryHeader);
+    UInt32 offset = sizeof(SkeletonBinaryHeaderV2);
 
-    // 写入骨骼数据
     for (size_t i = 0; i < _bones.size(); i++) {
         const auto& bone = _bones[i];
 
-        UInt32 nameLength = static_cast<UInt32>(bone.name.size());
-        *reinterpret_cast<UInt32*>(ptr + offset) = nameLength;
+        const         UInt32 nameLength = static_cast<UInt32>(bone.name.size());
+        std::memcpy(ptr + offset, &nameLength, sizeof(UInt32));
         offset += sizeof(UInt32);
 
         std::memcpy(ptr + offset, bone.name.data(), nameLength);
         offset += nameLength;
 
-        *reinterpret_cast<Int32*>(ptr + offset) = bone.parentIndex;
+        std::memcpy(ptr + offset, &bone.parentIndex, sizeof(Int32));
         offset += sizeof(Int32);
 
-        *reinterpret_cast<ayt::math::Float4x4*>(ptr + offset) = bone.inverseBindMatrix;
+        std::memcpy(ptr + offset, &bone.inverseBindMatrix, sizeof(ayt::math::Float4x4));
         offset += sizeof(ayt::math::Float4x4);
 
-        *reinterpret_cast<ayt::math::FVector3*>(ptr + offset) = bone.localPosition;
+        std::memcpy(ptr + offset, &bone.localPosition, sizeof(ayt::math::FVector3));
         offset += sizeof(ayt::math::FVector3);
 
-        *reinterpret_cast<ayt::math::FQuaternion*>(ptr + offset) = bone.localRotation;
+        std::memcpy(ptr + offset, &bone.localRotation, sizeof(ayt::math::FQuaternion));
         offset += sizeof(ayt::math::FQuaternion);
 
-        *reinterpret_cast<ayt::math::FVector3*>(ptr + offset) = bone.localScale;
+        std::memcpy(ptr + offset, &bone.localScale, sizeof(ayt::math::FVector3));
         offset += sizeof(ayt::math::FVector3);
     }
 

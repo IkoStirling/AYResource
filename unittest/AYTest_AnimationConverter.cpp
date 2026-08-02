@@ -25,8 +25,9 @@ using namespace ayt::resource;
 
 namespace {
 
-// R-02 测试输出目录 — 不与其他 test 共享,避免互相污染
-const char* kOutDir = "D:/Projects/AYRuntime/AYResource/test_output_animconv";
+std::string animConvOutDir() {
+    return ayt::test::testTmpPath("test_output_animconv");
+}
 
 // 构建一条最小可用的 AnimationData
 AnimationData makeAnimData(const std::string& name,
@@ -67,7 +68,7 @@ TEST_SUITE(AnimationConverterTests)
     // 之前版本手搓 Animation 绕过了 convertAll;这次必须真过 convertAll
     TEST_CASE(ValueTypeRoundTrip_Quaternion) {
         AnimationConverter conv;
-        conv.setOutputDir(kOutDir);
+        conv.setOutputDir(animConvOutDir());
 
         std::vector<AnimationData> anims;
         anims.push_back(makeAnimData("run", "root",
@@ -82,7 +83,7 @@ TEST_SUITE(AnimationConverterTests)
         CHECK(vp.find("animations/hero_run.ayanm") != std::string::npos);
 
         // 真去盘上读
-        std::string fullPath = std::string(kOutDir) + "/" + vp;
+        std::string fullPath = std::string(animConvOutDir()) + "/" + vp;
         auto bin = readFile(fullPath);
         CHECK(!bin.empty());
 
@@ -103,7 +104,7 @@ TEST_SUITE(AnimationConverterTests)
 
     TEST_CASE(ValueTypeRoundTrip_Vector3) {
         AnimationConverter conv;
-        conv.setOutputDir(kOutDir);
+        conv.setOutputDir(animConvOutDir());
 
         std::vector<AnimationData> anims;
         anims.push_back(makeAnimData("walk", "root",
@@ -113,7 +114,7 @@ TEST_SUITE(AnimationConverterTests)
         auto res = conv.convertAll(anims, "hero");
         CHECK(res.size() == 1u);
 
-        std::string fullPath = std::string(kOutDir) + "/" + res[0].path;
+        std::string fullPath = std::string(animConvOutDir()) + "/" + res[0].path;
         auto bin = readFile(fullPath);
         CHECK(!bin.empty());
 
@@ -134,7 +135,7 @@ TEST_SUITE(AnimationConverterTests)
     // 输入 5 个 anim:空名×2、含保留字符×1、重复名×2
     TEST_CASE(FilenameSanitization) {
         AnimationConverter conv;
-        conv.setOutputDir(kOutDir);
+        conv.setOutputDir(animConvOutDir());
 
         std::vector<AnimationData> anims;
 
@@ -165,7 +166,7 @@ TEST_SUITE(AnimationConverterTests)
 
         // 真写盘:5 个文件都应该存在,且 magic 对
         for (const auto& r : res) {
-            std::string fullPath = std::string(kOutDir) + "/" + r.path;
+            std::string fullPath = std::string(animConvOutDir()) + "/" + r.path;
             auto bin = readFile(fullPath);
             CHECK(!bin.empty());
             if (bin.size() >= 4) {
@@ -208,7 +209,7 @@ TEST_SUITE(AnimationConverterTests)
     // GUID 必须不同(因为 R-02 把 valueType 字节加进了 hash)
     TEST_CASE(ValueTypeAffectsGuid) {
         AnimationConverter conv;
-        conv.setOutputDir(kOutDir);
+        conv.setOutputDir(animConvOutDir());
 
         // Quaternion
         std::vector<AnimationData> animsQ;
