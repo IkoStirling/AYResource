@@ -11,7 +11,7 @@ file(GLOB_RECURSE SRC_FILES
 )
 
 find_package(assimp REQUIRED)
-find_package(stb REQUIRED)
+find_package(Stb REQUIRED)
 find_package(unofficial-libsquish CONFIG REQUIRED)
 find_package(basisu CONFIG REQUIRED)
 
