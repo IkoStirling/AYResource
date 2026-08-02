@@ -333,8 +333,9 @@ std::vector<ConversionResult::ConvertedResource> MaterialConverter::convertAll(
             // don't see a perfect-looking record for a file that isn't
             // actually on disk.
             if (!writeFile(fullPath, binaryData.data(), binaryData.size())) {
-                ayt::log::warn("[MaterialConverter] failed to write %s; skipping",
-                               fullPath.c_str());
+                std::fprintf(stderr,
+                             "[MaterialConverter] failed to write %s; skipping",
+                             fullPath.c_str());
                 return results;
             }
         }

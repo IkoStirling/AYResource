@@ -289,4 +289,73 @@ TEST_CASE(persistent_cache_index_round_trip)
     resetManager();
 }
 
+// F4.1: presence-of-version sanity. The static_assert in IAYResource.h
+// gates the compile, so this test exists to make the intent explicit
+// at the test boundary and catch accidental edits to the macro.
+TEST_CASE(version_tripwire_is_200)
+{
+#if defined(AYRESOURCE_VERSION)
+    CHECK(AYRESOURCE_VERSION == 200);
+#else
+    CHECK(false); // macro missing — header guard must have been removed
+#endif
+}
+
+// F4.2: setCacheConfig must not crash + must produce a usable cache.
+// The previous placement-new implementation was UB under concurrent
+// reads; the new ResourceCache::rebuild() path holds the internal
+// mutex for the full reset.
+TEST_CASE(setCacheConfig_rebuilds_without_use_after_free)
+{
+    resetManager();
+    ResourceCache::Config cfg;
+    cfg.maxResourceCount = 4;
+    ResourceCache cache(cfg);
+    cache.put("a", std::make_shared<MockResource>());
+    cache.put("b", std::make_shared<MockResource>());
+    CHECK(cache.strongCount() == 2u);
+
+    // Change the cap and rebuild — must not crash on the old entries.
+    cfg.maxResourceCount = 2;
+    cache.rebuild(cfg);
+    CHECK(cache.strongCount() == 0u);
+    CHECK(cache.config().maxResourceCount == 2u);
+
+    cache.put("c", std::make_shared<MockResource>());
+    CHECK(cache.get("c") != nullptr);
+    resetManager();
+}
+
+// F4.2: ResourceCache::rebuild must reset the stats counters in
+// addition to clearing the storage. v0 only cleared the storage and
+// left hitCount/resurrectCount/dropCount at whatever the previous
+// config had.
+TEST_CASE(setCacheConfig_resets_stats)
+{
+    ResourceCache::Config cfg;
+    ResourceCache cache(cfg);
+    (void)cache.get("missing.mock"); // bumps missCount
+    CHECK(cache.stats().missCount >= 1u);
+
+    cache.rebuild(cfg);
+    CHECK(cache.stats().missCount == 0u);
+    CHECK(cache.stats().hitCount == 0u);
+    CHECK(cache.stats().resurrectCount == 0u);
+}
+
+// F4.2: invalidatePak with empty path drops all readers. Previously
+// the only way to release a pak reader was unloadAll, which also
+// nuked the cache + load lifecycle state.
+TEST_CASE(invalidatePak_empty_drops_all)
+{
+    resetManager();
+    CHECK(ResourceManager::instance().openPaksCount() == 0u);
+    // invalidatePak(empty) on an empty map is a no-op but must not
+    // throw and must return false.
+    CHECK(ResourceManager::instance().invalidatePak("") == false);
+    CHECK(ResourceManager::instance().openPaksCount() == 0u);
+    resetManager();
+}
+}
+
 TEST_SUITE_END

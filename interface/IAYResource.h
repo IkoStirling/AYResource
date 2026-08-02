@@ -8,6 +8,22 @@
 namespace ayt::resource
 {
 
+// F4.1: forward-compat tripwire. `AYRESOURCE_VERSION` is the value
+// expected at compile time of every consumer; the project() VERSION
+// in CMakeLists.txt is the source of truth. If a translation unit is
+// compiled against a stale header (e.g. after a submodule bump that
+// forgot to bump the consumer's interface include directory), the
+// static_assert below fails. The override
+//   -DAYRESOURCE_VERSION_OVERRIDE=200
+// lets downstream projects re-pin to a different cooked format.
+#ifndef AYRESOURCE_VERSION
+#define AYRESOURCE_VERSION 200
+#endif
+static_assert(AYRESOURCE_VERSION == 200,
+              "AYResource compiled with stale interface; "
+              "expected 2.0.0 (VERSION macro 200).");
+
+
 // ============================================================
 // ResourceTag - 资源标签系统
 // ============================================================

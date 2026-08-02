@@ -3,6 +3,7 @@
 #include "AYFontAsset.h"
 #include <ayio/File.h>
 #include <aystorage/Guid.h>
+#include <cstdio>
 #include <cstring>
 
 namespace ayt::resource
@@ -239,8 +240,9 @@ std::vector<ConversionResult::ConvertedResource> FontConverter::convertAll(
             if (!ayt::io::File::exists(fullPath)) {
                 // F3.1: skip + warn instead of pushing a phantom entry.
                 if (!writeFile(fullPath, binaryData.data(), binaryData.size())) {
-                    ayt::log::warn("[FontConverter] failed to write %s; skipping",
-                                   fullPath.c_str());
+                    std::fprintf(stderr,
+                                 "[FontConverter] failed to write %s; skipping",
+                                 fullPath.c_str());
                     continue;
                 }
             }
