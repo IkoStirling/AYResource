@@ -154,7 +154,14 @@ std::vector<ConversionResult::ConvertedResource> ShaderConverter::convertAll(
         std::string outputPath = _generateOutputPath(shader.getNameStr());
 
         if (!ayt::io::File::exists(outputPath)) {
-            writeFile(outputPath, binaryData.data(), binaryData.size());
+            // F3.1: previously the return value was swallowed and the
+            // entry was still pushed; downstream callers would see a
+            // perfect-looking res with a path that doesn't exist on disk.
+            if (!writeFile(outputPath, binaryData.data(), binaryData.size())) {
+                ayt::log::warn("[ShaderConverter] failed to write %s; skipping",
+                               outputPath.c_str());
+                continue;
+            }
         }
 
         ConversionResult::ConvertedResource res;

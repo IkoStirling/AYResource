@@ -237,7 +237,12 @@ std::vector<ConversionResult::ConvertedResource> FontConverter::convertAll(
         if (!outputDir.empty()) {
             std::string fullPath = outputDir + "/" + virtualPath;
             if (!ayt::io::File::exists(fullPath)) {
-                writeFile(fullPath, binaryData.data(), binaryData.size());
+                // F3.1: skip + warn instead of pushing a phantom entry.
+                if (!writeFile(fullPath, binaryData.data(), binaryData.size())) {
+                    ayt::log::warn("[FontConverter] failed to write %s; skipping",
+                                   fullPath.c_str());
+                    continue;
+                }
             }
         }
 
