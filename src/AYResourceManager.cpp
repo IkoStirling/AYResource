@@ -41,9 +41,12 @@ std::shared_ptr<ayt::storage::IPackageReader> ResourceManager::_getOrOpenPak(con
         return nullptr;
     }
 
-    auto it = _openedPaks.find(pakPath);
-    if (it != _openedPaks.end()) {
-        return it->second;
+    {
+        std::lock_guard<std::mutex> lock(_paksMutex);
+        auto it = _openedPaks.find(pakPath);
+        if (it != _openedPaks.end()) {
+            return it->second;
+        }
     }
 
     auto reader = ayt::storage::IPackageReader::open(pakPath);
@@ -51,8 +54,15 @@ std::shared_ptr<ayt::storage::IPackageReader> ResourceManager::_getOrOpenPak(con
         return nullptr;
     }
 
+    std::lock_guard<std::mutex> lock(_paksMutex);
+    // Double-check after re-acquiring the lock: another thread may
+    // have opened the same pak in between. Prefer the existing entry.
+    auto it = _openedPaks.find(pakPath);
+    if (it != _openedPaks.end()) {
+        return it->second;
+    }
     _openedPaks[pakPath] = std::move(reader);
-    return reader;
+    return _openedPaks[pakPath];
 }
 
 void ResourceManager::preloadResourcesWithTag(const std::string& tag, const std::string& category) {
@@ -172,7 +182,10 @@ void ResourceManager::reloadResource(const std::string& filepath) {
 void ResourceManager::unloadAll() {
     _cache.clear();
     _resourceTypes.clear();
-    _openedPaks.clear();
+    {
+        std::lock_guard<std::mutex> lock(_paksMutex);
+        _openedPaks.clear();
+    }
 }
 
 void ResourceManager::tagResource(const std::string& filepath, const ResourceTag& tag) {

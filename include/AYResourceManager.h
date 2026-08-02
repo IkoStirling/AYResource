@@ -143,6 +143,12 @@ private:
 
     ResourceCache _cache;
     std::unique_ptr<ayt::storage::IStorageDatabase> _db;
+    // F1.4: _openedPaks and _resourceTypes were mutated without
+    // synchronization. _paksMutex guards the pak-reader map; the
+    // resource-types map's reads remain on the singleton's call
+    // path (single-threaded for now) and gain the same lock only
+    // when written from a load worker.
+    mutable std::mutex _paksMutex;
     std::unordered_map<std::string, std::shared_ptr<ayt::storage::IPackageReader>> _openedPaks;
     AsyncLoader _asyncLoader;
     HotReloadWatcher _hotReloadWatcher;
