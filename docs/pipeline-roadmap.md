@@ -1,6 +1,6 @@
 # AYResource — 完整资源管线路图（P0–P6）
 
-**状态**: 进行中（P0 待开工）  
+**状态**: 进行中（P0 ✅ 渲染入口已统一；P1 待开工）  
 **日期**: 2026-08-02  
 **范围**: 架构一致性与端到端闭环，**不是**再堆具体资源类型（`.aymesh` / `.ayanm` 等）。
 
@@ -143,10 +143,10 @@ P0 是工业级管线的前提；在 P0 完成前，不要并行大开 P4/P5 新
 
 | 项 | 状态 | 备注 |
 |----|------|------|
-| P0 统一运行时入口 | 🔲 待开工 | Renderer → ResourceManager |
+| P0 统一运行时入口 | ✅ | `loadMesh` / `loadMaterial` / `loadTexture` → `ResourceManager` |
 | P1 依赖图与加载语义 | 🔲 | |
-| P2 热重载 E2E | 🔲 | 依赖 AYIO FileWatcher 加固 |
-| P3 异步与缓存硬化 | 🔲 部分 | F1.1 cancel race ✅；F1.4 pak mutex 待提交 |
+| P2 热重载 E2E | 🔲 | AYIO FileWatcher harden ✅（P2 接线待做） |
+| P3 异步与缓存硬化 | 🔲 部分 | F1.1 cancel race ✅；F1.4 pak mutex ✅ |
 | P4 Cook/DB/pak | 🔲 | |
 | P5 Editor/CLI 编排 | 🔲 | |
 | P6 跨模块契约 | 🔲 | |
