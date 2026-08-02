@@ -80,4 +80,31 @@ class IConverter {
 	    virtual std::string getOutputPath() const { return {}; }
 };
 
+// F2.2: optional batch entry point split out from IConverter. Implementors
+// accept a typed intermediate asset (e.g. MaterialData list) and emit one
+// batch ConversionResult. The orchestrator (FBXConverter) separates
+// "single-file" converters (TextureConverter, ShaderConverter, ...) from
+// "batch" converters (MaterialConverter, AnimationConverter, ...) by
+// dynamic_cast<IConverterBatch*>(this), so the batch contract is opt-in.
+//
+// Rationale: previously `convertAll` was a per-converter free function
+// declared on each concrete class with a different signature every time
+// (e.g. MaterialConverter::convertAll(const vector<MaterialData>&, ...)
+// vs. AnimationConverter::convertAll(const vector<AnimationData>&, ...)).
+// Callers had to know the exact intermediate type up-front. This
+// interface lets the orchestrator write
+// `if (auto* batch = dynamic_cast<IConverterBatch*>(c)) batch->convertBatch(...)`
+// without re-typing the per-converter signature.
+class IConverterBatch {
+public:
+    virtual ~IConverterBatch() = default;
+    // Run the converter against the typed intermediate asset. The
+    // concrete implementation is responsible for the right cast: in
+    // MaterialConverter etc. this is a thin wrapper around the existing
+    // per-class `convertAll` overload.
+    virtual std::vector<ConversionResult::ConvertedResource> convertBatch(
+        const void* intermediate,
+        const std::string& baseName) = 0;
+};
+
 } // namespace ayt::resource
