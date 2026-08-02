@@ -122,6 +122,7 @@ void Skeleton::addBone(const Bone& bone) {
 
 void Skeleton::createTestSkeleton() {
     clear();
+    _loaded = true;
     Bone root;
     root.name = "Root";
     root.parentIndex = -1;
@@ -130,6 +131,33 @@ void Skeleton::createTestSkeleton() {
     root.localScale = ayt::math::FVector3(1, 1, 1);
     root.inverseBindMatrix = ayt::math::Float4x4::identity();
     addBone(root);
+
+    Bone upperArm;
+    upperArm.name = "UpperArm";
+    upperArm.parentIndex = 0;
+    upperArm.localPosition = ayt::math::FVector3(1, 0, 0);
+    upperArm.localRotation = ayt::math::FQuaternion::identity();
+    upperArm.localScale = ayt::math::FVector3(1, 1, 1);
+    upperArm.inverseBindMatrix = ayt::math::Float4x4::identity();
+    addBone(upperArm);
+
+    Bone lowerArm;
+    lowerArm.name = "LowerArm";
+    lowerArm.parentIndex = 1;
+    lowerArm.localPosition = ayt::math::FVector3(1, 0, 0);
+    lowerArm.localRotation = ayt::math::FQuaternion::identity();
+    lowerArm.localScale = ayt::math::FVector3(1, 1, 1);
+    lowerArm.inverseBindMatrix = ayt::math::Float4x4::identity();
+    addBone(lowerArm);
+
+    Bone hand;
+    hand.name = "Hand";
+    hand.parentIndex = 2;
+    hand.localPosition = ayt::math::FVector3(1, 0, 0);
+    hand.localRotation = ayt::math::FQuaternion::identity();
+    hand.localScale = ayt::math::FVector3(1, 1, 1);
+    hand.inverseBindMatrix = ayt::math::Float4x4::identity();
+    addBone(hand);
 }
 
 bool Skeleton::load(const std::string& path) {

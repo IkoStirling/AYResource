@@ -40,13 +40,32 @@ static std::string replaceExt(const std::string& path, const std::string& newExt
     return path.substr(0, pos) + newExt;
 }
 
-// Helper: try to read a float array [x, y, ...] - returns false if field doesn't exist
+// Helper: read a float parameter that may be either a scalar (single value)
+// or an array [x, y, ...]. Returns false if the field doesn't exist.
+// For scalar form, only out[0] is populated (caller must zero the rest).
+// For array form, the JSON must have at least `count` elements.
 static bool tryReadFloatArray(ayt::serializer::ISerializer& s, const char* name, Float32* out, int count) {
-    s.beginArray(name);
-    for (int i = 0; i < count; i++) {
-        s.field(nullptr, out[i]);
+    if (!s.isFieldPending(name)) {
+        return false;
     }
-    s.endArray();
+
+    // peekFieldTokenType: returns the JSON value's token type.
+    // TokenType enum (see SerializerCore.h):
+    //   None=0, ObjectBegin=1, ObjectEnd=2, ArrayBegin=3, ArrayEnd=4,
+    //   Field=5, String=6, Integer=7, Float=8, Bool=9, Null=10
+    // ArrayBegin (3) means the JSON value is a real array; anything else
+    // (Field/String/Integer/Float/...) is a scalar or null.
+    const int tok = s.peekFieldTokenType(name);
+    if (tok == static_cast<int>(ayt::serializer::TokenType::ArrayBegin)) {
+        s.beginArray(name);
+        for (int i = 0; i < count; i++) {
+            s.field(nullptr, out[i]);
+        }
+        s.endArray();
+    } else {
+        // Scalar (Float/Integer/Field/etc.). Read into out[0].
+        s.field(name, out[0]);
+    }
     return true;
 }
 
@@ -112,9 +131,11 @@ ConversionResult MaterialConverter::convert() {
 
     // mainTexture - string
     std::string texPath;
-    serializer->field("mainTexture", texPath);
-    if (!texPath.empty()) {
-        material->setTexture("mainTexture", texPath.c_str());
+    if (serializer->isFieldPending("mainTexture")) {
+        serializer->field("mainTexture", texPath);
+        if (!texPath.empty()) {
+            material->setTexture("mainTexture", texPath.c_str());
+        }
     }
 
     serializer->endObject(); // parameters
@@ -152,9 +173,9 @@ ConversionResult MaterialConverter::convert() {
     // 写入输出目录
     if (!outputDir.empty()) {
         std::string fullPath = outputDir + "/" + virtualPath;
-        if (!ayt::io::File::exists(fullPath)) {
-            writeFile(fullPath, binaryData.data(), binaryData.size());
-        }
+        // Always overwrite so reruns (and updates after schema/source changes)
+        // reflect the current convert() result instead of stale content.
+        writeFile(fullPath, binaryData.data(), binaryData.size());
     }
 
     // 构建资源信息
