@@ -2,8 +2,10 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <functional>
 #include <thread>
+#include <cstdint>
 #include "IAYResource.h"
 #include "AYResourceHandle.h"
 #include "AYResourceCache.h"
@@ -15,6 +17,15 @@
 
 namespace ayt::resource
 {
+
+// P1: unified load lifecycle for Manager-owned paths.
+// Failed may still have a placeholder in cache (magenta tex / default mat).
+enum class ResourceLoadState : uint8_t {
+    NotLoaded = 0,
+    Loading = 1,
+    Ready = 2,
+    Failed = 3,
+};
 
 namespace detail {
 
@@ -115,6 +126,11 @@ public:
     bool isLoaded(const std::string& filepath) const;
     std::shared_ptr<IResource> getResource(const std::string& filepath);
 
+    // ===== P1 load state / placeholders =====
+    ResourceLoadState getLoadState(const std::string& filepath) const;
+    /// True when the path failed to load (placeholder may still be cached).
+    bool hasLoadFailed(const std::string& filepath) const;
+
     // Expose cache for internal use
     ResourceCache& cache() { return _cache; }
 
@@ -137,7 +153,9 @@ private:
 
     std::shared_ptr<IResource> _loadInternal(const std::string& filepath);
     void _loadLooseDependencies(const std::string& filepath);
+    void _loadIntrinsicDependencies(const std::string& filepath, const IResource& resource);
     void _onResourceLoaded(const std::string& filepath, std::shared_ptr<IResource> resource);
+    std::shared_ptr<IResource> _installPlaceholder(const std::string& filepath);
     std::shared_ptr<ayt::storage::IPackageReader> _getOrOpenPak(const std::string& pakPath);
     std::shared_ptr<IResource> _loadFromDatabase(const std::string& filepath);
 
@@ -153,31 +171,16 @@ private:
     AsyncLoader _asyncLoader;
     HotReloadWatcher _hotReloadWatcher;
     std::unordered_map<std::string, std::string> _resourceTypes;
+    std::unordered_map<std::string, ResourceLoadState> _loadStates;
+    // Guards recursive dep loads against cycles (mesh→mat→…→mesh).
+    std::unordered_set<std::string> _loadingPaths;
 };
 
 template<typename T>
 std::shared_ptr<ResourceHandle<T>> ResourceManager::createHandle(const std::string& filepath) {
-    // Create a loader callback that uses ResourceRegistry
+    // P1: Handle loads must share the Manager graph (sidecar + intrinsic deps).
     auto loaderCb = [this](const std::string& path) -> std::shared_ptr<IResource> {
-        // Try to get type from database or registry
-        auto typeIt = _resourceTypes.find(path);
-        if (typeIt == _resourceTypes.end()) {
-            // Try to infer from path extension
-            std::string ext;
-            size_t dotPos = path.find_last_of('.');
-            if (dotPos != std::string::npos) {
-                ext = path.substr(dotPos);
-            }
-            // Use registry to infer type from extension
-            const std::string& type = ayt::resource::ResourceRegistry::getTypeFromExtension(ext);
-            if (type.empty()) return nullptr;
-            auto loader = ayt::resource::ResourceRegistry::createLoader(type);
-            if (!loader) return nullptr;
-            return loader->load(path);
-        }
-        auto loader = ayt::resource::ResourceRegistry::createLoader(typeIt->second);
-        if (!loader) return nullptr;
-        return loader->load(path);
+        return _loadInternal(path);
     };
 
     return std::make_shared<ResourceHandle<T>>(filepath, &_cache, std::move(loaderCb), true);

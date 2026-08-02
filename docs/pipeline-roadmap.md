@@ -1,6 +1,6 @@
 # AYResource — 完整资源管线路图（P0–P6）
 
-**状态**: 进行中（P0 ✅ 渲染入口已统一；P1 待开工）  
+**状态**: 进行中（P0 ✅；P1 ✅ 依赖图 + LoadState/placeholder；P2 待开工）  
 **日期**: 2026-08-02  
 **范围**: 架构一致性与端到端闭环，**不是**再堆具体资源类型（`.aymesh` / `.ayanm` 等）。
 
@@ -53,15 +53,16 @@ Bind:     RenderAssetBridge → GPU                                      ✅ 有
 
 ---
 
-### P1 — 依赖图与加载语义闭环
+### P1 — 依赖图与加载语义闭环 ✅
 
-今天依赖有两条路径（`.aydep.json` / 运行时解析），placeholder / failure 语义不统一。
+**已做（2026-08-02）**：
 
-**要做的事**：
+- `collectIntrinsicDependencies`：mesh slots → mat、material texture params → tex（无需 sidecar）
+- `_loadInternal`：sidecar + intrinsic 递归预载；`_loadingPaths` 防环
+- `ResourceLoadState`（NotLoaded/Loading/Ready/Failed）+ 缺失 `.aymat`/`.aytex` 占位（default mat / magenta 1×1）
+- `createHandle` 改为走 `_loadInternal`（与 sync/async 同图）
 
-- L2 依赖图：主资源 load 时递归/并行预载依赖
-- 统一 placeholder（加载中）与 failure（缺失 / 坏文件）语义
-- 材料引用纹理、mesh 引用 material 等在 L2 完成，而不是等到 L3 bind 才发现
+**仍留给后续**：并行图调度、非 `.ay*` 图像路径的占位、FBX 根级 `.aydep.json` 与 per-asset sidecar 对齐（P4/P5 可顺带）。
 
 ---
 
@@ -144,7 +145,7 @@ P0 是工业级管线的前提；在 P0 完成前，不要并行大开 P4/P5 新
 | 项 | 状态 | 备注 |
 |----|------|------|
 | P0 统一运行时入口 | ✅ | `loadMesh` / `loadMaterial` / `loadTexture` → `ResourceManager` |
-| P1 依赖图与加载语义 | 🔲 | |
+| P1 依赖图与加载语义 | ✅ | intrinsic deps + LoadState + placeholders |
 | P2 热重载 E2E | 🔲 | AYIO FileWatcher harden ✅（P2 接线待做） |
 | P3 异步与缓存硬化 | 🔲 部分 | F1.1 cancel race ✅；F1.4 pak mutex ✅ |
 | P4 Cook/DB/pak | 🔲 | |

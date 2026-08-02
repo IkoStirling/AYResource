@@ -2,10 +2,13 @@
 #include "AYResourceRegistry.h"
 #include "AYResourceBootstrap.h"
 #include "AYLooseDependency.h"
+#include "AYMaterial.h"
+#include "AYTexture.h"
 #include "aystorage/IStorageDatabase.h"
 #include "aystorage/IPackageReader.h"
 #include <ayio/Path.h>
 #include <cassert>
+#include <cstdio>
 
 namespace ayt::resource
 {
@@ -121,48 +124,137 @@ std::shared_ptr<IResource> ResourceManager::_loadFromDatabase(const std::string&
 }
 
 void ResourceManager::_loadLooseDependencies(const std::string& filepath) {
-    for (const std::string& depPath : collectLooseDependencies(filepath)) {
-        if (!_cache.contains(depPath)) {
-            (void)_loadInternal(depPath);
+    for (const std::string& rawDep : collectLooseDependencies(filepath)) {
+        const std::string depPath = normalizeResourcePath(rawDep);
+        if (depPath.empty() || _cache.contains(depPath) || _loadingPaths.count(depPath) != 0) {
+            continue;
+        }
+        if (!_loadInternal(depPath)) {
+            (void)_installPlaceholder(depPath);
         }
     }
 }
 
+void ResourceManager::_loadIntrinsicDependencies(const std::string& filepath,
+                                                 const IResource& resource) {
+    for (const std::string& rawDep : collectIntrinsicDependencies(filepath, resource)) {
+        const std::string depPath = normalizeResourcePath(rawDep);
+        if (depPath.empty() || _cache.contains(depPath) || _loadingPaths.count(depPath) != 0) {
+            continue;
+        }
+        if (!_loadInternal(depPath)) {
+            std::fprintf(stderr,
+                         "[ResourceManager] dependency load failed '%s' (owner '%s'); "
+                         "installing placeholder\n",
+                         depPath.c_str(), filepath.c_str());
+            (void)_installPlaceholder(depPath);
+        }
+    }
+}
+
+void ResourceManager::_onResourceLoaded(const std::string& filepath,
+                                        std::shared_ptr<IResource> resource) {
+    _loadStates[filepath] = ResourceLoadState::Ready;
+    if (resource) {
+        _loadIntrinsicDependencies(filepath, *resource);
+    }
+}
+
+std::shared_ptr<IResource> ResourceManager::_installPlaceholder(const std::string& filepath) {
+    const std::string path = normalizeResourcePath(filepath);
+    if (path.empty()) {
+        return nullptr;
+    }
+    if (auto existing = _cache.get(path)) {
+        _loadStates[path] = ResourceLoadState::Failed;
+        return existing;
+    }
+
+    const std::string type = ResourceRegistry::getTypeFromPath(path);
+    std::shared_ptr<IResource> placeholder;
+    if (type == "Texture") {
+        auto tex = std::make_shared<Texture>();
+        // Magenta 1×1 — visible “missing texture” sentinel for L3 bind.
+        tex->createSolidColor(1, 1, 255, 0, 255, 255);
+        placeholder = tex;
+    } else if (type == "Material") {
+        auto mat = std::make_shared<Material>();
+        mat->createDefault();
+        placeholder = mat;
+    } else {
+        _loadStates[path] = ResourceLoadState::Failed;
+        return nullptr;
+    }
+
+    _cache.put(path, placeholder);
+    _resourceTypes[path] = type;
+    _loadStates[path] = ResourceLoadState::Failed;
+    return placeholder;
+}
+
 std::shared_ptr<IResource> ResourceManager::_loadInternal(const std::string& filepath) {
     const std::string path = normalizeResourcePath(filepath);
+    if (path.empty()) {
+        return nullptr;
+    }
     if (auto existing = _cache.get(path)) {
         return existing;
+    }
+
+    // Cycle guard: a path currently mid-load must not re-enter.
+    if (_loadingPaths.count(path) != 0) {
+        return nullptr;
     }
 
     if (!areLoadersInitialized()) {
         initializeLoaders();
     }
 
+    _loadingPaths.insert(path);
+    _loadStates[path] = ResourceLoadState::Loading;
+
+    std::shared_ptr<IResource> resource;
+
     if (_db && _db->isOpen()) {
         auto record = _db->getResource(path);
         if (record) {
             auto deps = _db->getLoadOrder(path);
             for (const auto& dep : deps) {
-                if (!_cache.contains(dep)) {
+                if (!_cache.contains(dep) && _loadingPaths.count(dep) == 0) {
                     if (auto depRes = _loadFromDatabase(dep)) {
+                        _loadStates[normalizeResourcePath(dep)] = ResourceLoadState::Ready;
                         (void)depRes;
+                    } else {
+                        (void)_installPlaceholder(dep);
                     }
                 }
             }
-            return _loadFromDatabase(path);
+            resource = _loadFromDatabase(path);
+            if (resource) {
+                _onResourceLoaded(path, resource);
+            } else {
+                _loadStates[path] = ResourceLoadState::Failed;
+            }
+            _loadingPaths.erase(path);
+            return resource;
         }
     }
 
     _loadLooseDependencies(path);
 
-    auto resource = ResourceRegistry::loadByPath(path);
+    resource = ResourceRegistry::loadByPath(path);
     if (resource) {
         _cache.put(path, resource);
         const std::string type = ResourceRegistry::getTypeFromPath(path);
         if (!type.empty()) {
             _resourceTypes[path] = type;
         }
+        _onResourceLoaded(path, resource);
+    } else {
+        _loadStates[path] = ResourceLoadState::Failed;
     }
+
+    _loadingPaths.erase(path);
     return resource;
 }
 
@@ -170,6 +262,7 @@ void ResourceManager::unloadResource(const std::string& filepath) {
     const std::string path = normalizeResourcePath(filepath);
     _cache.remove(path);
     _resourceTypes.erase(path);
+    _loadStates.erase(path);
 }
 
 void ResourceManager::reloadResource(const std::string& filepath) {
@@ -182,6 +275,8 @@ void ResourceManager::reloadResource(const std::string& filepath) {
 void ResourceManager::unloadAll() {
     _cache.clear();
     _resourceTypes.clear();
+    _loadStates.clear();
+    _loadingPaths.clear();
     {
         std::lock_guard<std::mutex> lock(_paksMutex);
         _openedPaks.clear();
@@ -270,6 +365,19 @@ bool ResourceManager::isLoaded(const std::string& filepath) const {
 
 std::shared_ptr<IResource> ResourceManager::getResource(const std::string& filepath) {
     return _cache.get(normalizeResourcePath(filepath));
+}
+
+ResourceLoadState ResourceManager::getLoadState(const std::string& filepath) const {
+    const std::string path = normalizeResourcePath(filepath);
+    const auto it = _loadStates.find(path);
+    if (it == _loadStates.end()) {
+        return ResourceLoadState::NotLoaded;
+    }
+    return it->second;
+}
+
+bool ResourceManager::hasLoadFailed(const std::string& filepath) const {
+    return getLoadState(filepath) == ResourceLoadState::Failed;
 }
 
 } // namespace ayt::resource

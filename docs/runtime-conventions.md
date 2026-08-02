@@ -78,11 +78,23 @@ References: glTF UNSIGNED_SHORT/INT accessors; Unity 16/32-bit mesh indices; bgf
 | `ResourceRegistry::loadByPath(path)` | Debug, tests, loose files (no DB) |
 | `ResourceManager::load<T>(path)` | Game/editor; DB + pak when registered; **falls back** to loose file |
 
-## 7. Loose dependency sidecars
+## 7. Loose dependency sidecars + intrinsic L2 deps (P1)
 
 Offline converters may emit `{assetStem}.aydep.json` next to an asset. At runtime,
 `ResourceManager` loads dependencies listed for matching `from` paths before the
 primary asset when using the loose-file path.
+
+In addition (P1), after a primary asset parses successfully, Manager walks
+**intrinsic** references and preloads them into the L2 cache:
+
+| Owner | Intrinsic edges |
+|-------|-----------------|
+| `IMesh` | material slot path strings → `.aymat` |
+| `IMaterial` | `Texture2D/3D/Cube` parameter paths → `.aytex` (or typed texture) |
+
+Missing typed deps (`.aymat` / `.aytex`) are marked `ResourceLoadState::Failed` and
+receive a placeholder in cache (default material / magenta 1×1 texture) so L3 bind
+does not see a null. Primary load failure still returns `nullptr`.
 
 ## 8. Public include surface (Phase 3)
 
