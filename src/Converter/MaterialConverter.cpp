@@ -1,9 +1,10 @@
-#include "Converter\MaterialConverter.h"
-#include "Loader\MaterialFile.h"
+﻿#include "Converter\MaterialConverter.h"
+#include "AYVirtualAssetPath.h"
 #include "ayio/File.h"
 #include <AYSerializer.h>
 #include <aystorage/Guid.h>
 #include <AYLog.h>
+#include <cstring>
 
 namespace ayt::resource
 {
@@ -96,9 +97,9 @@ ConversionResult MaterialConverter::convert() {
         // the material showing up as a duplicated phantom pbr.phoskia in
         // the cooker.
         ayt::log::warn("[MaterialConverter] source '%s' has no 'shader' field; "
-                       "falling back to 'shaders/pbr.phoskia' — verify the source JSON",
+                       "falling back to 'simple_lit_shadow.phoskia'",
                        sourcePath.c_str());
-        shader = "shaders/pbr.phoskia";
+        shader = "simple_lit_shadow.phoskia";
     }
 
     // 创建材质
@@ -198,6 +199,7 @@ ConversionResult MaterialConverter::convert() {
     return result;
 }
 
+
 std::vector<ConversionResult::ConvertedResource> MaterialConverter::convertAll(
     const std::vector<MaterialData>& materials,
     const std::string& baseName
@@ -208,16 +210,17 @@ std::vector<ConversionResult::ConvertedResource> MaterialConverter::convertAll(
         return results;
     }
 
-    // 创建 MaterialFile 并添加所有材质
-    auto matFile = std::make_shared<MaterialFile>();
-
+    // One .aymat per material — runtime Material::load expects the single-
+    // material binary (Material::saveToBinary), not MaterialFile multi-pack.
+    // Virtual path must match FBXParser mesh.materialSlots.
     for (size_t i = 0; i < materials.size(); i++) {
         const auto& matData = materials[i];
 
-        // 创建 Material 并填充数据
         auto material = std::make_shared<Material>();
+        const std::string fallbackName =
+            baseName + "_material_" + std::to_string(i);
         material->initialise(
-            matData.name.empty() ? baseName : matData.name.c_str(),
+            matData.name.empty() ? fallbackName.c_str() : matData.name.c_str(),
             matData.shader.c_str());
 
         for (const auto& param : matData.parameters) {
@@ -249,103 +252,52 @@ std::vector<ConversionResult::ConvertedResource> MaterialConverter::convertAll(
         }
 
         material->setLoaded(true);
-        matFile->addMaterial(material);
-    }
 
-    // 保存为单个 .aymat 文件
-    std::string virtualPath = "materials/" + baseName + ".aymat";
+        std::vector<UInt8> contentData;
+        const std::string name = material->getName();
+        const std::string shader = material->getShader();
+        contentData.insert(contentData.end(), name.begin(), name.end());
+        contentData.insert(contentData.end(), shader.begin(), shader.end());
+        material->forEachParameterHashSink(
+            [&contentData](const std::string& pname, MaterialParamType ptype,
+                           const UInt8* bytes, size_t n) {
+                const UInt32 nameLen = static_cast<UInt32>(pname.size());
+                contentData.resize(contentData.size() + sizeof(UInt32) + nameLen);
+                UInt8* ptr = contentData.data() + contentData.size() - nameLen;
+                *reinterpret_cast<UInt32*>(ptr - sizeof(UInt32)) = nameLen;
+                memcpy(ptr, pname.data(), nameLen);
+                contentData.push_back(static_cast<UInt8>(ptype));
+                contentData.insert(contentData.end(), bytes, bytes + n);
+            });
+        const ayt::math::FGuid guid =
+            ayt::storage::Guid::computeFromData(contentData.data(), contentData.size());
+        material->setGuid(guid);
+        lastGuid = guid;
 
-    if (!outputDir.empty()) {
-        std::string fullPath = outputDir + "/" + virtualPath;
-        // F3.2: always overwrite so re-runs (or schema/source changes)
-        // reflect the current convert() result instead of stale content.
-        // The previous `if (exists) skip` left a cooked .aymat on disk
-        // even after the source JSON's parameters changed.
         std::vector<UInt8> binaryData;
-        if (matFile->saveToBinary(binaryData)) {
-            // F1.5b: GUID hashes full content (name+shader+param
-            // names/types/values+texture paths). v0 hash omitted
-            // parameter values + texture paths so two materials
-            // with same name+shader+param-type-list but different
-            // colors or textures shared a GUID.
-            std::vector<UInt8> matContentData;
-            for (const auto& matData : materials) {
-                UInt32 nameLen = static_cast<UInt32>(matData.name.size());
-                UInt32 shaderLen = static_cast<UInt32>(matData.shader.size());
-                matContentData.resize(matContentData.size() + sizeof(UInt32) * 2 + nameLen + shaderLen);
-                UInt8* ptr = matContentData.data() + matContentData.size() - (sizeof(UInt32) * 2 + nameLen + shaderLen);
-                *reinterpret_cast<UInt32*>(ptr) = nameLen; ptr += sizeof(UInt32);
-                memcpy(ptr, matData.name.data(), nameLen); ptr += nameLen;
-                *reinterpret_cast<UInt32*>(ptr) = shaderLen; ptr += sizeof(UInt32);
-                memcpy(ptr, matData.shader.data(), shaderLen); ptr += shaderLen;
-                for (const auto& param : matData.parameters) {
-                    UInt32 pnameLen = static_cast<UInt32>(param.name.size());
-                    matContentData.resize(matContentData.size() + sizeof(UInt32) + pnameLen + sizeof(UInt8));
-                    UInt8* pp = matContentData.data() + matContentData.size() - (sizeof(UInt32) + pnameLen + sizeof(UInt8));
-                    *reinterpret_cast<UInt32*>(pp) = pnameLen; pp += sizeof(UInt32);
-                    memcpy(pp, param.name.data(), pnameLen); pp += pnameLen;
-                    *reinterpret_cast<UInt8*>(pp) = static_cast<UInt8>(param.type);
-                    switch (param.type) {
-                    case MaterialParamType::Float:
-                        matContentData.insert(matContentData.end(),
-                            reinterpret_cast<const UInt8*>(&param.floatValue),
-                            reinterpret_cast<const UInt8*>(&param.floatValue) + sizeof(Float32));
-                        break;
-                    case MaterialParamType::Float2:
-                        matContentData.insert(matContentData.end(),
-                            reinterpret_cast<const UInt8*>(param.float2Value),
-                            reinterpret_cast<const UInt8*>(param.float2Value) + sizeof(Float32) * 2);
-                        break;
-                    case MaterialParamType::Float3:
-                        matContentData.insert(matContentData.end(),
-                            reinterpret_cast<const UInt8*>(param.float3Value),
-                            reinterpret_cast<const UInt8*>(param.float3Value) + sizeof(Float32) * 3);
-                        break;
-                    case MaterialParamType::Float4:
-                        matContentData.insert(matContentData.end(),
-                            reinterpret_cast<const UInt8*>(param.float4Value),
-                            reinterpret_cast<const UInt8*>(param.float4Value) + sizeof(Float32) * 4);
-                        break;
-                    case MaterialParamType::Float4x4:
-                        matContentData.insert(matContentData.end(),
-                            reinterpret_cast<const UInt8*>(param.matrixValue),
-                            reinterpret_cast<const UInt8*>(param.matrixValue) + sizeof(Float32) * 16);
-                        break;
-                    case MaterialParamType::Int:
-                        matContentData.insert(matContentData.end(),
-                            reinterpret_cast<const UInt8*>(&param.intValue),
-                            reinterpret_cast<const UInt8*>(&param.intValue) + sizeof(Int32));
-                        break;
-                    case MaterialParamType::Bool:
-                        matContentData.push_back(param.boolValue ? 1 : 0);
-                        break;
-                    case MaterialParamType::Texture2D:
-                    case MaterialParamType::Texture3D:
-                    case MaterialParamType::TextureCube:
-                        matContentData.insert(matContentData.end(),
-                            param.texturePath.begin(), param.texturePath.end());
-                        break;
-                    }
-                }
-            }
-            lastGuid = ayt::storage::Guid::computeFromData(matContentData.data(), matContentData.size());
-            // F3.1: drop the result entry if the write fails so callers
-            // don't see a perfect-looking record for a file that isn't
-            // actually on disk.
+        if (!material->saveToBinary(binaryData)) {
+            ayt::log::warn("[MaterialConverter] saveToBinary failed for material %zu; skipping",
+                           i);
+            continue;
+        }
+
+        const std::string virtualPath = makeMaterialVirtualPath(baseName, i);
+        if (!outputDir.empty()) {
+            const std::string fullPath = outputDir + "/" + virtualPath;
             if (!writeFile(fullPath, binaryData.data(), binaryData.size())) {
                 ayt::log::warn("[MaterialConverter] failed to write %s; skipping",
                                fullPath.c_str());
-                return results;
+                continue;
             }
         }
-    }
 
-    ConversionResult::ConvertedResource res;
-    res.guid = lastGuid;
-    res.path = virtualPath;
-    res.type = "Material";
-    res.size = static_cast<uint64_t>(matFile->sizeInBytes());
-    results.push_back(res);
+        ConversionResult::ConvertedResource res;
+        res.guid = guid;
+        res.path = virtualPath;
+        res.type = "Material";
+        res.size = static_cast<uint64_t>(binaryData.size());
+        results.push_back(res);
+    }
 
     return results;
 }

@@ -356,6 +356,5 @@ TEST_CASE(invalidatePak_empty_drops_all)
     CHECK(ResourceManager::instance().openPaksCount() == 0u);
     resetManager();
 }
-}
 
 TEST_SUITE_END

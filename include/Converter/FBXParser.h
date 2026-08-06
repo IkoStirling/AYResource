@@ -37,8 +37,20 @@ public:
     void setSeparateModels(bool separate) { _separateModels = separate; }
     bool getSeparateModels() const { return _separateModels; }
 
+    /// Asset base name used in virtual material/texture paths
+    /// (e.g. "Sour" → materials/Sour_material_0.aymat). Must be set
+    /// before parse() so mesh.materialSlots match MaterialConverter output.
+    void setAssetBaseName(const std::string& baseName) { _assetBaseName = baseName; }
+    const std::string& getAssetBaseName() const { return _assetBaseName; }
+
+    /// Usage suffix for cooked texture virtual paths (default "_d").
+    void setTextureUsageSuffix(const std::string& suffix) { _textureUsageSuffix = suffix; }
+    const std::string& getTextureUsageSuffix() const { return _textureUsageSuffix; }
+
 private:
     std::string _sourcePath;
+    std::string _assetBaseName;
+    std::string _textureUsageSuffix = "_d";
     IConverter::LoadOption _loadOption = IConverter::LoadOption::Full;  // 默认 Full 模式
     bool _separateModels = true;  // 默认分离，每个 aiMesh 一个 MeshData
     std::unique_ptr<IntermediateAsset> _result;

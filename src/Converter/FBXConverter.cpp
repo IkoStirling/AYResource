@@ -1,4 +1,5 @@
 #include "Converter\FBXConverter.h"
+#include "AYVirtualAssetPath.h"
 #include "ayio/File.h"
 #include <AYLog.h>
 #include <sstream>
@@ -40,10 +41,23 @@ ConversionResult FBXConverter::convert() {
 
     ayt::log::info("[FBXConverter] Starting conversion: %s", sourcePath.c_str());
 
+    // Base name used by Parser (materialSlots) and all typed converters.
+    std::string baseName = sourcePath;
+    size_t pos = baseName.find_last_of("/\\");
+    if (pos != std::string::npos) {
+        baseName = baseName.substr(pos + 1);
+    }
+    pos = baseName.find_last_of('.');
+    if (pos != std::string::npos) {
+        baseName = baseName.substr(0, pos);
+    }
+
     // 1. Parser 解析源文件
     FBXParser parser(sourcePath);
     parser.setLoadOption(loadOption);
     parser.setSeparateModels(separateModels);
+    parser.setAssetBaseName(baseName);
+    parser.setTextureUsageSuffix(textureConverter.getUsageSuffix());
 
     if (!parser.parse(sourcePath)) {
         ayt::log::error("[FBXConverter] Failed to parse FBX: %s", sourcePath.c_str());
@@ -59,17 +73,6 @@ ConversionResult FBXConverter::convert() {
     ayt::log::info("[FBXConverter] Parsed FBX - meshes=%zu materials=%zu textures=%zu skeletons=%zu",
              asset->meshes.size(), asset->materials.size(),
              asset->textures.size(), asset->skeletons.size());
-
-    //2. 生成基础文件名
-    std::string baseName = sourcePath;
-    size_t pos = baseName.find_last_of("/\\");
-    if (pos != std::string::npos) {
-        baseName = baseName.substr(pos + 1);
-    }
-    pos = baseName.find_last_of('.');
-    if (pos != std::string::npos) {
-        baseName = baseName.substr(0, pos);
-    }
 
     // 3. 转换 Mesh
     if (!asset->meshes.empty()) {
@@ -98,23 +101,12 @@ ConversionResult FBXConverter::convert() {
             fbxDir = sourcePath.substr(0, lastSlash);
         }
 
-        // 去重：已处理的纹理路径
+        // 去重：已处理的纹理 stem
         std::set<std::string> processedTextures;
 
         for (const auto& mat : asset->materials) {
             for (const auto& texPath : mat.texturePaths) {
-                // 生成纹理名称：保留子目录，子目录与文件名之间用下划线分隔
-                // 例如 "tex/skin.png" → texName = "tex_skin"
-                std::string texName = texPath;
-                size_t dotPos = texName.find_last_of('.');
-                if (dotPos != std::string::npos) {
-                    texName = texName.substr(0, dotPos);
-                }
-                // 保留子目录，只把最后的路径分隔符替换为下划线
-                size_t lastSep = texName.find_last_of("/\\");
-                if (lastSep != std::string::npos) {
-                    texName = texName.substr(0, lastSep) + "_" + texName.substr(lastSep + 1);
-                }
+                const std::string texName = makeTextureStemFromSourcePath(texPath);
 
                 // 去重：同一纹理被多个材质引用时只处理一次
                 if (processedTextures.find(texName) != processedTextures.end()) {
@@ -122,7 +114,7 @@ ConversionResult FBXConverter::convert() {
                 }
                 processedTextures.insert(texName);
 
-                // 转换纹理
+                // 转换纹理（虚拟路径 = makeTextureVirtualPath）
                 auto texResult = textureConverter.convertFromPath(texPath, texName, fbxDir);
                 for (auto& res : texResult.resources) {
                     result.resources.push_back(res);
@@ -156,42 +148,56 @@ ConversionResult FBXConverter::convert() {
         ayt::log::info("[FBXConverter] Converted %zu animations", animResources.size());
     }
 
-    // 6. 生成依赖关系
+    // 6. 生成依赖关系 — mesh → materialSlots (already contract paths)
+    // MeshConverter sanitizes '/' '\\' in mesh.name to '_'; dep.from must match.
+    auto makeMeshVirtualPath = [&](size_t i, const MeshData& mesh) {
+        std::string safeName = mesh.name;
+        size_t pos;
+        while ((pos = safeName.find('/')) != std::string::npos) safeName.replace(pos, 1, "_");
+        while ((pos = safeName.find('\\')) != std::string::npos) safeName.replace(pos, 1, "_");
+        const std::string name = safeName.empty()
+            ? baseName + "_" + std::to_string(i) + ".aymesh"
+            : baseName + "_" + safeName + ".aymesh";
+        return std::string("meshes/") + name;
+    };
     for (size_t i = 0; i < asset->meshes.size(); i++) {
         const auto& mesh = asset->meshes[i];
+        const std::string meshPath = makeMeshVirtualPath(i, mesh);
         for (const auto& matSlot : mesh.materialSlots) {
             ConversionResult::Dependency dep;
-            // 从 mesh资源路径找到对应的 output path
-            std::string meshPath = "meshes/" + (mesh.name.empty()
-                ? baseName + "_" + std::to_string(i) + ".aymesh"
-                : baseName + "_" + mesh.name + ".aymesh");
             dep.from = meshPath;
             dep.to = matSlot;
             result.dependencies.push_back(dep);
         }
     }
 
-    // 7. 生成材质 → 纹理依赖关系
+    // 7. 材质 → 纹理依赖：优先用 Param.texturePath（与 aymat 内嵌一致），
+    // 否则从 texturePaths 推导同一契约路径。
     for (size_t i = 0; i < asset->materials.size(); i++) {
         const auto& mat = asset->materials[i];
-        std::string matPath = "materials/" + baseName + "_material_" + std::to_string(i) + ".aymat";
+        const std::string matPath = makeMaterialVirtualPath(baseName, i);
 
-        for (const auto& texPath : mat.texturePaths) {
-            // 生成纹理名称（与 section 4b 保持一致）
-            std::string texName = texPath;
-            size_t dotPos = texName.find_last_of('.');
-            if (dotPos != std::string::npos) {
-                texName = texName.substr(0, dotPos);
+        std::set<std::string> emitted;
+        for (const auto& param : mat.parameters) {
+            if (param.type != MaterialParamType::Texture2D &&
+                param.type != MaterialParamType::Texture3D &&
+                param.type != MaterialParamType::TextureCube) {
+                continue;
             }
-            // 保留子目录，只把最后的路径分隔符替换为下划线
-            size_t lastSep = texName.find_last_of("/\\");
-            if (lastSep != std::string::npos) {
-                texName = texName.substr(0, lastSep) + "_" + texName.substr(lastSep + 1);
-            }
-
+            if (param.texturePath.empty()) continue;
+            if (!emitted.insert(param.texturePath).second) continue;
             ConversionResult::Dependency dep;
             dep.from = matPath;
-            dep.to = "textures/" + texName + textureConverter.getUsageSuffix() + ".aytex";
+            dep.to = param.texturePath;
+            result.dependencies.push_back(dep);
+        }
+        for (const auto& texPath : mat.texturePaths) {
+            const std::string cooked = makeTextureVirtualPathFromSource(
+                texPath, textureConverter.getUsageSuffix());
+            if (!emitted.insert(cooked).second) continue;
+            ConversionResult::Dependency dep;
+            dep.from = matPath;
+            dep.to = cooked;
             result.dependencies.push_back(dep);
         }
     }
@@ -208,8 +214,7 @@ ConversionResult FBXConverter::convert() {
 
         for (size_t mi = 0; mi < asset->meshes.size(); ++mi) {
             const auto& mesh = asset->meshes[mi];
-            std::string meshName = mesh.name.empty() ? (baseName + "_" + std::to_string(mi)) : mesh.name;
-            std::string meshPath = "meshes/" + baseName + "_" + meshName + ".aymesh";
+            const std::string meshPath = makeMeshVirtualPath(mi, mesh);
 
             ConversionResult::Dependency dep;
             dep.from = meshPath;

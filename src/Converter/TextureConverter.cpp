@@ -356,8 +356,8 @@ ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
     std::string ext = getExtension(fullPath);
     for (auto& c : ext) c = static_cast<char>(tolower(c));
 
-    // 构建输出路径
-    std::string outputFileName = textureName + usageSuffix + (passthrough ? ("." + ext) : ".aytex");
+    // 构建输出路径 — 虚拟路径始终为 .aytex（与 aymat 引用契约一致）。
+    std::string outputFileName = textureName + usageSuffix + ".aytex";
     std::string virtualPath = "textures/" + outputFileName;
     std::string fullOutputPath;
     if (!outputDir.empty()) {
@@ -370,6 +370,11 @@ ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
         if (getAytexFormat(fullOutputPath, existingFormat)) {
             if (existingFormat == static_cast<UInt8>(outputFormat)) {
                 printf("  [SKIP] %s (format matches, skip)\n", outputFileName.c_str());
+                ConversionResult::ConvertedResource res;
+                res.path = virtualPath;
+                res.type = "Texture";
+                // size unknown cheaply; leave 0 — dep listing still has path
+                result.resources.push_back(res);
                 return result;
             } else {
                 printf("  [REPLACE] %s (format changed, reconverting)\n", outputFileName.c_str());
@@ -379,10 +384,11 @@ ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
 
     printf("  [CONVERT] %s\n", outputFileName.c_str());
 
-    // ===== 直接拷贝模式 =====
-    if (passthrough) {
-        // 跳过加载/解码/压缩，直接将源文件原始数据复制到输出目录
-        // 输出文件扩展名保持为 .aytex，但内容是原始 PNG/JPG 等
+    // True passthrough only for already-engine/compressed blobs. PNG/JPG/etc.
+    // must decode into a real AYTX header so Texture::load succeeds.
+    const bool canRawPassthrough =
+        passthrough && (ext == "dds" || ext == "aytex");
+    if (canRawPassthrough) {
         ayt::io::File srcFile(fullPath, ayt::io::File::Mode::BinaryRead);
         if (!srcFile.isOpen()) {
             return result;
@@ -393,7 +399,7 @@ ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
             return result;
         }
 
-        if (!fullOutputPath.empty() && !ayt::io::File::exists(fullOutputPath)) {
+        if (!fullOutputPath.empty()) {
             writeFile(fullOutputPath, rawData.data(), rawData.size());
         }
 
