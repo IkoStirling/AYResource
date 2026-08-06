@@ -4,6 +4,7 @@
 #include "Loader/MaterialLoader.h"
 #include "Loader/TextureLoader.h"
 #include "Loader/SkeletonLoader.h"
+#include "Loader/SkeletonMaskLoader.h"
 #include "Loader/AnimationLoader.h"
 #include "Loader/AudioLoader.h"
 #include "Loader/VideoLoader.h"
@@ -47,6 +48,7 @@ bool initializeLoaders()
                  && registerLoaderType<MaterialLoader>("Material", ".aymat")
                  && registerLoaderType<TextureLoader>("Texture", ".aytex")
                  && registerLoaderType<SkeletonLoader>("Skeleton", ".ayskel")
+                 && registerLoaderType<SkeletonMaskLoader>("SkeletonMask", ".aymask")
                  && registerLoaderType<AnimationLoader>("Animation", ".ayanm")
                  && registerLoaderType<AudioLoader>("Audio", ".ayaudio")
                  && registerLoaderType<VideoLoader>("Video", ".ayvideo")

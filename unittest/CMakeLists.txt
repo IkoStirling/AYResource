@@ -27,8 +27,10 @@ add_executable(${MODULE_NAME}
     AYTest_AnimationConverter.cpp
     AYTest_TextureConverter.cpp
     AYTest_MaterialConverter.cpp
+    AYTest_VirtualAssetPath_P0.cpp
 
     AYTest_SkeletonLoader.cpp
+    AYTest_SkeletonMaskLoader.cpp
     AYTest_AnimationLoader.cpp
     AYTest_AudioLoader.cpp
     AYTest_VideoLoader.cpp
