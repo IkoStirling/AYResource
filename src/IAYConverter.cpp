@@ -2,7 +2,9 @@
 #include "Converter\FBXConverter.h"
 #include "Converter\GLTFConverter.h"
 #include "Converter\TextureConverter.h"
+#include "Converter\TilemapConverter.h"
 #include <cstdlib>
+#include <cstring>
 #include <sstream>
 
 namespace ayt::resource
@@ -87,6 +89,23 @@ void forEachJsonObjectInArray(const std::string& json, size_t arrayOpen, Fn&& fn
 } // namespace
 
 std::unique_ptr<IConverter> IConverter::create(const std::string& sourcePath) {
+    // CM-2: .aytilemap.json MUST be dispatched before the generic
+    // extension check — its last extension is "json" and the check below
+    // would silently return nullptr. Case-insensitive suffix match.
+    {
+        const std::string lower = sourcePath;
+        std::string suffix;
+        if (lower.size() >= 15) {
+            suffix = lower.substr(lower.size() - 15);
+        }
+        for (auto& c : suffix) {
+            c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+        }
+        if (suffix == ".aytilemap.json") {
+            return std::make_unique<TilemapConverter>(sourcePath);
+        }
+    }
+
     // 根据扩展名判断类型
     size_t dotPos = sourcePath.find_last_of('.');
     std::string ext = (dotPos == std::string::npos) ? "" : sourcePath.substr(dotPos + 1);

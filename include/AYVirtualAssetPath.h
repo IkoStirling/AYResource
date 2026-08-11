@@ -62,4 +62,11 @@ inline std::string makeTextureVirtualPathFromSource(
                                   usageSuffix);
 }
 
+// tilemaps/{baseName}.aytilemap — CM-2 (2026-08-11). Single spelling for
+// TilemapConverter output and TilemapLoader input; do not invent a
+// parallel one in cook tools or tests.
+inline std::string makeTilemapVirtualPath(const std::string& baseName) {
+    return "tilemaps/" + baseName + ".aytilemap";
+}
+
 } // namespace ayt::resource

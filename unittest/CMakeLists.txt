@@ -36,6 +36,8 @@ add_executable(${MODULE_NAME}
     AYTest_VideoLoader.cpp
     AYTest_FontLoader.cpp
     AYTest_TilemapLoader.cpp
+    # CM-2 (2026-08-11): .aytilemap.json -> .aytilemap v2 Converter.
+    AYTest_TilemapConverter.cpp
 )
 
 target_link_libraries(${MODULE_NAME} PRIVATE

@@ -74,6 +74,12 @@ public:
                  TilemapPackMode mode, UInt32 defaultTileId,
                  const TileCollisionFlagEntry* flags, UInt32 flagCount);
 
+    // CM-2 (2026-08-11): per-cell tile write for TilemapConverter.
+    // Bounds-checked; Narrow16 rejects ids > 0xFFFF (false, no partial
+    // write). Cells default to defaultTileId via create(); Converter
+    // overwrites only the cells the author JSON lists.
+    bool setTile(UInt32 cellIndex, UInt32 tileId);
+
 private:
     void clear();
 

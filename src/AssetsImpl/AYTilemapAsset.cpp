@@ -266,4 +266,19 @@ void TilemapAsset::create(UInt32 cols, UInt32 rows,
     _loaded = true;
 }
 
+bool TilemapAsset::setTile(UInt32 cellIndex, UInt32 tileId) {
+    if (_mode == TilemapPackMode::Narrow16) {
+        if (cellIndex >= _tileIds16.size() || tileId > 0xFFFFu) {
+            return false;
+        }
+        _tileIds16[cellIndex] = static_cast<UInt16>(tileId);
+        return true;
+    }
+    if (cellIndex >= _tileIds32.size()) {
+        return false;
+    }
+    _tileIds32[cellIndex] = tileId;
+    return true;
+}
+
 } // namespace ayt::resource
