@@ -3,6 +3,7 @@
 #include "Converter\GLTFConverter.h"
 #include "Converter\TextureConverter.h"
 #include "Converter\TilemapConverter.h"
+#include "Converter\AudioConverter.h"
 #include <cstdlib>
 #include <cstring>
 #include <sstream>
@@ -119,6 +120,8 @@ std::unique_ptr<IConverter> IConverter::create(const std::string& sourcePath) {
         return std::make_unique<GLTFConverter>(sourcePath);
     } else if (ext == "png" || ext == "bmp" || ext == "tga" || ext == "dds") {
         return std::make_unique<TextureConverter>(sourcePath);
+    } else if (ext == "wav" || ext == "mp3" || ext == "ogg") {
+        return std::make_unique<AudioConverter>(sourcePath);
     }
 
     return nullptr;

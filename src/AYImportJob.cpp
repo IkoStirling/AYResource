@@ -152,7 +152,8 @@ bool isImportSupportedExtension(const std::string& sourcePath)
     return ext == "fbx"
         || ext == "gltf" || ext == "glb"
         || ext == "png" || ext == "bmp"
-        || ext == "tga" || ext == "dds";
+        || ext == "tga" || ext == "dds"
+        || ext == "wav" || ext == "mp3" || ext == "ogg";
 }
 
 ImportResult importAsset(const ImportOptions& options,
@@ -181,7 +182,7 @@ ImportResult importAsset(const ImportOptions& options,
         const std::string ext = importExtensionOf(options.sourcePath);
         r.error =
             "unsupported source extension '" + ext +
-            "'. Supported: .fbx .gltf .glb .png .bmp .tga .dds";
+            "'. Supported: .fbx .gltf .glb .png .bmp .tga .dds .wav .mp3 .ogg";
         report(progress, ImportStage::Failed, 1.0f, r.error);
         return r;
     }

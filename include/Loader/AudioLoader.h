@@ -7,7 +7,7 @@
 namespace ayt::resource
 {
 
-// ===== AudioLoader — 音频资源加载器 =====
+// ===== AudioLoader — .ayaudio (+ Dev loose .wav/.mp3/.ogg when AY_AUDIO_LOOSE_FORMATS) =====
 class AudioLoader : public IResourceLoader {
 public:
     AudioLoader() = default;

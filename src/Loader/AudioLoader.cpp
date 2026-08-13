@@ -1,4 +1,5 @@
 #include "Loader\AudioLoader.h"
+#include "Converter\AudioDecoder.h"
 #include "IAYResourceLoader.h"
 #include <aymath/MathTypes.h>
 #include <ayio/File.h>
@@ -8,21 +9,67 @@
 namespace ayt::resource
 {
 
-// ===== AudioLoader =====
+namespace {
+
+std::string basenameNoExt(const std::string& path)
+{
+    size_t lastSlash = path.find_last_of("/\\");
+    size_t lastDot = path.find_last_of('.');
+    if (lastDot != std::string::npos && (lastSlash == std::string::npos || lastDot > lastSlash)) {
+        if (lastSlash != std::string::npos) {
+            return path.substr(lastSlash + 1, lastDot - lastSlash - 1);
+        }
+        return path.substr(0, lastDot);
+    }
+    if (lastSlash != std::string::npos) {
+        return path.substr(lastSlash + 1);
+    }
+    return path;
+}
+
+} // namespace
 
 bool AudioLoader::canLoad(const std::string& path) const {
-    if (path.size() < 8) { // ".ayaudio" = 8 chars
-        return false;
+    const std::string ext = audioFileExtension(path);
+    if (isCookedAudioExtension(ext)) {
+        return true;
     }
-    return path.compare(path.size() - 8, 8, EXTENSION) == 0;
+#if defined(AY_AUDIO_LOOSE_FORMATS)
+    return isLooseAudioExtension(ext);
+#else
+    (void)ext;
+    return false;
+#endif
 }
 
 std::shared_ptr<IResource> AudioLoader::load(const std::string& path) {
     auto audio = std::make_shared<Audio>();
-    if (audio->load(path)) {
-        return audio;
+    const std::string ext = audioFileExtension(path);
+
+    if (isCookedAudioExtension(ext)) {
+        if (audio->load(path)) {
+            return audio;
+        }
+        return nullptr;
     }
+
+#if defined(AY_AUDIO_LOOSE_FORMATS)
+    if (!isLooseAudioExtension(ext)) {
+        return nullptr;
+    }
+    PcmBuffer pcm;
+    if (!decodeAudioFile(path, pcm) || pcm.empty()) {
+        return nullptr;
+    }
+    audio->setName(basenameNoExt(path));
+    audio->setFormat(pcm.sampleRate, pcm.channels, pcm.bitsPerSample, pcm.frameCount);
+    audio->setData(std::move(pcm.bytes));
+    audio->setLoaded(true);
+    return audio;
+#else
+    (void)path;
     return nullptr;
+#endif
 }
 
 std::shared_ptr<IResource> AudioLoader::loadFromBinary(const void* data, size_t size) {

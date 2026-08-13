@@ -10,7 +10,7 @@ namespace ayt::resource
 {
 
 // ===== AudioConverter — 音频格式转换器 =====
-// 将音频格式（WAV/OGG）转换为 .ayaudio 引擎格式
+// Cook WAV/MP3/OGG → .ayaudio (PCM). Decode via AudioDecoder (design §4.2.1).
 class AudioConverter : public IConverter {
 public:
     AudioConverter();
@@ -31,7 +31,7 @@ public:
     void setLoadOption(IConverter::LoadOption option) override { loadOption = option; }
     IConverter::LoadOption getLoadOption() const { return loadOption; }
 
-    // ===== 输出格式选项 =====
+    // ===== 输出格式选项 (0 = keep source) =====
     void setOutputSampleRate(UInt32 sampleRate) { outputSampleRate = sampleRate; }
     UInt32 getOutputSampleRate() const { return outputSampleRate; }
 
@@ -51,9 +51,9 @@ private:
     std::string sourcePath;
     std::string outputDir;
     LoadOption loadOption = IConverter::LoadOption::Full;
-    UInt32 outputSampleRate = 44100;
-    UInt32 outputChannels = 2;
-    UInt32 outputBitsPerSample = 16;
+    UInt32 outputSampleRate = 0;
+    UInt32 outputChannels = 0;
+    UInt32 outputBitsPerSample = 0;
     ayt::math::FGuid lastGuid;
 };
 

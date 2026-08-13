@@ -33,6 +33,7 @@ add_executable(${MODULE_NAME}
     AYTest_SkeletonMaskLoader.cpp
     AYTest_AnimationLoader.cpp
     AYTest_AudioLoader.cpp
+    AYTest_AudioDecoder.cpp
     AYTest_VideoLoader.cpp
     AYTest_FontLoader.cpp
     AYTest_TilemapLoader.cpp

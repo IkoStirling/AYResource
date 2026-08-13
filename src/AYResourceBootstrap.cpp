@@ -60,6 +60,12 @@ bool initializeLoaders()
                      && registerLoaderType<ScriptLoader>("Script", ".ayscript")
                      && registerLoaderType<PhysicsLoader>("Physics", ".ayphys")
                      && registerLoaderType<TilemapLoader>("Tilemap", ".aytilemap");
+#if defined(AY_AUDIO_LOOSE_FORMATS)
+        // Dev/Editor: same Audio loader also owns loose authoring formats.
+        ResourceRegistry::registerExtension(".wav", "Audio");
+        ResourceRegistry::registerExtension(".mp3", "Audio");
+        ResourceRegistry::registerExtension(".ogg", "Audio");
+#endif
         g_loadersInitialized.store(ok);
     });
     return g_loadersInitialized.load();

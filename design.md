@@ -214,11 +214,29 @@ Per `ENGINE-FOUNDATION-PLAN.md` §2.3, **prefer extension over rewrite.** A form
 | `.aymat` | `'AYMT'` | v1 | Phoskia shader path + typed params + texture slots | Stable; shader variant tags (`skinned`, `morph`) as params, not new file type |
 | `.aytex` | — | v1 | Pixel data + mipmaps | Stable |
 | `.ayfont` | — | v1 | Glyph atlas | Stable |
-| `.ayaudio` | — | v1 | PCM/OGG/OPUS | Stable; format choice policy in `IAYAudio` |
-| `.ayvideo` | — | v1 | RGBA frames | Stable |
+| `.ayaudio` | — | v1 | **Ship L1 = PCM** (see §4.2.1) | Cook from WAV/MP3/OGG; Dev may load loose sources without cook |
+| `.ayvideo` | — | v1 | RGBA frames | Stable (decode stack incomplete; not a player) |
 | `.ayscript` | — | v1 | Source text | Stable |
 | `.ayphys` | — | v1 | Shape parameters | Stable |
 | `.ayshader` | — | v1 | **Legacy** GLSL/HLSL blob | **Deprecated for runtime.** Phoskia is the new shader source format. See `runtime-conventions.md` §1. |
+
+### 4.2.1 Audio authoring vs cook (LOCKED 2026-08-13)
+
+Aligned with `AYAudio/design.md` §2.3:
+
+| Mode | Source on disk | Runtime path |
+|------|----------------|--------------|
+| **Dev / Editor** | `.wav` / `.mp3` / `.ogg` (common formats) | `AudioDecoder` → PCM `IAudio` → `AYAudio::registerClip` / `playStream` |
+| **Ship / Optimize** | cooked `.ayaudio` (PCM L1) | `AudioLoader` → PCM `IAudio` → same AYAudio APIs |
+
+**Rules:**
+1. Decode belongs in **AYResource** (`AudioDecoder` + `AudioConverter`), never in the AYAudio mixer.
+2. Cook is **optional until pack or explicit optimize** — not required for every save in the Editor.
+3. Release builds must not depend on loose MP3/OGG (gate with `AY_AUDIO_LOOSE_FORMATS` or equivalent).
+4. v1 `.ayaudio` payload = **PCM** (S16 or F32 interleaved + header). Compressed-inside-L1 (OPUS) is a later extension chunk, not a blocker.
+5. Implementation order: see `AYAudio/design.md` §2.3.1 slices **A1–A6**.
+
+**Gap today:** none for v1 decode/cook path — `AudioDecoder` + loose loaders + cook shipped 2026-08-13. Optional follow-ups: golden MP3/OGG fixtures, resample on `setOutput*`, compressed payload inside `.ayaudio`.
 
 ### 4.3 `.aymesh` binary layout (L1 v1)
 
@@ -379,7 +397,7 @@ Required of every concrete converter (`MeshConverter`, `MaterialConverter`, `Tex
 | glTF 2.0 | 🔄 stub | 🔄 | 🔄 | 🔄 | 🔄 | 🔄 | R-04 in Phase 1 |
 | PMX / VMD (MMD) | — | — | — | — | — | — | **Future frontend** — §5.7 (saba); not started |
 | PNG/JPG/BMP/TGA | n/a | n/a | n/a | n/a | n/a | ✅ | |
-| OGG/MP3/PCM | n/a | n/a | n/a | n/a | n/a | n/a | ✅ |
+| OGG/MP3/PCM | n/a | n/a | n/a | n/a | n/a | n/a | WAV→`.ayaudio` ✅; **MP3/OGG Dev+cook per §4.2.1 (pending A1–A4)** |
 
 ### 5.7 Future extension: MMD (PMX / VMD) via saba（可扩展方向，未实现）
 
@@ -731,7 +749,7 @@ public:
 
 Each is a thin, stable interface — see headers in `interface/assetsDefs/`. Two cross-cutting notes:
 
-- `IAYAudio::Format` selection policy is documented inline (extension > size > manual override).
+- `IAudio` / `.ayaudio`: **ship = PCM**; Dev loose WAV/MP3/OGG decode policy locked in §4.2.1 (and `AYAudio/design.md` §2.3). Older “Format enum pick compressed at runtime” notes are superseded for v1.
 - `IAYShader` is **legacy**; runtime uses `AYShader::ShaderResourcePool` directly with Phoskia source.
 
 ---
@@ -859,4 +877,5 @@ unittest/
 | 2026-06-09 | Content team | Added GUID system, SQLite schema drafts, precision compression framework, pak design |
 | **2026-07-06** | **Content team** | **v2.0 — major realignment with `ENGINE-FOUNDATION-PLAN.md` v1.0 and `runtime-conventions.md`.** Trimmed speculative / out-of-scope sections (precision compression, full SQLite schema, pak design). Added: explicit non-goals, three-layer module layout, current vs target state, IntermediateAsset detail, L1↔L3 bridge map, CR-enforced public/private API surface, Phase 0 backlog with R-01/R-07/R-08 status, deferred items mapped to owning modules. Preserved all concrete API signatures from the actual headers — no API removed. |
 | **2026-07-27** | Content / agent | **§5.7 MMD (PMX/VMD) via saba** — future optional Parser frontend reusing IntermediateAsset + existing typed Converters; CMake `AY_RESOURCE_USE_SABA`; near-term path remains Blender→FBX. Updated §5.6 coverage table + §12 deferred row. |
+| **2026-08-13** | Audio / agent | **§4.2.1 Audio authoring vs cook locked** — Dev loose WAV/MP3/OGG in AYResource; cook PCM `.ayaudio` only for ship/optimize; aligns `AYAudio/design.md` §2.3. Updated `.ayaudio` row + §5.6 + §7.5. |
 | **2026-08-02** | Content / agent | **P6 ownership** — §6.5 hot-reload matches eager reload + `setOnHotReload`; §8/§11 PublicApiSurface scan + allowlist; link `ownership-contracts.md`. |
