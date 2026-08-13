@@ -55,22 +55,22 @@ ConversionResult AudioConverter::convert() {
         return result;
     }
 
-    const UInt32 sr = outputSampleRate > 0 ? outputSampleRate : pcm.sampleRate;
-    const UInt32 ch = outputChannels > 0 ? outputChannels : pcm.channels;
-    const UInt32 bps = outputBitsPerSample > 0 ? outputBitsPerSample : pcm.bitsPerSample;
+    const UInt32 targetRate = outputSampleRate > 0 ? outputSampleRate : kEngineAudioSampleRate;
+    PcmBuffer cooked = pcm;
+    if (pcm.sampleRate != targetRate) {
+        if (!resamplePcmS16(pcm, targetRate, cooked) || cooked.empty()) {
+            return result;
+        }
+    }
 
-    // v1: no resample — output* knobs only retag when they match channel/bit layout.
-    // If the caller requests a different channel/bit count without a resampler,
-    // keep source PCM and source format (ignore mismatched override).
-    const bool layoutOk = (ch == pcm.channels && bps == pcm.bitsPerSample);
-    const UInt32 useSr = layoutOk ? sr : pcm.sampleRate;
-    const UInt32 useCh = pcm.channels;
-    const UInt32 useBps = pcm.bitsPerSample;
+    const UInt32 useSr = cooked.sampleRate;
+    const UInt32 useCh = cooked.channels;
+    const UInt32 useBps = cooked.bitsPerSample;
 
     Audio audio;
     audio.setName(getBaseName(sourcePath));
-    audio.setFormat(useSr, useCh, useBps, pcm.frameCount);
-    audio.setData(pcm.bytes);
+    audio.setFormat(useSr, useCh, useBps, cooked.frameCount);
+    audio.setData(cooked.bytes);
     audio.setLoaded(true);
 
     lastGuid = ayt::storage::Guid::computeFromData(audio.getDataBytes(), audio.getDataBytesSize());

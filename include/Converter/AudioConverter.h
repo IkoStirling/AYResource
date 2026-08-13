@@ -2,6 +2,7 @@
 #include "IAYConverter.h"
 #include "AYAudio.h"
 #include "AYIntermediateAsset.h"
+#include "Converter/AudioDecoder.h"
 #include <memory>
 #include <string>
 #include <vector>
@@ -51,7 +52,7 @@ private:
     std::string sourcePath;
     std::string outputDir;
     LoadOption loadOption = IConverter::LoadOption::Full;
-    UInt32 outputSampleRate = 0;
+    UInt32 outputSampleRate = kEngineAudioSampleRate; // cook defaults to 48 kHz
     UInt32 outputChannels = 0;
     UInt32 outputBitsPerSample = 0;
     ayt::math::FGuid lastGuid;

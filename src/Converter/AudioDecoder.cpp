@@ -268,4 +268,249 @@ bool decodeAudioFile(const std::string& path, PcmBuffer& out)
     return false;
 }
 
+bool resamplePcmS16(const PcmBuffer& in, uint32_t targetRate, PcmBuffer& out)
+{
+    out = {};
+    if (in.empty() || in.bitsPerSample != 16 || in.channels == 0 || in.sampleRate == 0
+        || targetRate == 0) {
+        return false;
+    }
+    if (in.sampleRate == targetRate) {
+        out = in;
+        return true;
+    }
+
+    const uint64_t inFrames = in.frameCount;
+    const uint16_t ch = in.channels;
+    const double ratio = static_cast<double>(targetRate) / static_cast<double>(in.sampleRate);
+    const uint64_t outFrames = static_cast<uint64_t>(static_cast<double>(inFrames) * ratio + 0.5);
+    if (outFrames == 0) {
+        return false;
+    }
+
+    out.sampleRate = targetRate;
+    out.channels = ch;
+    out.bitsPerSample = 16;
+    out.frameCount = outFrames;
+    out.bytes.resize(static_cast<size_t>(outFrames) * ch * 2u);
+
+    const auto* src = reinterpret_cast<const int16_t*>(in.bytes.data());
+    auto* dst = reinterpret_cast<int16_t*>(out.bytes.data());
+
+    for (uint64_t i = 0; i < outFrames; ++i) {
+        const double srcPos = static_cast<double>(i) / ratio;
+        uint64_t i0 = static_cast<uint64_t>(srcPos);
+        if (i0 >= inFrames) {
+            i0 = inFrames - 1;
+        }
+        uint64_t i1 = i0 + 1;
+        if (i1 >= inFrames) {
+            i1 = inFrames - 1;
+        }
+        const float t = static_cast<float>(srcPos - static_cast<double>(i0));
+        for (uint16_t c = 0; c < ch; ++c) {
+            const float a = static_cast<float>(src[i0 * ch + c]);
+            const float b = static_cast<float>(src[i1 * ch + c]);
+            const float s = a + (b - a) * t;
+            int32_t v = static_cast<int32_t>(s < 0.f ? s - 0.5f : s + 0.5f);
+            if (v > 32767) {
+                v = 32767;
+            }
+            if (v < -32768) {
+                v = -32768;
+            }
+            dst[i * ch + c] = static_cast<int16_t>(v);
+        }
+    }
+    return true;
+}
+
+// ===== Incremental stream decoder =====
+
+struct AudioStreamDecoder {
+    enum class Kind : uint8_t { Wav, Mp3, Ogg };
+    Kind kind = Kind::Wav;
+    std::vector<uint8_t> fileBytes; // keep source alive for memory decoders
+    uint16_t channels = 0;
+    uint32_t sampleRate = 0;
+    bool eof = false;
+
+    // WAV cursor (S16 interleaved frames already normalized in buffer)
+    PcmBuffer wavPcm;
+    uint64_t wavFrameCursor = 0;
+
+    // MP3 streaming
+    mp3dec_ex_t mp3{};
+    bool mp3Open = false;
+
+    // OGG streaming
+    stb_vorbis* vorbis = nullptr;
+};
+
+AudioStreamDecoder* openAudioStreamDecoder(const std::string& path)
+{
+    auto* dec = new AudioStreamDecoder();
+    if (!readEntireFile(path, dec->fileBytes) || dec->fileBytes.empty()) {
+        delete dec;
+        return nullptr;
+    }
+
+    const std::string ext = audioFileExtension(path);
+    if (ext == "wav") {
+        if (!decodeWavMemory(dec->fileBytes.data(), dec->fileBytes.size(), dec->wavPcm)
+            || dec->wavPcm.empty()) {
+            delete dec;
+            return nullptr;
+        }
+        dec->kind = AudioStreamDecoder::Kind::Wav;
+        dec->channels = dec->wavPcm.channels;
+        dec->sampleRate = dec->wavPcm.sampleRate;
+        return dec;
+    }
+    if (ext == "mp3") {
+        if (mp3dec_ex_open_buf(&dec->mp3, dec->fileBytes.data(), dec->fileBytes.size(),
+                              MP3D_SEEK_TO_SAMPLE) != 0) {
+            delete dec;
+            return nullptr;
+        }
+        dec->mp3Open = true;
+        dec->kind = AudioStreamDecoder::Kind::Mp3;
+        dec->channels = static_cast<uint16_t>(dec->mp3.info.channels);
+        dec->sampleRate = static_cast<uint32_t>(dec->mp3.info.hz);
+        if (dec->channels == 0 || dec->sampleRate == 0) {
+            mp3dec_ex_close(&dec->mp3);
+            delete dec;
+            return nullptr;
+        }
+        return dec;
+    }
+    if (ext == "ogg") {
+        int err = 0;
+        dec->vorbis = stb_vorbis_open_memory(
+            dec->fileBytes.data(),
+            static_cast<int>(dec->fileBytes.size()),
+            &err,
+            nullptr);
+        if (dec->vorbis == nullptr) {
+            delete dec;
+            return nullptr;
+        }
+        const stb_vorbis_info info = stb_vorbis_get_info(dec->vorbis);
+        dec->kind = AudioStreamDecoder::Kind::Ogg;
+        dec->channels = static_cast<uint16_t>(info.channels);
+        dec->sampleRate = static_cast<uint32_t>(info.sample_rate);
+        return dec;
+    }
+
+    delete dec;
+    return nullptr;
+}
+
+uint16_t audioStreamDecoderChannels(const AudioStreamDecoder* dec)
+{
+    return dec ? dec->channels : 0;
+}
+
+uint32_t audioStreamDecoderSampleRate(const AudioStreamDecoder* dec)
+{
+    return dec ? dec->sampleRate : 0;
+}
+
+uint32_t decodeAudioStreamFrames(AudioStreamDecoder* dec,
+                                 float* outInterleavedF32,
+                                 uint32_t maxFrames,
+                                 bool* endOfStream)
+{
+    if (endOfStream) {
+        *endOfStream = false;
+    }
+    if (dec == nullptr || outInterleavedF32 == nullptr || maxFrames == 0 || dec->eof) {
+        if (endOfStream && dec && dec->eof) {
+            *endOfStream = true;
+        }
+        return 0;
+    }
+
+    uint32_t produced = 0;
+    if (dec->kind == AudioStreamDecoder::Kind::Wav) {
+        const auto* src = reinterpret_cast<const int16_t*>(dec->wavPcm.bytes.data());
+        const uint16_t ch = dec->channels;
+        while (produced < maxFrames && dec->wavFrameCursor < dec->wavPcm.frameCount) {
+            for (uint16_t c = 0; c < ch; ++c) {
+                const int16_t s = src[dec->wavFrameCursor * ch + c];
+                outInterleavedF32[produced * ch + c] = static_cast<float>(s) / 32768.0f;
+            }
+            ++dec->wavFrameCursor;
+            ++produced;
+        }
+        if (dec->wavFrameCursor >= dec->wavPcm.frameCount) {
+            dec->eof = true;
+            if (endOfStream) {
+                *endOfStream = true;
+            }
+        }
+        return produced;
+    }
+
+    if (dec->kind == AudioStreamDecoder::Kind::Mp3) {
+        // mp3dec_ex_read returns number of *samples* (all channels).
+        const size_t wantSamples = static_cast<size_t>(maxFrames) * dec->channels;
+        std::vector<mp3d_sample_t> tmp(wantSamples);
+        const size_t got = mp3dec_ex_read(&dec->mp3, tmp.data(), wantSamples);
+        produced = static_cast<uint32_t>(got / dec->channels);
+        for (uint32_t i = 0; i < produced * dec->channels; ++i) {
+            outInterleavedF32[i] = static_cast<float>(tmp[i]) / 32768.0f;
+        }
+        if (got == 0 || got < wantSamples) {
+            dec->eof = true;
+            if (endOfStream) {
+                *endOfStream = true;
+            }
+        }
+        return produced;
+    }
+
+    if (dec->kind == AudioStreamDecoder::Kind::Ogg) {
+        // stb returns samples per channel.
+        const int got = stb_vorbis_get_samples_float_interleaved(
+            dec->vorbis,
+            dec->channels,
+            outInterleavedF32,
+            static_cast<int>(maxFrames * dec->channels));
+        if (got < 0) {
+            dec->eof = true;
+            if (endOfStream) {
+                *endOfStream = true;
+            }
+            return 0;
+        }
+        produced = static_cast<uint32_t>(got);
+        if (got == 0) {
+            dec->eof = true;
+            if (endOfStream) {
+                *endOfStream = true;
+            }
+        }
+        return produced;
+    }
+
+    return 0;
+}
+
+void closeAudioStreamDecoder(AudioStreamDecoder* dec)
+{
+    if (dec == nullptr) {
+        return;
+    }
+    if (dec->mp3Open) {
+        mp3dec_ex_close(&dec->mp3);
+        dec->mp3Open = false;
+    }
+    if (dec->vorbis) {
+        stb_vorbis_close(dec->vorbis);
+        dec->vorbis = nullptr;
+    }
+    delete dec;
+}
+
 } // namespace ayt::resource
