@@ -14,14 +14,21 @@
 #include "Loader/TilemapLoader.h"
 #include "AYResourceRegistry.h"
 
+#include <atomic>
 #include <memory>
+#include <mutex>
 
 namespace ayt::resource
 {
 
 namespace {
 
-bool g_loadersInitialized = false;
+// CM-5 (2026-08-12): init is now call_once-guarded. Before, a plain bool
+// let every async-pool worker see `false` and run registerLoader*()
+// concurrently → data race on the registry maps (heap corruption that
+// surfaced as crashes in later tests, e.g. ResourceCache::clear).
+std::atomic<bool> g_loadersInitialized{false};
+std::once_flag g_loadersOnce;
 
 template<typename LoaderT>
 std::unique_ptr<IResourceLoader> createLoaderInstance()
@@ -40,30 +47,27 @@ bool registerLoaderType(const char* typeName, const char* extension)
 
 bool initializeLoaders()
 {
-    if (g_loadersInitialized) {
-        return true;
-    }
-
-    const bool ok = registerLoaderType<MeshLoader>("Mesh", ".aymesh")
-                 && registerLoaderType<MaterialLoader>("Material", ".aymat")
-                 && registerLoaderType<TextureLoader>("Texture", ".aytex")
-                 && registerLoaderType<SkeletonLoader>("Skeleton", ".ayskel")
-                 && registerLoaderType<SkeletonMaskLoader>("SkeletonMask", ".aymask")
-                 && registerLoaderType<AnimationLoader>("Animation", ".ayanm")
-                 && registerLoaderType<AudioLoader>("Audio", ".ayaudio")
-                 && registerLoaderType<VideoLoader>("Video", ".ayvideo")
-                 && registerLoaderType<FontLoader>("Font", ".ayfont")
-                 && registerLoaderType<ScriptLoader>("Script", ".ayscript")
-                 && registerLoaderType<PhysicsLoader>("Physics", ".ayphys")
-                 && registerLoaderType<TilemapLoader>("Tilemap", ".aytilemap");
-
-    g_loadersInitialized = ok;
-    return ok;
+    std::call_once(g_loadersOnce, []() {
+        const bool ok = registerLoaderType<MeshLoader>("Mesh", ".aymesh")
+                     && registerLoaderType<MaterialLoader>("Material", ".aymat")
+                     && registerLoaderType<TextureLoader>("Texture", ".aytex")
+                     && registerLoaderType<SkeletonLoader>("Skeleton", ".ayskel")
+                     && registerLoaderType<SkeletonMaskLoader>("SkeletonMask", ".aymask")
+                     && registerLoaderType<AnimationLoader>("Animation", ".ayanm")
+                     && registerLoaderType<AudioLoader>("Audio", ".ayaudio")
+                     && registerLoaderType<VideoLoader>("Video", ".ayvideo")
+                     && registerLoaderType<FontLoader>("Font", ".ayfont")
+                     && registerLoaderType<ScriptLoader>("Script", ".ayscript")
+                     && registerLoaderType<PhysicsLoader>("Physics", ".ayphys")
+                     && registerLoaderType<TilemapLoader>("Tilemap", ".aytilemap");
+        g_loadersInitialized.store(ok);
+    });
+    return g_loadersInitialized.load();
 }
 
 bool areLoadersInitialized()
 {
-    return g_loadersInitialized;
+    return g_loadersInitialized.load();
 }
 
 } // namespace ayt::resource

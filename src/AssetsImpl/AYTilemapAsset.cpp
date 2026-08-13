@@ -29,6 +29,21 @@ namespace ayt::resource
 //  32+8*collisionFlagsCount
 //           UInt16 tileIds[tileIdsCount]  (Narrow16)  OR
 //           UInt32 tileIds[tileIdsCount]  (Wide32)
+//  [end of v2 pre-CM-5 layout: readers of that era ignore any trailing bytes]
+//
+//  32+8*collisionFlagsCount+tileIdsBytes
+//           UInt32 animationEntryCount        // optional segment (CM-5)
+//           entry[animationEntryCount]:
+//             UInt32 sourceTileId
+//             UInt32 frameCount               // 0 rejected by the reader
+//             frame[frameCount]: { UInt32 frameTileId; UInt32 durationMs }
+//
+// The animation segment is a single optional trailer: files written before
+// CM-5 end exactly after the tile ids (empty table), the current writer
+// always appends it (count may be 0), and the reader strictly consumes the
+// tail — any leftover bytes after a full segment parse fail the load. This
+// acts as a version lock: a future third segment must switch to four-cc
+// chunks or bump the version (design.md §9.2), it must not be stacked here.
 //
 // v1 back-compat: a v1 file stores `blockedCount` at offset 24 followed by
 // `UInt32 blockedTileIds[blockedCount]` (4 bytes each). The reader normalizes
@@ -62,7 +77,12 @@ void TilemapAsset::clear() {
     _tileIds16.clear();
     _tileIds32.clear();
     _tileCollisionFlags.clear();
+    _animations.clear();
+    _animFlat.clear();
+    _animEntriesView.clear();
+    _animViewDirty = false;
     _name.clear();
+    _loaded = false;
 }
 
 bool TilemapAsset::unload() {
@@ -75,8 +95,16 @@ size_t TilemapAsset::sizeInBytes() const {
     size_t tileBytes = (_mode == TilemapPackMode::Narrow16)
         ? _tileIds16.size() * sizeof(UInt16)
         : _tileIds32.size() * sizeof(UInt32);
+    // Animation segment on disk: count + per-entry {sourceTileId, frameCount,
+    // frames}. Mirrors saveToBinary so the accounting stays honest.
+    size_t animBytes = sizeof(UInt32);
+    for (const StoredAnimationEntry& e : _animations) {
+        animBytes += sizeof(UInt32) * 2
+                   + e.frames.size() * sizeof(TileAnimationFrame);
+    }
     return sizeof(TilemapAsset) + tileBytes
-         + _tileCollisionFlags.size() * sizeof(TileCollisionFlagEntry) + _name.size();
+         + _tileCollisionFlags.size() * sizeof(TileCollisionFlagEntry)
+         + animBytes + _name.size();
 }
 
 bool TilemapAsset::load(const std::string& path) {
@@ -181,6 +209,59 @@ bool TilemapAsset::loadFromBinary(const void* data, size_t size) {
                         static_cast<size_t>(tileIdsBytes));
         }
     }
+    offset += static_cast<size_t>(tileIdsBytes);
+
+    // ===== Optional trailing animation segment (CM-5) =====
+    // Files written before the segment existed end exactly at `offset` —
+    // load them with an empty table. Any other trailing bytes must parse as
+    // a complete segment and consume the file exactly (strict tail
+    // consumption acts as a version lock; see the format comment at the top
+    // of this file).
+    _animations.clear();
+    _animViewDirty = true;
+    if (offset < size) {
+        if (size - offset < sizeof(UInt32)) {
+            clear();
+            return false;
+        }
+        const UInt32 animCount = *reinterpret_cast<const UInt32*>(ptr + offset);
+        offset += static_cast<size_t>(sizeof(UInt32));
+        _animations.reserve(animCount);
+        for (UInt32 i = 0u; i < animCount; ++i) {
+            if (size - offset < sizeof(UInt32) * 2) {
+                clear();
+                return false;  // sourceTileId + frameCount
+            }
+            const UInt32 sourceTileId =
+                *reinterpret_cast<const UInt32*>(ptr + offset);
+            const UInt32 frameCount =
+                *reinterpret_cast<const UInt32*>(ptr + offset + sizeof(UInt32));
+            offset += sizeof(UInt32) * 2;
+            if (frameCount == 0) {
+                clear();
+                return false;  // empty entries are never written
+            }
+            // frameCount * sizeof(TileAnimationFrame) can overflow uint32;
+            // compute in uint64 (same pattern as tileIdsBytes above).
+            const uint64_t framesBytes =
+                static_cast<uint64_t>(frameCount) * sizeof(TileAnimationFrame);
+            if (framesBytes > static_cast<uint64_t>(size - offset)) {
+                clear();
+                return false;
+            }
+            StoredAnimationEntry e;
+            e.sourceTileId = sourceTileId;
+            e.frames.resize(frameCount);
+            std::memcpy(e.frames.data(), ptr + offset,
+                        static_cast<size_t>(framesBytes));
+            offset += static_cast<size_t>(framesBytes);
+            _animations.push_back(std::move(e));
+        }
+        if (offset != size) {
+            clear();
+            return false;  // strict tail consumption (version lock)
+        }
+    }
 
     _loaded = true;
     return true;
@@ -195,7 +276,15 @@ bool TilemapAsset::saveToBinary(std::vector<UInt8>& outData) const {
         : static_cast<uint64_t>(sizeof(UInt32));
     const uint64_t tileIdsBytes =
         static_cast<uint64_t>(tileIdsCount) * elemSize;
-    const uint64_t total = sizeof(TilemapBinaryHeader) + flagsBytes + tileIdsBytes;
+    // Animation segment: always written (count may be 0) so the reader's
+    // strict tail consumption never trips on our own files. Mirrors the
+    // layout documented at the top of this file.
+    uint64_t animBytes = sizeof(UInt32);
+    for (const StoredAnimationEntry& e : _animations) {
+        animBytes += sizeof(UInt32) * 2
+                   + static_cast<uint64_t>(e.frames.size()) * sizeof(TileAnimationFrame);
+    }
+    const uint64_t total = sizeof(TilemapBinaryHeader) + flagsBytes + tileIdsBytes + animBytes;
 
     outData.resize(static_cast<size_t>(total));
     UInt8* ptr = outData.data();
@@ -231,6 +320,23 @@ bool TilemapAsset::saveToBinary(std::vector<UInt8>& outData) const {
         if (!_tileIds32.empty()) {
             std::memcpy(ptr + offset, _tileIds32.data(),
                         static_cast<size_t>(tileIdsBytes));
+        }
+    }
+    offset += static_cast<size_t>(tileIdsBytes);
+
+    // Animation segment (always present, possibly empty).
+    const UInt32 animCount = static_cast<UInt32>(_animations.size());
+    std::memcpy(ptr + offset, &animCount, sizeof(animCount));
+    offset += sizeof(animCount);
+    for (const StoredAnimationEntry& e : _animations) {
+        const UInt32 frameCount = static_cast<UInt32>(e.frames.size());
+        std::memcpy(ptr + offset, &e.sourceTileId, sizeof(UInt32));
+        std::memcpy(ptr + offset + sizeof(UInt32), &frameCount, sizeof(UInt32));
+        offset += sizeof(UInt32) * 2;
+        if (frameCount > 0) {
+            std::memcpy(ptr + offset, e.frames.data(),
+                        e.frames.size() * sizeof(TileAnimationFrame));
+            offset += e.frames.size() * sizeof(TileAnimationFrame);
         }
     }
 
@@ -279,6 +385,76 @@ bool TilemapAsset::setTile(UInt32 cellIndex, UInt32 tileId) {
     }
     _tileIds32[cellIndex] = tileId;
     return true;
+}
+
+// ===== Animation table (CM-5) =====
+
+bool TilemapAsset::setAnimationEntry(UInt32 sourceTileId,
+                                     const TileAnimationFrame* frames,
+                                     UInt32 frameCount) {
+    if (frameCount == 0) {
+        // Removal. Absent entry is a no-op success (the table stays as it is).
+        for (size_t i = 0; i < _animations.size(); ++i) {
+            if (_animations[i].sourceTileId == sourceTileId) {
+                _animations.erase(_animations.begin() + static_cast<ptrdiff_t>(i));
+                _animViewDirty = true;
+                return true;
+            }
+        }
+        return true;
+    }
+    if (frames == nullptr) {
+        return false;
+    }
+    // Replace if present, append otherwise (sparse table keeps no order
+    // guarantees — consumers scan by sourceTileId).
+    for (StoredAnimationEntry& e : _animations) {
+        if (e.sourceTileId == sourceTileId) {
+            e.frames.assign(frames, frames + frameCount);
+            _animViewDirty = true;
+            return true;
+        }
+    }
+    StoredAnimationEntry e;
+    e.sourceTileId = sourceTileId;
+    e.frames.assign(frames, frames + frameCount);
+    _animations.push_back(std::move(e));
+    _animViewDirty = true;
+    return true;
+}
+
+UInt32 TilemapAsset::getAnimationCount() const {
+    getAnimationEntries();  // force the lazy view rebuild
+    return static_cast<UInt32>(_animEntriesView.size());
+}
+
+const TileAnimationEntry* TilemapAsset::getAnimationEntries() const {
+    if (_animViewDirty) {
+        _animViewDirty = false;
+        _animFlat.clear();
+        _animEntriesView.clear();
+
+        // Reserve the final flat size up front. Publishing view.frames from
+        // _animFlat.data() while a later insert may reallocate would leave
+        // earlier entries dangling (UAF reads → 0xDDDDDDDD under MSVC debug).
+        size_t totalFrames = 0;
+        for (const StoredAnimationEntry& e : _animations) {
+            totalFrames += e.frames.size();
+        }
+        _animFlat.reserve(totalFrames);
+        _animEntriesView.reserve(_animations.size());
+
+        for (const StoredAnimationEntry& e : _animations) {
+            const size_t base = _animFlat.size();
+            _animFlat.insert(_animFlat.end(), e.frames.begin(), e.frames.end());
+            TileAnimationEntry view;
+            view.sourceTileId = e.sourceTileId;
+            view.frameCount   = static_cast<UInt32>(e.frames.size());
+            view.frames = e.frames.empty() ? nullptr : _animFlat.data() + base;
+            _animEntriesView.push_back(view);
+        }
+    }
+    return _animEntriesView.empty() ? nullptr : _animEntriesView.data();
 }
 
 } // namespace ayt::resource

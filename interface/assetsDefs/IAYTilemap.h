@@ -41,6 +41,29 @@ struct TileCollisionFlagEntry {
     UInt32 flags;
 };
 
+// ===== Tile animation table (design.md AY2D §7.2) =====
+// Per-source-tile-id flipbook: an animated tile id maps to a list of
+// {frameTileId, durationMs} frames, cycled modulo by the consumer's tick
+// (ayt::ay2d::tickTilemapAnimation on the AY2D side; the AYEntity
+// TilemapAnimationRuntime mirror on the engine side). A tile id with no
+// entry is static. Mirrors ayt::ay2d::TileFrame without taking an AY2D
+// dependency (same rationale as TileCollisionFlagBits above); the bridge
+// adapter copies these into the AY2D POD at the consumption boundary.
+struct TileAnimationFrame {
+    UInt32 frameTileId;   // tile id to display for this frame
+    UInt32 durationMs;    // hold time in integer milliseconds (0 allowed)
+};
+
+// One entry of the animation table. `frames` points into resource-owned
+// storage and is valid only while the resource is loaded (same contract as
+// getTileIds16). `frameCount == 0` never occurs in a valid resource (the
+// converter aborts and the binary loader rejects such entries).
+struct TileAnimationEntry {
+    UInt32 sourceTileId;
+    UInt32 frameCount;
+    const TileAnimationFrame* frames;
+};
+
 // ===== ITilemap — 2D tilemap resource interface (L2 cache hand-out)
 //
 // design.md (AY2D §9.1 / §9.3): `.aytilemap` is an L1 disk file (magic 'AYTM',
@@ -79,6 +102,16 @@ public:
     // normalized on load to entries with flags = TileCollisionFlagBits::Solid.
     virtual const TileCollisionFlagEntry* getTileCollisionFlags() const = 0;
     virtual UInt32 getTileCollisionFlagCount() const = 0;
+
+    // ===== Per-source-tile-id animation table (design.md §7.2) =====
+    // Flat array of non-empty entries; count = getAnimationCount(). The table
+    // is sparse by sourceTileId — consumers derive maxSourceTileId by
+    // scanning. A source tile id not present in the table is static. The v2
+    // binary carries this table as an optional trailing segment (see
+    // TilemapAsset::saveToBinary); files written before the segment existed
+    // load with count == 0 (animation is an additive capability).
+    virtual UInt32 getAnimationCount() const = 0;
+    virtual const TileAnimationEntry* getAnimationEntries() const = 0;
 
     // ===== Binary serialization =====
     virtual bool loadFromBinary(const void* data, size_t size) = 0;

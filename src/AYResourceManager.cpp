@@ -212,7 +212,10 @@ std::shared_ptr<IResource> ResourceManager::_loadFromDatabase(const std::string&
 
     if (resource) {
         _cache.putStrong(path, resource);
-        _resourceTypes[path] = type;
+        {
+            std::lock_guard<std::mutex> lock(_loadsMutex);
+            _resourceTypes[path] = type;
+        }
     }
     return resource;
 }
@@ -220,7 +223,12 @@ std::shared_ptr<IResource> ResourceManager::_loadFromDatabase(const std::string&
 void ResourceManager::_loadLooseDependencies(const std::string& filepath) {
     for (const std::string& rawDep : collectLooseDependencies(filepath)) {
         const std::string depPath = normalizeResourcePath(rawDep);
-        if (depPath.empty() || _cache.contains(depPath) || _loadingPaths.count(depPath) != 0) {
+        bool depInFlight = false;
+        {
+            std::lock_guard<std::mutex> lock(_loadsMutex);
+            depInFlight = _loadingPaths.count(depPath) != 0;
+        }
+        if (depPath.empty() || _cache.contains(depPath) || depInFlight) {
             continue;
         }
         if (!_loadInternal(depPath)) {
@@ -233,7 +241,12 @@ void ResourceManager::_loadIntrinsicDependencies(const std::string& filepath,
                                                  const IResource& resource) {
     for (const std::string& rawDep : collectIntrinsicDependencies(filepath, resource)) {
         const std::string depPath = normalizeResourcePath(rawDep);
-        if (depPath.empty() || _cache.contains(depPath) || _loadingPaths.count(depPath) != 0) {
+        bool depInFlight = false;
+        {
+            std::lock_guard<std::mutex> lock(_loadsMutex);
+            depInFlight = _loadingPaths.count(depPath) != 0;
+        }
+        if (depPath.empty() || _cache.contains(depPath) || depInFlight) {
             continue;
         }
         if (!_loadInternal(depPath)) {
@@ -248,7 +261,10 @@ void ResourceManager::_loadIntrinsicDependencies(const std::string& filepath,
 
 void ResourceManager::_onResourceLoaded(const std::string& filepath,
                                         std::shared_ptr<IResource> resource) {
-    _loadStates[filepath] = ResourceLoadState::Ready;
+    {
+        std::lock_guard<std::mutex> lock(_loadsMutex);
+        _loadStates[filepath] = ResourceLoadState::Ready;
+    }
     if (resource) {
         _loadIntrinsicDependencies(filepath, *resource);
     }
@@ -285,7 +301,10 @@ std::shared_ptr<IResource> ResourceManager::_installPlaceholder(const std::strin
         return nullptr;
     }
     if (auto existing = _cache.get(path)) {
-        _loadStates[path] = ResourceLoadState::Failed;
+        {
+            std::lock_guard<std::mutex> lock(_loadsMutex);
+            _loadStates[path] = ResourceLoadState::Failed;
+        }
         return existing;
     }
 
@@ -307,13 +326,19 @@ std::shared_ptr<IResource> ResourceManager::_installPlaceholder(const std::strin
         // ResourceManager channel.
         ayt::log::warn("[ResourceManager] _installPlaceholder no template for type '%s' (path '%s')",
                        type.c_str(), path.c_str());
-        _loadStates[path] = ResourceLoadState::Failed;
+        {
+            std::lock_guard<std::mutex> lock(_loadsMutex);
+            _loadStates[path] = ResourceLoadState::Failed;
+        }
         return nullptr;
     }
 
     _cache.put(path, placeholder);
-    _resourceTypes[path] = type;
-    _loadStates[path] = ResourceLoadState::Failed;
+    {
+        std::lock_guard<std::mutex> lock(_loadsMutex);
+        _resourceTypes[path] = type;
+        _loadStates[path] = ResourceLoadState::Failed;
+    }
     return placeholder;
 }
 
@@ -327,16 +352,18 @@ std::shared_ptr<IResource> ResourceManager::_loadInternal(const std::string& fil
     }
 
     // Cycle guard: a path currently mid-load must not re-enter.
-    if (_loadingPaths.count(path) != 0) {
-        return nullptr;
+    {
+        std::lock_guard<std::mutex> lock(_loadsMutex);
+        if (_loadingPaths.count(path) != 0) {
+            return nullptr;
+        }
+        _loadingPaths.insert(path);
+        _loadStates[path] = ResourceLoadState::Loading;
     }
 
     if (!areLoadersInitialized()) {
         initializeLoaders();
     }
-
-    _loadingPaths.insert(path);
-    _loadStates[path] = ResourceLoadState::Loading;
 
     std::shared_ptr<IResource> resource;
 
@@ -346,9 +373,17 @@ std::shared_ptr<IResource> ResourceManager::_loadInternal(const std::string& fil
             auto deps = _db->getLoadOrder(path);
             for (const auto& dep : deps) {
                 const std::string depPath = normalizeResourcePath(dep);
-                if (!_cache.contains(depPath) && _loadingPaths.count(depPath) == 0) {
+                bool depInFlight = false;
+                {
+                    std::lock_guard<std::mutex> lock(_loadsMutex);
+                    depInFlight = _loadingPaths.count(depPath) != 0;
+                }
+                if (!_cache.contains(depPath) && !depInFlight) {
                     if (auto depRes = _loadFromDatabase(depPath)) {
-                        _loadStates[depPath] = ResourceLoadState::Ready;
+                        {
+                            std::lock_guard<std::mutex> lock(_loadsMutex);
+                            _loadStates[depPath] = ResourceLoadState::Ready;
+                        }
                         (void)depRes;
                     } else if (auto looseDep = _loadInternal(depPath)) {
                         (void)looseDep;
@@ -360,7 +395,10 @@ std::shared_ptr<IResource> ResourceManager::_loadInternal(const std::string& fil
             resource = _loadFromDatabase(path);
             if (resource) {
                 _onResourceLoaded(path, resource);
-                _loadingPaths.erase(path);
+                {
+                    std::lock_guard<std::mutex> lock(_loadsMutex);
+                    _loadingPaths.erase(path);
+                }
                 return resource;
             }
             // P4: DB/pak miss → fall through to loose disk path.
@@ -377,22 +415,34 @@ std::shared_ptr<IResource> ResourceManager::_loadInternal(const std::string& fil
         _cache.put(path, resource);
         const std::string type = ResourceRegistry::getTypeFromPath(path);
         if (!type.empty()) {
-            _resourceTypes[path] = type;
+            {
+                std::lock_guard<std::mutex> lock(_loadsMutex);
+                _resourceTypes[path] = type;
+            }
         }
         _onResourceLoaded(path, resource);
     } else {
-        _loadStates[path] = ResourceLoadState::Failed;
+        {
+            std::lock_guard<std::mutex> lock(_loadsMutex);
+            _loadStates[path] = ResourceLoadState::Failed;
+        }
     }
 
-    _loadingPaths.erase(path);
+    {
+        std::lock_guard<std::mutex> lock(_loadsMutex);
+        _loadingPaths.erase(path);
+    }
     return resource;
 }
 
 void ResourceManager::unloadResource(const std::string& filepath) {
     const std::string path = normalizeResourcePath(filepath);
     _cache.remove(path);
-    _resourceTypes.erase(path);
-    _loadStates.erase(path);
+    {
+        std::lock_guard<std::mutex> lock(_loadsMutex);
+        _resourceTypes.erase(path);
+        _loadStates.erase(path);
+    }
 }
 
 void ResourceManager::reloadResource(const std::string& filepath) {
@@ -405,9 +455,12 @@ void ResourceManager::reloadResource(const std::string& filepath) {
 void ResourceManager::unloadAll() {
     _hotReloadWatcher.unwatchAll();
     _cache.clear();
-    _resourceTypes.clear();
-    _loadStates.clear();
-    _loadingPaths.clear();
+    {
+        std::lock_guard<std::mutex> lock(_loadsMutex);
+        _resourceTypes.clear();
+        _loadStates.clear();
+        _loadingPaths.clear();
+    }
     {
         std::lock_guard<std::mutex> lock(_paksMutex);
         _openedPaks.clear();
@@ -577,6 +630,7 @@ std::shared_ptr<IResource> ResourceManager::getResource(const std::string& filep
 
 ResourceLoadState ResourceManager::getLoadState(const std::string& filepath) const {
     const std::string path = normalizeResourcePath(filepath);
+    std::lock_guard<std::mutex> lock(_loadsMutex);
     const auto it = _loadStates.find(path);
     if (it == _loadStates.end()) {
         return ResourceLoadState::NotLoaded;

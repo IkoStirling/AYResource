@@ -60,6 +60,49 @@ TEST_CASE(async_load_via_task_pool_completes)
     resetManager();
 }
 
+// CM-5 (2026-08-12): regression stress for a data race in the async path.
+// _loadInternal mutated _loadingPaths / _loadStates / _resourceTypes
+// without locks while the pool ran loads concurrently, and (for
+// first-load-is-async flows) initializeLoaders() ran registry
+// registration from every worker. The corruption surfaced
+// nondeterministically — often in unrelated later tests, e.g.
+// ResourceCache::clear reading a torn string key. This case exercises
+// the same machinery at higher concurrency (32 loads × 10 unloadAll
+// rounds); it can't prove a race's absence, but a reintroduced race is
+// far more likely to trip here than in the single-round test above.
+TEST_CASE(async_many_concurrent_unload_rounds_stable)
+{
+    for (int round = 0; round < 10; ++round) {
+        resetManager();
+        ResourceRegistry::registerLoader("MockResource", +[]() -> std::unique_ptr<IResourceLoader> {
+            return std::make_unique<MockResourceLoader>();
+        });
+        ResourceRegistry::registerExtension(".mock", "MockResource");
+
+        std::vector<std::shared_future<std::shared_ptr<MockResource>>> futures;
+        for (int i = 0; i < 32; ++i) {
+            const std::string path =
+                "p3_stress_" + std::to_string(round) + "_" + std::to_string(i) + ".mock";
+            {
+                std::ofstream f(path);
+                f << "data" << i;
+            }
+            futures.push_back(ResourceManager::instance().loadAsync<MockResource>(path));
+        }
+
+        for (size_t i = 0; i < futures.size(); ++i) {
+            auto res = futures[i].get();
+            CHECK(res != nullptr);
+            CHECK(res->isLoaded());
+            std::remove(("p3_stress_" + std::to_string(round) + "_" + std::to_string(i) + ".mock")
+                            .c_str());
+        }
+
+        resetManager();
+    }
+    CHECK(true);
+}
+
 TEST_CASE(async_cancel_before_finish_returns_null)
 {
     resetManager();

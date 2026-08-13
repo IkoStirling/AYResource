@@ -56,6 +56,14 @@ public:
         return static_cast<UInt32>(_tileCollisionFlags.size());
     }
 
+    // ===== Animation table (design.md §7.2) =====
+    // Returns the flat view over non-empty animation entries. The view is
+    // rebuilt lazily after mutations; the returned pointer stays valid until
+    // the next setAnimationEntry / loadFromBinary / clear call (same
+    // const-caller contract as getTileIds16).
+    UInt32 getAnimationCount() const override;
+    const TileAnimationEntry* getAnimationEntries() const override;
+
     // ===== Binary serialization =====
     bool loadFromBinary(const void* data, size_t size) override;
     bool saveToBinary(std::vector<UInt8>& outData) const override;
@@ -80,8 +88,23 @@ public:
     // overwrites only the cells the author JSON lists.
     bool setTile(UInt32 cellIndex, UInt32 tileId);
 
+    // CM-5 (2026-08-12): per-source-tile-id animation entry for the
+    // animation-table chain (Converter -> binary -> runtime tick -> render).
+    // `frameCount == 0` removes the entry (== static tile); otherwise the
+    // entry for `sourceTileId` is replaced if present, appended otherwise.
+    // No bounds on frameTileId/sourceTileId (any UInt32). `frames` must be
+    // non-null when frameCount > 0.
+    bool setAnimationEntry(UInt32 sourceTileId,
+                           const TileAnimationFrame* frames,
+                           UInt32 frameCount);
+
 private:
     void clear();
+
+    struct StoredAnimationEntry {
+        UInt32 sourceTileId;
+        std::vector<TileAnimationFrame> frames;
+    };
 
     FGuid _guid{};
 
@@ -97,6 +120,14 @@ private:
     std::vector<UInt32> _tileIds32;
 
     std::vector<TileCollisionFlagEntry> _tileCollisionFlags;
+
+    // Animation table (sparse by sourceTileId). Flat storage + entries view
+    // are rebuilt lazily on mutation (_animViewDirty) so the getter's
+    // const-pointer contract holds between mutations.
+    std::vector<StoredAnimationEntry> _animations;
+    mutable std::vector<TileAnimationFrame> _animFlat;
+    mutable std::vector<TileAnimationEntry> _animEntriesView;
+    mutable bool _animViewDirty = false;
 
     std::string _name;
 };

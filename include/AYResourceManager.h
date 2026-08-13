@@ -231,6 +231,15 @@ private:
     // when written from a load worker.
     mutable std::mutex _paksMutex;
     std::unordered_map<std::string, std::shared_ptr<ayt::storage::IPackageReader>> _openedPaks;
+    // CM-5 (2026-08-12): guards _loadingPaths / _loadStates / _resourceTypes.
+    // The F1.4 comment above promised these maps "gain the same lock when
+    // written from a load worker" — the lock was never applied, and the
+    // async pool runs _loadInternal on N threads concurrently, so the
+    // unlocked mutations were a data race (heap corruption surfacing as
+    // crashes in unrelated later tests). Lock scopes are tiny — each map
+    // op only; never hold across an actual load (which would serialize
+    // the async pool).
+    mutable std::mutex _loadsMutex;
     // F3.3: cap + LRU for the pak reader map. 0 = unlimited.
     size_t _openPaksCap = 0;
     std::unique_ptr<OpenPaksLru> _openPaksLru;

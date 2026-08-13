@@ -231,4 +231,143 @@ TEST_CASE(TilemapConverterDispatchAndPath)
     CHECK_TRUE(makeTilemapVirtualPath("hero_sheet") == "tilemaps/hero_sheet.aytilemap");
 }
 
+// ===== CM-5 (2026-08-12): animations JSON -> binary -> load =====
+
+namespace {
+
+const TileAnimationEntry* findAnimEntry(const TilemapAsset& t,
+                                        UInt32 sourceTileId) {
+    const UInt32 count = t.getAnimationCount();
+    const TileAnimationEntry* entries = t.getAnimationEntries();
+    for (UInt32 i = 0u; i < count; ++i) {
+        if (entries[i].sourceTileId == sourceTileId) {
+            return &entries[i];
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
+TEST_CASE(TilemapConverterAnimationsRoundTrip)
+{
+    const char* json =
+        "{\"name\": \"anim\", \"cols\": 4, \"rows\": 4,"
+        " \"tileWidth\": 32, \"tileHeight\": 32, \"defaultTileId\": 0,"
+        " \"tiles\": [2, 2, 9, 9],"
+        " \"animations\": ["
+        "   {\"sourceTileId\": 2, \"frames\": ["
+        "     {\"tileId\": 10, \"durationMs\": 100},"
+        "     {\"tileId\": 11, \"durationMs\": 200}]},"
+        "   {\"sourceTileId\": 9, \"frames\":"
+        "     [{\"tileId\": 20, \"durationMs\": 0}]}"
+        " ]}\n";
+    CHECK(writeTextFile("cm5_anim.aytilemap.json", json));
+
+    TilemapConverter converter("cm5_anim.aytilemap.json");
+    converter.setOutputDir(kOutputDir);
+    const ConversionResult result = converter.convert();
+    CHECK_INT_EQ(static_cast<int>(result.resources.size()), 1);
+
+    std::vector<UInt8> binary;
+    readBinaryFile("tilemaps/anim.aytilemap", binary);
+    CHECK_FALSE(binary.empty());
+
+    TilemapAsset loaded;
+    CHECK_TRUE(loaded.loadFromBinary(binary.data(), binary.size()));
+    CHECK_INT_EQ(loaded.getAnimationCount(), 2u);
+    const TileAnimationEntry* e2 = findAnimEntry(loaded, 2u);
+    CHECK_NOT_NULL(e2);
+    CHECK_INT_EQ(e2->frameCount, 2u);
+    CHECK_INT_EQ(e2->frames[0].frameTileId, 10u);
+    CHECK_INT_EQ(e2->frames[0].durationMs, 100u);
+    CHECK_INT_EQ(e2->frames[1].frameTileId, 11u);
+    CHECK_INT_EQ(e2->frames[1].durationMs, 200u);
+    const TileAnimationEntry* e9 = findAnimEntry(loaded, 9u);
+    CHECK_NOT_NULL(e9);
+    CHECK_INT_EQ(e9->frameCount, 1u);
+    CHECK_INT_EQ(e9->frames[0].frameTileId, 20u);
+    CHECK_INT_EQ(e9->frames[0].durationMs, 0u);  // zero duration allowed
+
+    std::remove("cm5_anim.aytilemap.json");
+    std::remove("tilemaps/anim.aytilemap");
+}
+
+TEST_CASE(TilemapConverterAnimationsGuidSensitive)
+{
+    const char* json =
+        "{\"name\": \"g\", \"cols\": 2, \"rows\": 2,"
+        " \"tileWidth\": 16, \"tileHeight\": 16, \"defaultTileId\": 0,"
+        " \"animations\": [{\"sourceTileId\": 2, \"frames\": ["
+        "   {\"tileId\": 10, \"durationMs\": 100}]}]}\n";
+    CHECK(writeTextFile("cm5_guid_a.aytilemap.json", json));
+
+    TilemapConverter a("cm5_guid_a.aytilemap.json");
+    const ConversionResult ra = a.convert();
+    CHECK_INT_EQ(static_cast<int>(ra.resources.size()), 1);
+
+    // Same input twice -> deterministic (cook-cache key stability).
+    const ConversionResult ra2 = a.convert();
+    CHECK_TRUE(ra2.resources[0].guid == ra.resources[0].guid);
+
+    // One durationMs changed -> guid must differ (the animation bytes feed
+    // the guid; a missed field here silently breaks cook caching).
+    std::string changed = json;
+    const size_t pos = changed.find("100");
+    CHECK(pos != std::string::npos);
+    changed.replace(pos, 3u, "250");
+    CHECK(writeTextFile("cm5_guid_b.aytilemap.json", changed));
+
+    TilemapConverter b("cm5_guid_b.aytilemap.json");
+    const ConversionResult rb = b.convert();
+    CHECK_INT_EQ(static_cast<int>(rb.resources.size()), 1);
+    CHECK_FALSE(rb.resources[0].guid == ra.resources[0].guid);
+
+    std::remove("cm5_guid_a.aytilemap.json");
+    std::remove("cm5_guid_b.aytilemap.json");
+}
+
+TEST_CASE(TilemapConverterAnimationsEmptyFramesAborts)
+{
+    // An entry with no frames is never written to disk; the converter must
+    // abort (empty result) rather than emit a file the loader rejects.
+    const char* json =
+        "{\"name\": \"bad\", \"cols\": 2, \"rows\": 2,"
+        " \"tileWidth\": 16, \"tileHeight\": 16, \"defaultTileId\": 0,"
+        " \"animations\": [{\"sourceTileId\": 2, \"frames\": []}]}\n";
+    CHECK(writeTextFile("cm5_bad.aytilemap.json", json));
+
+    TilemapConverter converter("cm5_bad.aytilemap.json");
+    converter.setOutputDir(kOutputDir);
+    const ConversionResult result = converter.convert();
+    CHECK_INT_EQ(static_cast<int>(result.resources.size()), 0);
+    CHECK_FALSE(fileExists("tilemaps/bad.aytilemap"));
+
+    std::remove("cm5_bad.aytilemap.json");
+}
+
+TEST_CASE(TilemapConverterWithoutAnimationsLoadsWithEmptyTable)
+{
+    // kAuthorJson has no "animations" field: the cooked file must load with
+    // an empty animation table (additive capability, back-compat).
+    CHECK(writeTextFile("cm5_plain.aytilemap.json", kAuthorJson));
+
+    TilemapConverter converter("cm5_plain.aytilemap.json");
+    converter.setOutputDir(kOutputDir);
+    const ConversionResult result = converter.convert();
+    CHECK_INT_EQ(static_cast<int>(result.resources.size()), 1);
+
+    std::vector<UInt8> binary;
+    readBinaryFile("tilemaps/ground.aytilemap", binary);
+    CHECK_FALSE(binary.empty());
+
+    TilemapAsset loaded;
+    CHECK_TRUE(loaded.loadFromBinary(binary.data(), binary.size()));
+    CHECK_INT_EQ(loaded.getAnimationCount(), 0u);
+    CHECK_INT_EQ(loaded.getTileCollisionFlagCount(), 2u);  // rest intact
+
+    std::remove("cm5_plain.aytilemap.json");
+    std::remove("tilemaps/ground.aytilemap");
+}
+
 TEST_SUITE_END

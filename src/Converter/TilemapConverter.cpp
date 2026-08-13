@@ -193,10 +193,49 @@ ConversionResult TilemapConverter::convert() {
         serializer->endArray();
     }
 
+    // Animation table (CM-5): sparse per-source-tile-id flipbook.
+    // Schema: "animations": [ { "sourceTileId": 2, "frames":
+    //   [ {"tileId": 10, "durationMs": 100}, ... ] } ]
+    if (serializer->isFieldPending("animations")) {
+        serializer->beginArray("animations");
+        while (serializer->hasMoreArrayElements()) {
+            UInt32 sourceTileId = 0;
+            std::vector<TileAnimationFrame> frames;
+            serializer->beginObject(nullptr);
+            serializer->field("sourceTileId", sourceTileId);
+            if (serializer->isFieldPending("frames")) {
+                serializer->beginArray("frames");
+                while (serializer->hasMoreArrayElements()) {
+                    TileAnimationFrame f{0u, 0u};
+                    serializer->beginObject(nullptr);
+                    serializer->field("tileId", f.frameTileId);
+                    serializer->field("durationMs", f.durationMs);
+                    serializer->endObject();
+                    frames.push_back(f);
+                }
+                serializer->endArray();
+            }
+            serializer->endObject();
+            if (frames.empty()) {
+                ayt::log::warn("[TilemapConverter] '%s' animations[] entry "
+                               "sourceTileId=%u has no frames; aborting",
+                               sourcePath.c_str(), sourceTileId);
+                return result;  // empty entries are never written to disk
+            }
+            if (!asset.setAnimationEntry(sourceTileId, frames.data(),
+                                         static_cast<UInt32>(frames.size()))) {
+                return result;
+            }
+        }
+        serializer->endArray();
+    }
+
     serializer->endObject(); // root
 
-    // Guid covers every data-carrying byte: meta + mode + ids + flags.
-    // A missed field here silently breaks cook caching correctness.
+    // Guid covers every data-carrying byte: meta + mode + ids + flags +
+    // animation table. A missed field here silently breaks cook caching
+    // correctness — a changed frame tile id or duration must invalidate
+    // cooked output.
     std::vector<UInt8> contentData;
     appendBytes(contentData, &cols, sizeof(cols));
     appendBytes(contentData, &rows, sizeof(rows));
@@ -214,6 +253,20 @@ ConversionResult TilemapConverter::convert() {
     for (const TileCollisionFlagEntry& e : flags) {
         appendBytes(contentData, &e.tileId, sizeof(e.tileId));
         appendBytes(contentData, &e.flags, sizeof(e.flags));
+    }
+    // Animation bytes in the same layout the binary writes them
+    // (count + per-entry {sourceTileId, frameCount, frames}).
+    const UInt32 animCount = asset.getAnimationCount();
+    appendBytes(contentData, &animCount, sizeof(animCount));
+    const TileAnimationEntry* entries = asset.getAnimationEntries();
+    for (UInt32 i = 0u; i < animCount; ++i) {
+        const TileAnimationEntry& e = entries[i];
+        appendBytes(contentData, &e.sourceTileId, sizeof(e.sourceTileId));
+        appendBytes(contentData, &e.frameCount, sizeof(e.frameCount));
+        if (e.frameCount > 0) {
+            appendBytes(contentData, e.frames,
+                        e.frameCount * sizeof(TileAnimationFrame));
+        }
     }
     lastGuid = ayt::storage::Guid::computeFromData(contentData.data(), contentData.size());
     asset.setGuid(lastGuid);
