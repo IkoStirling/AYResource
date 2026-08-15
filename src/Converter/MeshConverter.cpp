@@ -2,8 +2,8 @@
 #include "Loader\MeshLoader.h"
 #include "AYMesh.h"
 #include "IAYMesh.h"
-#include "ayio/File.h"
-#include <aystorage/Guid.h>
+#include "AYIO/File.h"
+#include <AYStorage/Guid.h>
 #include <AYLog.h>
 #include <vector>
 #include <fstream>

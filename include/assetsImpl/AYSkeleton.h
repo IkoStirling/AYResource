@@ -2,7 +2,7 @@
 #include "IAYSkeleton.h"
 #include "IAYResource.h"
 #include "IAYResourceLoader.h"
-#include <aymath/MathTypes.h>
+#include <AYMath/MathTypes.h>
 #include <vector>
 #include <unordered_map>
 #include <string>

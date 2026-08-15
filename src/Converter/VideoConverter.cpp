@@ -1,7 +1,7 @@
 #include "Converter\VideoConverter.h"
 #include "Loader\VideoLoader.h"
-#include <ayio/File.h>
-#include <aystorage/Guid.h>
+#include <AYIO/File.h>
+#include <AYStorage/Guid.h>
 #include <fstream>
 #include <cstring>
 

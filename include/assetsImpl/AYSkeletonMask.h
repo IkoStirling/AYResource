@@ -12,7 +12,7 @@
 
 #include "IAYSkeletonMask.h"
 
-#include <aymath/MathTypes.h>     // FGuid
+#include <AYMath/MathTypes.h>     // FGuid
 
 #include <cstddef>
 #include <cstdint>

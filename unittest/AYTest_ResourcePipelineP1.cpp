@@ -12,7 +12,7 @@
 #include "AYMaterial.h"
 #include "AYTexture.h"
 #include "AYTest.h"
-#include "aystorage/IStorageDatabase.h"
+#include "AYStorage/IStorageDatabase.h"
 
 #include <cstdio>
 #include <filesystem>

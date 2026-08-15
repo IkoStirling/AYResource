@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
-#include <aymath/MathTypes.h>
+#include <AYMath/MathTypes.h>
 
 namespace ayt::resource
 {

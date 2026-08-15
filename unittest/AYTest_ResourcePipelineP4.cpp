@@ -5,8 +5,8 @@
 #include "AYMesh.h"
 #include "AYTest.h"
 
-#include <ayio/File.h>
-#include <ayio/Path.h>
+#include <AYIO/File.h>
+#include <AYIO/Path.h>
 
 #include <cstdio>
 #include <filesystem>

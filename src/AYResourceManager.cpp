@@ -4,10 +4,10 @@
 #include "AYLooseDependency.h"
 #include "AYMaterial.h"
 #include "AYTexture.h"
-#include "aystorage/IStorageDatabase.h"
-#include "aystorage/IPackageReader.h"
-#include <ayio/Path.h>
-#include <ayio/File.h>
+#include "AYStorage/IStorageDatabase.h"
+#include "AYStorage/IPackageReader.h"
+#include <AYIO/Path.h>
+#include <AYIO/File.h>
 #include <AYLog.h>
 #include <cassert>
 #include <cstdio>

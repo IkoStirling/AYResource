@@ -1,6 +1,6 @@
 #pragma once
 #include "IAYTilemap.h"
-#include <aymath/MathTypes.h>
+#include <AYMath/MathTypes.h>
 #include <string>
 #include <vector>
 

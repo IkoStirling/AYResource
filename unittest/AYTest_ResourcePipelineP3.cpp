@@ -4,9 +4,9 @@
 #include "AYMockResource.h"
 #include "AYResourceCache.h"
 #include "AYTest.h"
-#include "aystorage/IStorageDatabase.h"
+#include "AYStorage/IStorageDatabase.h"
 
-#include <ayio/File.h>
+#include <AYIO/File.h>
 
 #include <chrono>
 #include <cstdio>

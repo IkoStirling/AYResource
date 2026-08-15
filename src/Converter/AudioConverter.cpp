@@ -1,9 +1,9 @@
 #include "Converter\AudioConverter.h"
 #include "Converter\AudioDecoder.h"
 #include "Loader\AudioLoader.h"
-#include <ayio/File.h>
-#include <ayio/Directory.h>
-#include <aystorage/Guid.h>
+#include <AYIO/File.h>
+#include <AYIO/Directory.h>
+#include <AYStorage/Guid.h>
 #include <cstring>
 
 namespace ayt::resource

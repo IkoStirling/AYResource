@@ -1,8 +1,8 @@
 #include "AYHotReloadWatcher.h"
 
-#include "ayio/File.h"
-#include "ayio/FileWatcher.h"
-#include "ayio/Path.h"
+#include "AYIO/File.h"
+#include "AYIO/FileWatcher.h"
+#include "AYIO/Path.h"
 
 #include <vector>
 

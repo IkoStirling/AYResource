@@ -5,8 +5,8 @@
 #include "IAYConverter.h"
 #include "AYTest.h"
 
-#include <ayio/File.h>
-#include <ayio/Directory.h>
+#include <AYIO/File.h>
+#include <AYIO/Directory.h>
 
 #include <cstdint>
 #include <cstdlib>

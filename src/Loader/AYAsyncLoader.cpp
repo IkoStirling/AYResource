@@ -1,8 +1,8 @@
 #include "AYAsyncLoader.h"
 #include "AYResourceManager.h"
 
-#include "aytask/ITaskScheduler.h"
-#include "aytask/LambdaTask.h"
+#include "AYTask/ITaskScheduler.h"
+#include "AYTask/LambdaTask.h"
 
 #include <ayevent/EventBus.h>
 #include <ayevent/Events/ResourceEvents.h>

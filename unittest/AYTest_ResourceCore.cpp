@@ -2,8 +2,8 @@
 #include "AYMockResource.h"
 #include "AYTest.h"
 #include "AYHotReloadWatcher.h"
-#include "ayio/File.h"
-#include "aystorage/IStorageDatabase.h"
+#include "AYIO/File.h"
+#include "AYStorage/IStorageDatabase.h"
 #include <fstream>
 #include <thread>
 #include <chrono>

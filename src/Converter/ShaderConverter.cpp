@@ -1,8 +1,8 @@
 #include "Converter/ShaderConverter.h"
 #include "assetsImpl/AYShader.h"
-#include <ayio/File.h>
-#include <ayio/Path.h>
-#include <aystorage/Guid.h>
+#include <AYIO/File.h>
+#include <AYIO/Path.h>
+#include <AYStorage/Guid.h>
 #include <AYLog.h>
 #include <cstring>
 

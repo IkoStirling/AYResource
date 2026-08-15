@@ -1,7 +1,7 @@
 #include "Converter\GLTFConverter.h"
 #include <Loader\MeshLoader.h>
 #include "AYMesh.h"
-#include "ayio/File.h"
+#include "AYIO/File.h"
 
 namespace ayt::resource
 {

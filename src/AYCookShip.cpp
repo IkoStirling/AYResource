@@ -4,11 +4,11 @@
 #include "AYResourceRegistry.h"
 #include "AYLooseDependency.h"
 #include "IAYConverter.h"
-#include "aystorage/IStorageDatabase.h"
-#include "aystorage/IPackageWriter.h"
+#include "AYStorage/IStorageDatabase.h"
+#include "AYStorage/IPackageWriter.h"
 
-#include <ayio/File.h>
-#include <ayio/Path.h>
+#include <AYIO/File.h>
+#include <AYIO/Path.h>
 
 #include <filesystem>
 #include <unordered_set>

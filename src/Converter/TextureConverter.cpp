@@ -1,9 +1,9 @@
 #include "Converter\TextureConverter.h"
 #include "Converter\TextureCompressor.h"
 #include "Loader\TextureLoader.h"
-#include "ayio/File.h"
-#include "aymath/MathUtils.h"
-#include <aystorage/Guid.h>
+#include "AYIO/File.h"
+#include "AYMath/MathUtils.h"
+#include <AYStorage/Guid.h>
 #include <cstring>
 
 // stb_image for PNG/JPG loading

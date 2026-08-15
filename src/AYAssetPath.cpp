@@ -1,6 +1,6 @@
 #include "AYAssetPath.h"
 
-#include <ayio/Path.h>
+#include <AYIO/Path.h>
 #include <cctype>
 #include <cstring>
 #include <string>

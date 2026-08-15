@@ -1,7 +1,7 @@
 #include "Loader\MaterialLoader.h"
 #include "IAYResourceLoader.h"
-#include <ayio/File.h>
-#include <aymath/MathTypes.h>
+#include <AYIO/File.h>
+#include <AYMath/MathTypes.h>
 #include <cstring>
 #include <cstdio>
 

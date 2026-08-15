@@ -1,6 +1,6 @@
 #include "Converter\FBXConverter.h"
 #include "AYVirtualAssetPath.h"
-#include "ayio/File.h"
+#include "AYIO/File.h"
 #include <AYLog.h>
 #include <sstream>
 #include <set>

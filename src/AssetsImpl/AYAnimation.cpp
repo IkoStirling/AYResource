@@ -1,5 +1,5 @@
 #include "assetsImpl/AYAnimation.h"
-#include <aymath/MathTypes.h>
+#include <AYMath/MathTypes.h>
 #include <cstring>
 #include <limits>
 

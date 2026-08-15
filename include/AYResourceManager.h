@@ -11,11 +11,11 @@
 #include "AYResourceHandle.h"
 #include "AYResourceCache.h"
 #include "AYResourceRegistry.h"
-#include "aystorage/IStorageDatabase.h"
-#include "aystorage/IPackageReader.h"
+#include "AYStorage/IStorageDatabase.h"
+#include "AYStorage/IPackageReader.h"
 #include "AYAsyncLoader.h"
 #include "AYHotReloadWatcher.h"
-#include <ayio/Path.h>
+#include <AYIO/Path.h>
 
 namespace ayt::resource
 {

@@ -1,8 +1,8 @@
 #include "Loader\AudioLoader.h"
 #include "Converter\AudioDecoder.h"
 #include "IAYResourceLoader.h"
-#include <aymath/MathTypes.h>
-#include <ayio/File.h>
+#include <AYMath/MathTypes.h>
+#include <AYIO/File.h>
 #include <cstring>
 #include <cstdio>
 

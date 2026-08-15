@@ -3,8 +3,8 @@
 #include <vector>
 #include <string>
 #include <array>
-#include <aymath/MathTypes.h>
-#include <ayio/File.h>
+#include <AYMath/MathTypes.h>
+#include <AYIO/File.h>
 
 namespace ayt::resource
 {

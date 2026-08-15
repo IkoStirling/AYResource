@@ -7,8 +7,8 @@
 #include "AYIntermediateAsset.h"
 #include "AYMaterial.h"
 
-#include <ayio/File.h>
-#include <ayio/Path.h>
+#include <AYIO/File.h>
+#include <AYIO/Path.h>
 
 namespace ayt::resource
 {

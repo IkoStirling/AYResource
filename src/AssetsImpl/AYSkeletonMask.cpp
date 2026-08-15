@@ -4,8 +4,8 @@
 
 #include <AYIO.h>
 #include <AYLog.h>
-#include <aymath/MathTypes.h>
-#include <aymath/MathUtils.h>
+#include <AYMath/MathTypes.h>
+#include <AYMath/MathUtils.h>
 
 #include <cstring>
 #include <vector>

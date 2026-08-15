@@ -1,6 +1,6 @@
 #pragma once
 #include "IAYResource.h"
-#include "aymath/MathTypes.h"
+#include "AYMath/MathTypes.h"
 #include <cstdint>
 
 namespace ayt::resource

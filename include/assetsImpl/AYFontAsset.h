@@ -2,7 +2,7 @@
 #include "IAYResource.h"
 #include "IAYFontAsset.h"
 #include "IAYResourceLoader.h"
-#include <aymath/MathTypes.h>
+#include <AYMath/MathTypes.h>
 #include <memory>
 #include <vector>
 #include <string>
