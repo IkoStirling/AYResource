@@ -1,4 +1,4 @@
-#include "assetsImpl/AYSkeleton.h"
+#include "AYResource/assetsImpl/Skeleton.h"
 #include <AYMath/MathTypes.h>
 #include "AYMath/MathUtils.h"
 #include "AYIO.h"

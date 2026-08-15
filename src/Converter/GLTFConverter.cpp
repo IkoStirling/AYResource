@@ -1,6 +1,6 @@
-#include "Converter\GLTFConverter.h"
-#include <Loader\MeshLoader.h>
-#include "AYMesh.h"
+#include "AYResource/Converter/GLTFConverter.h"
+#include <AYResource/Loader/MeshLoader.h>
+#include "AYResource/assetsImpl/Mesh.h"
 #include "AYIO/File.h"
 
 namespace ayt::resource

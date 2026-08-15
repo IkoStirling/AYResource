@@ -1,7 +1,7 @@
 #include "AYResource.h"
 #include "AYMockResource.h"
 #include "AYTest.h"
-#include "AYHotReloadWatcher.h"
+#include "AYResource/HotReloadWatcher.h"
 #include "AYIO/File.h"
 #include "AYStorage/IStorageDatabase.h"
 #include <fstream>

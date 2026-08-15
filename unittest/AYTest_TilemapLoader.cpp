@@ -1,9 +1,9 @@
 #include "AYResource.h"
-#include "interface/assetsDefs/IAYTilemap.h"
-#include "assetsImpl/AYTilemapAsset.h"
-#include "Loader/TilemapLoader.h"
-#include "AYResourceRegistry.h"
-#include "AYResourceBootstrap.h"
+#include "AYResource/assetsDefs/ITilemap.h"
+#include "AYResource/assetsImpl/TilemapAsset.h"
+#include "AYResource/Loader/TilemapLoader.h"
+#include "AYResource/ResourceRegistry.h"
+#include "AYResource/ResourceBootstrap.h"
 #include "AYTest.h"
 #include <cstring>
 

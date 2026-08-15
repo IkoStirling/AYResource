@@ -1,9 +1,9 @@
-#include "AYCookShip.h"
+#include "AYResource/CookShip.h"
 
-#include "AYResourceBootstrap.h"
-#include "AYResourceRegistry.h"
-#include "AYLooseDependency.h"
-#include "IAYConverter.h"
+#include "AYResource/ResourceBootstrap.h"
+#include "AYResource/ResourceRegistry.h"
+#include "AYResource/LooseDependency.h"
+#include "AYResource/IConverter.h"
 #include "AYStorage/IStorageDatabase.h"
 #include "AYStorage/IPackageWriter.h"
 

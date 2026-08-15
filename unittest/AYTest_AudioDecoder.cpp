@@ -1,8 +1,8 @@
-#include "Converter/AudioDecoder.h"
-#include "Converter/AudioConverter.h"
-#include "Loader/AudioLoader.h"
-#include "assetsImpl/AYAudio.h"
-#include "IAYConverter.h"
+#include "AYResource/Converter/AudioDecoder.h"
+#include "AYResource/Converter/AudioConverter.h"
+#include "AYResource/Loader/AudioLoader.h"
+#include "AYResource/assetsImpl/Audio.h"
+#include "AYResource/IConverter.h"
 #include "AYTest.h"
 
 #include <AYIO/File.h>

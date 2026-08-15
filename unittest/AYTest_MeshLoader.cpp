@@ -1,6 +1,6 @@
 #include "AYResource.h"
-#include "Loader/MeshLoader.h"
-#include "AYMesh.h"
+#include "AYResource/Loader/MeshLoader.h"
+#include "AYResource/assetsImpl/Mesh.h"
 #include "AYTest.h"
 #include <vector>
 

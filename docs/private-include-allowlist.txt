@@ -3,6 +3,6 @@
 # Format: one path per line; '#' comments and blank lines ignored.
 
 AYEditor/src/AYEditorPlayRuntime.cpp
-AYEntity/include/components/AYSkeletonComponent.h
+AYEntity/include/AYEntity/components/SkeletonComponent.h
 AYEntity/src/AYAnimationSystem.cpp
 AYEntity/src/AYBlendSpaceSystem.cpp

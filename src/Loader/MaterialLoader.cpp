@@ -1,5 +1,5 @@
-#include "Loader\MaterialLoader.h"
-#include "IAYResourceLoader.h"
+#include "AYResource/Loader/MaterialLoader.h"
+#include "AYResource/IResourceLoader.h"
 #include <AYIO/File.h>
 #include <AYMath/MathTypes.h>
 #include <cstring>

@@ -1,5 +1,5 @@
-#include "Loader\TilemapLoader.h"
-#include "IAYResourceLoader.h"
+#include "AYResource/Loader/TilemapLoader.h"
+#include "AYResource/IResourceLoader.h"
 #include <AYIO/File.h>
 
 namespace ayt::resource

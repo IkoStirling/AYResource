@@ -1,7 +1,7 @@
 #include "AYResource.h"
-#include "interface/assetsDefs/IAYSkeleton.h"
-#include "assetsImpl/AYSkeleton.h"
-#include "Loader/SkeletonLoader.h"
+#include "AYResource/assetsDefs/ISkeleton.h"
+#include "AYResource/assetsImpl/Skeleton.h"
+#include "AYResource/Loader/SkeletonLoader.h"
 #include "AYTest.h"
 #include <fstream>
 #include <cstdio>

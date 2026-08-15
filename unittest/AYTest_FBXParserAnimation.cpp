@@ -12,7 +12,7 @@
 // 找不到时静默 skip (CI 在不同环境下都可能缺)。
 
 #include "AYResource.h"
-#include "Converter/FBXParser.h"
+#include "AYResource/Converter/FBXParser.h"
 #include "AYTest.h"
 
 #include <string>

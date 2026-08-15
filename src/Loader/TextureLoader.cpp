@@ -1,5 +1,5 @@
-#include "Loader\TextureLoader.h"
-#include "IAYResourceLoader.h"
+#include "AYResource/Loader/TextureLoader.h"
+#include "AYResource/IResourceLoader.h"
 #include "AYMath/MathTypes.h"
 #include "AYMath/MathUtils.h"
 #include "AYIO/File.h"

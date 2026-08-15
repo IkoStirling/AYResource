@@ -1,4 +1,4 @@
-#include "AYAssetPath.h"
+#include "AYResource/AssetPath.h"
 #include "AYTest.h"
 
 using namespace ayt::resource;

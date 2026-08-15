@@ -1,6 +1,6 @@
-#include "Converter\FBXParser.h"
-#include "AYVirtualAssetPath.h"
-#include "IAYMesh.h"
+#include "AYResource/Converter/FBXParser.h"
+#include "AYResource/VirtualAssetPath.h"
+#include "AYResource/assetsDefs/IMesh.h"
 #include <assimp/scene.h>
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>

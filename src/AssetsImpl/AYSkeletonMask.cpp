@@ -1,6 +1,6 @@
 // AYSkeletonMask.cpp — P3.x 刀 1 (2026-08-06) concrete SkeletonMask impl.
 
-#include "assetsImpl/AYSkeletonMask.h"
+#include "AYResource/assetsImpl/SkeletonMask.h"
 
 #include <AYIO.h>
 #include <AYLog.h>

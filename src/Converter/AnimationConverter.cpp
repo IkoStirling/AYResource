@@ -1,5 +1,5 @@
-#include "Converter\AnimationConverter.h"
-#include "AYAnimation.h"
+#include "AYResource/Converter/AnimationConverter.h"
+#include "AYResource/assetsImpl/Animation.h"
 #include "AYIO/File.h"
 #include <AYStorage/Guid.h>
 #include <unordered_set>

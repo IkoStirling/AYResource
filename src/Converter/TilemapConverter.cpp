@@ -1,6 +1,6 @@
-#include "Converter\TilemapConverter.h"
-#include "AYVirtualAssetPath.h"
-#include "assetsImpl\AYTilemapAsset.h"
+#include "AYResource/Converter/TilemapConverter.h"
+#include "AYResource/VirtualAssetPath.h"
+#include "AYResource/assetsImpl/TilemapAsset.h"
 #include "AYIO/File.h"
 #include <AYSerializer.h>
 #include <AYStorage/Guid.h>

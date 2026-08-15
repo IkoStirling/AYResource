@@ -2,8 +2,8 @@
 #include <string>
 #include <memory>
 #include <functional>
-#include "IAYResource.h"
-#include "IAYResourceLoader.h"
+#include "AYResource/IResource.h"
+#include "AYResource/IResourceLoader.h"
 
 namespace ayt::resource
 {

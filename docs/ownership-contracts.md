@@ -46,8 +46,8 @@ If gameplay needs L3 drop when L2 unloads, call Renderer `destroy*` explicitly â
 
 | May include | Must not include |
 |-------------|------------------|
-| `AYResource.h`, `interface/**`, `interface/assetsDefs/IAY*.h` | `include/assetsImpl/**` |
-| Manager / Handle / Cache / AssetPath / Async / HotReload / Import / Cook headers | `include/Loader/**`, `include/Converter/**` |
+| `AYResource.h`, `interface/**`, `interface/AYResource/assetsDefs/I*.h` | `include/AYResource/assetsImpl/**` |
+| Manager / Handle / Cache / AssetPath / Async / HotReload / Import / Cook headers | `include/AYResource/Loader/**`, `include/Converter/**` |
 
 Exceptions (documented debt / bridge):
 

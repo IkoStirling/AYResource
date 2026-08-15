@@ -1,5 +1,5 @@
-#include "Loader\MaterialFile.h"
-#include "MaterialLoader.h"
+#include "AYResource/Loader/MaterialFile.h"
+#include "AYResource/Loader/MaterialLoader.h"
 #include <cstring>
 
 namespace ayt::resource

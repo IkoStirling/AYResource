@@ -1,11 +1,11 @@
-#include "AYLooseDependency.h"
+#include "AYResource/LooseDependency.h"
 
-#include "AYAssetPath.h"
-#include "IAYConverter.h"
-#include "IAYMesh.h"
-#include "IAYMaterial.h"
-#include "AYIntermediateAsset.h"
-#include "AYMaterial.h"
+#include "AYResource/AssetPath.h"
+#include "AYResource/IConverter.h"
+#include "AYResource/assetsDefs/IMesh.h"
+#include "AYResource/assetsDefs/IMaterial.h"
+#include "AYResource/IntermediateAsset.h"
+#include "AYResource/assetsImpl/Material.h"
 
 #include <AYIO/File.h>
 #include <AYIO/Path.h>

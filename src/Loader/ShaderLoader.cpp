@@ -1,5 +1,5 @@
-#include "Loader\ShaderLoader.h"
-#include "IAYResourceLoader.h"
+#include "AYResource/Loader/ShaderLoader.h"
+#include "AYResource/IResourceLoader.h"
 #include <AYIO/File.h>
 #include <cstring>
 #include <cstdio>

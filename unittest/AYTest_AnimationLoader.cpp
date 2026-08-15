@@ -1,7 +1,7 @@
 #include "AYResource.h"
-#include "interface/assetsDefs/IAYAnimation.h"
-#include "assetsImpl/AYAnimation.h"
-#include "Loader/AnimationLoader.h"
+#include "AYResource/assetsDefs/IAnimation.h"
+#include "AYResource/assetsImpl/Animation.h"
+#include "AYResource/Loader/AnimationLoader.h"
 #include "AYTest.h"
 #include <fstream>
 #include <cstdio>

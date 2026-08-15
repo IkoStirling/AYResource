@@ -1,5 +1,5 @@
-#include "Loader\FontLoader.h"
-#include "IAYResourceLoader.h"
+#include "AYResource/Loader/FontLoader.h"
+#include "AYResource/IResourceLoader.h"
 #include <AYIO/File.h>
 #include <cstring>
 

@@ -27,7 +27,7 @@ bool containsForbiddenInclude(const std::string& text)
     static const char* kNeedles[] = {
         "assetsImpl/",
         "assetsImpl\\",
-        "include/Loader/",
+        "include/AYResource/Loader/",
         "include\\Loader\\",
         "include/Converter/",
         "include\\Converter\\",
@@ -165,7 +165,7 @@ TEST_CASE(production_modules_do_not_include_private_headers_except_allowlist)
             std::fprintf(stderr, "  - %s\n", v.c_str());
         }
         std::fprintf(stderr,
-                     "Prefer interface/assetsDefs/IAY*.h, or add to "
+                     "Prefer interface/AYResource/assetsDefs/I*.h, or add to "
                      "AYResource/docs/private-include-allowlist.txt with review.\n");
     }
     CHECK(violations.empty());

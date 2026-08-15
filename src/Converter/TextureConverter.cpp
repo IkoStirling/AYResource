@@ -1,6 +1,6 @@
-#include "Converter\TextureConverter.h"
-#include "Converter\TextureCompressor.h"
-#include "Loader\TextureLoader.h"
+#include "AYResource/Converter/TextureConverter.h"
+#include "AYResource/Converter/TextureCompressor.h"
+#include "AYResource/Loader/TextureLoader.h"
 #include "AYIO/File.h"
 #include "AYMath/MathUtils.h"
 #include <AYStorage/Guid.h>

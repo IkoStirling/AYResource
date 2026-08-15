@@ -1,5 +1,5 @@
-#include "AYResourceRegistry.h"
-#include "AYResourceBootstrap.h"
+#include "AYResource/ResourceRegistry.h"
+#include "AYResource/ResourceBootstrap.h"
 #include <algorithm>
 
 namespace ayt::resource

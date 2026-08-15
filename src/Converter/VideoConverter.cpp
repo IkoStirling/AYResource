@@ -1,5 +1,5 @@
-#include "Converter\VideoConverter.h"
-#include "Loader\VideoLoader.h"
+#include "AYResource/Converter/VideoConverter.h"
+#include "AYResource/Loader/VideoLoader.h"
 #include <AYIO/File.h>
 #include <AYStorage/Guid.h>
 #include <fstream>

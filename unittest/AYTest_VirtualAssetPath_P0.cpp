@@ -1,8 +1,8 @@
 #include "AYTest.h"
-#include "AYVirtualAssetPath.h"
-#include "Converter/MaterialConverter.h"
-#include "AYIntermediateAsset.h"
-#include "assetsImpl/AYMaterial.h"
+#include "AYResource/VirtualAssetPath.h"
+#include "AYResource/Converter/MaterialConverter.h"
+#include "AYResource/IntermediateAsset.h"
+#include "AYResource/assetsImpl/Material.h"
 
 #include <AYIO/File.h>
 #include <filesystem>

@@ -1,4 +1,4 @@
-#include "AYScript.h"
+#include "AYResource/assetsImpl/Script.h"
 #include <AYMath/MathTypes.h>
 #include <AYIO/File.h>
 #include <cstring>

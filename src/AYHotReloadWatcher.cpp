@@ -1,4 +1,4 @@
-#include "AYHotReloadWatcher.h"
+#include "AYResource/HotReloadWatcher.h"
 
 #include "AYIO/File.h"
 #include "AYIO/FileWatcher.h"

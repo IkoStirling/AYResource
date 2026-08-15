@@ -1,4 +1,4 @@
-#include "assetsImpl/AYAnimation.h"
+#include "AYResource/assetsImpl/Animation.h"
 #include <AYMath/MathTypes.h>
 #include <cstring>
 #include <limits>

@@ -1,4 +1,4 @@
-#include "Loader\ScriptLoader.h"
+#include "AYResource/Loader/ScriptLoader.h"
 #include <fstream>
 
 namespace ayt::resource

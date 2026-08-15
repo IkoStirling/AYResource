@@ -1,5 +1,5 @@
-#include "Loader\PhysicsLoader.h"
-#include "IAYResourceLoader.h"
+#include "AYResource/Loader/PhysicsLoader.h"
+#include "AYResource/IResourceLoader.h"
 #include <AYIO/File.h>
 
 namespace ayt::resource

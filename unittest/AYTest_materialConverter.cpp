@@ -1,7 +1,7 @@
 #include "AYResource.h"
-#include "assetsImpl/AYMaterial.h"
-#include "Converter/MaterialConverter.h"
-#include "Loader/MaterialLoader.h"
+#include "AYResource/assetsImpl/Material.h"
+#include "AYResource/Converter/MaterialConverter.h"
+#include "AYResource/Loader/MaterialLoader.h"
 #include "AYTest.h"
 #include <vector>
 #include <fstream>

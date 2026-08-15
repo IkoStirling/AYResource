@@ -1,5 +1,5 @@
-#include "AYResourceCache.h"
-#include "IAYResource.h"
+#include "AYResource/ResourceCache.h"
+#include "AYResource/IResource.h"
 
 #include <algorithm>
 #include <limits>

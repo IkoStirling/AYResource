@@ -1,5 +1,5 @@
-#include "Loader\VideoLoader.h"
-#include "IAYResourceLoader.h"
+#include "AYResource/Loader/VideoLoader.h"
+#include "AYResource/IResourceLoader.h"
 #include <AYIO/File.h>
 #include <cstring>
 

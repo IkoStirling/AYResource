@@ -7,10 +7,10 @@
 //   - createHandle goes through ResourceManager::_loadInternal (deps apply)
 
 #include "AYResource.h"
-#include "AYLooseDependency.h"
-#include "AYMesh.h"
-#include "AYMaterial.h"
-#include "AYTexture.h"
+#include "AYResource/LooseDependency.h"
+#include "AYResource/assetsImpl/Mesh.h"
+#include "AYResource/assetsImpl/Material.h"
+#include "AYResource/assetsImpl/Texture.h"
 #include "AYTest.h"
 #include "AYStorage/IStorageDatabase.h"
 

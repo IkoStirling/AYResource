@@ -1,5 +1,5 @@
-#include "Converter\MaterialConverter.h"
-#include "AYVirtualAssetPath.h"
+#include "AYResource/Converter/MaterialConverter.h"
+#include "AYResource/VirtualAssetPath.h"
 #include "AYIO/File.h"
 #include <AYSerializer.h>
 #include <AYStorage/Guid.h>

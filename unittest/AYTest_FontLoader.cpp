@@ -1,7 +1,7 @@
 #include "AYResource.h"
-#include "interface/assetsDefs/IAYFontAsset.h"
-#include "assetsImpl/AYFontAsset.h"
-#include "Loader/FontLoader.h"
+#include "AYResource/assetsDefs/IFontAsset.h"
+#include "AYResource/assetsImpl/FontAsset.h"
+#include "AYResource/Loader/FontLoader.h"
 #include "AYTest.h"
 #include <fstream>
 #include <cstdio>

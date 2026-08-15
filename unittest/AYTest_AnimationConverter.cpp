@@ -9,10 +9,10 @@
 // 不能绕过 convertAll 手搓 Animation。
 
 #include "AYResource.h"
-#include "Converter/AnimationConverter.h"
-#include "Loader/AnimationLoader.h"
-#include "AYAnimation.h"
-#include "IAYAnimation.h"
+#include "AYResource/Converter/AnimationConverter.h"
+#include "AYResource/Loader/AnimationLoader.h"
+#include "AYResource/assetsImpl/Animation.h"
+#include "AYResource/assetsDefs/IAnimation.h"
 #include "AYTest.h"
 
 #include <cstring>

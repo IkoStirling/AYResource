@@ -1,5 +1,5 @@
-#include "Loader\SkeletonLoader.h"
-#include "IAYResourceLoader.h"
+#include "AYResource/Loader/SkeletonLoader.h"
+#include "AYResource/IResourceLoader.h"
 #include <cstring>
 
 namespace ayt::resource

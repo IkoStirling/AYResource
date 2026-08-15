@@ -1,5 +1,5 @@
-#include "Converter\TextureCompressor.h"
-#include "Converter\ITextureCompressor.h"
+#include "AYResource/Converter/TextureCompressor.h"
+
 #include <squish.h>
 #include <basisu/encoder/basisu_comp.h>
 #include <basisu/transcoder/basisu_transcoder.h>

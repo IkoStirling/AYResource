@@ -47,7 +47,7 @@ Bind:     RenderAssetBridge → GPU                                      ✅ 有
 **证据路径**：
 
 - `AYRuntime/AYRenderer/src/detail/RenderResourceManager.cpp`（`loadMesh` / `loadMaterial` / `loadTexture` → `ResourceRegistry::loadByPath`）
-- `AYRuntime/AYResource/include/AYResourceManager.h`
+- `AYRuntime/AYResource/include/AYResource/ResourceManager.h`
 
 **验收**：渲染路径加载的 mesh/material/texture 出现在 `ResourceManager` 缓存中；热更 / unload 能触及同一份 L2。
 
@@ -129,7 +129,7 @@ Bind:     RenderAssetBridge → GPU                                      ✅ 有
 
 - 明确谁持有 L2 `shared_ptr`、谁持有 L3 handle
 - unload / trim 时的跨模块通知约定
-- 文档化「游戏代码只 include `interface/assetsDefs/IAY*.h`」的强制边界（CR / 测试已有部分）
+- 文档化「游戏代码只 include `interface/AYResource/assetsDefs/I*.h`」的强制边界（CR / 测试已有部分）
 
 **落地**：
 

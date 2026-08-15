@@ -1,7 +1,7 @@
 #include "AYResource.h"
-#include "interface/assetsDefs/IAYVideo.h"
-#include "assetsImpl/AYVideo.h"
-#include "Loader/VideoLoader.h"
+#include "AYResource/assetsDefs/IVideo.h"
+#include "AYResource/assetsImpl/Video.h"
+#include "AYResource/Loader/VideoLoader.h"
 #include "AYTest.h"
 #include <fstream>
 #include <cstdio>

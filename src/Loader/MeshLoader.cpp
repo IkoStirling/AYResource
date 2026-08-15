@@ -1,6 +1,6 @@
-#include "Loader\MeshLoader.h"
-#include "IAYResourceLoader.h"
-#include "AYMesh.h"
+#include "AYResource/Loader/MeshLoader.h"
+#include "AYResource/IResourceLoader.h"
+#include "AYResource/assetsImpl/Mesh.h"
 #include <AYMath/MathTypes.h>
 #include <AYMath/MathUtils.h>
 #include <AYIO/File.h>

@@ -8,7 +8,7 @@
 //   - SKIN chunk round-trip 与 attributeMask 解耦
 
 #include "AYResource.h"
-#include "AYMesh.h"
+#include "AYResource/assetsImpl/Mesh.h"
 #include "AYTest.h"
 
 #include <cstring>

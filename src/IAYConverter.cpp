@@ -1,9 +1,9 @@
-#include "IAYConverter.h"
-#include "Converter\FBXConverter.h"
-#include "Converter\GLTFConverter.h"
-#include "Converter\TextureConverter.h"
-#include "Converter\TilemapConverter.h"
-#include "Converter\AudioConverter.h"
+#include "AYResource/IConverter.h"
+#include "AYResource/Converter/FBXConverter.h"
+#include "AYResource/Converter/GLTFConverter.h"
+#include "AYResource/Converter/TextureConverter.h"
+#include "AYResource/Converter/TilemapConverter.h"
+#include "AYResource/Converter/AudioConverter.h"
 #include <cstdlib>
 #include <cstring>
 #include <sstream>

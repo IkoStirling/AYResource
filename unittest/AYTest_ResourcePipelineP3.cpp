@@ -2,7 +2,7 @@
 
 #include "AYResource.h"
 #include "AYMockResource.h"
-#include "AYResourceCache.h"
+#include "AYResource/ResourceCache.h"
 #include "AYTest.h"
 #include "AYStorage/IStorageDatabase.h"
 

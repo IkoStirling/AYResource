@@ -10,11 +10,11 @@ This document captures deferred items that surfaced during Phase 0 R-01 / RD-02 
 - A submesh in an FBX/glTF input whose vertices do not start at index 0 will draw with the wrong vertex range after conversion.
 
 **Root cause:**
-- `AYIntermediateAsset.h::SubmeshData` has 4 fields:
+- `AYResource/IntermediateAsset.h::SubmeshData` has 4 fields:
   ```
   uint32_t startIndex, indexCount, vertexOffset, materialIndex;
   ```
-- `interface/assetsDefs/IAYMesh.h::IMesh::Submesh` has 3 fields:
+- `interface/AYResource/assetsDefs/IMesh.h::IMesh::Submesh` has 3 fields:
   ```
   UInt32 indexOffset, indexCount, materialIndex;
   ```
@@ -28,13 +28,13 @@ This document captures deferred items that surfaced during Phase 0 R-01 / RD-02 
 - Today every converter input happens to have `vertexOffset == 0` (cubes, spheres, single-skin meshes), so no test fails. But the moment R-02 / AN-01 partitions meshes (skin-LOD, partition into bone ranges), this will silently misbehave.
 
 **Where it lives:**
-- `D:\Projects\AYRuntime\AYResource\interface\assetsDefs\IAYMesh.h` (struct Submesh)
-- `D:\Projects\AYRuntime\AYResource\include\AYIntermediateAsset.h` (struct SubmeshData)
+- `D:\Projects\AYRuntime\AYResource\interface\AYResource\assetsDefs\IMesh.h` (struct Submesh)
+- `D:\Projects\AYRuntime\AYResource\include\AYResource/IntermediateAsset.h` (struct SubmeshData)
 - `D:\Projects\AYRuntime\AYResource\src\Converter\MeshConverter.cpp` (lines mapping fields)
 
 **Fix path:**
 1. Add `UInt32 vertexOffset` to `IMesh::Submesh`.
-2. Update `IAYMesh.h::AttributeInfo` consumers and any layout-sensitive code in AYRenderer (none yet — RenderAssetBridge does not consume Submesh today).
+2. Update `AYResource/assetsDefs/IMesh.h::AttributeInfo` consumers and any layout-sensitive code in AYRenderer (none yet — RenderAssetBridge does not consume Submesh today).
 3. Update `Mesh::saveToBinary` / `loadFromBinary` SUBM chunk:
    - bump chunk size by 4 bytes per submesh (16 instead of 12)
    - already uses `sizeof(Submesh)`, no manual offsets
@@ -57,7 +57,7 @@ This document captures deferred items that surfaced during Phase 0 R-01 / RD-02 
 - If anyone later adds content hashing, chunk dedup, compression on the chunk, or wires a debug overlay that hex-dumps the chunk, the padding bytes will be observable noise.
 
 **Where it lives:**
-- `D:\Projects\AYRuntime\AYResource\interface\assetsDefs\IAYMesh.h` (struct Submesh)
+- `D:\Projects\AYRuntime\AYResource\interface\AYResource\assetsDefs\IMesh.h` (struct Submesh)
 
 **Fix path:**
 - Either:
@@ -76,7 +76,7 @@ This document captures deferred items that surfaced during Phase 0 R-01 / RD-02 
 - If a future task uses these by accident (e.g. someone calls `_setForTestVertexLayout` from a runtime path), the Mesh will be in a half-loaded state — `hasBounds() == false` / `_hasSkinWeights` may be inconsistent with `_attributeMask` / `_vertexData`.
 
 **Where it lives:**
-- `D:\Projects\AYRuntime\AYResource\include\assetsImpl\AYMesh.h` (public test setters, lines ~143-149)
+- `D:\Projects\AYRuntime\AYResource\include\AYResource/assetsImpl/Mesh.h` (public test setters, lines ~143-149)
 - `D:\Projects\AYRuntime\AYResource\src\AssetsImpl\AYMesh.cpp` (their bodies)
 
 **Fix path:**

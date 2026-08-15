@@ -6,7 +6,7 @@
 //   - ResourceHandle::get() picks up the new L2 instance
 
 #include "AYResource.h"
-#include "AYMesh.h"
+#include "AYResource/assetsImpl/Mesh.h"
 #include "AYTest.h"
 #include "AYStorage/IStorageDatabase.h"
 

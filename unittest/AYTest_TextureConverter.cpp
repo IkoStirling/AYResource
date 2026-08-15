@@ -1,7 +1,7 @@
-#include "assetsImpl/AYTexture.h"
-#include "Loader/TextureLoader.h"
-#include "Converter/TextureConverter.h"
-#include "IAYConverter.h"
+#include "AYResource/assetsImpl/Texture.h"
+#include "AYResource/Loader/TextureLoader.h"
+#include "AYResource/Converter/TextureConverter.h"
+#include "AYResource/IConverter.h"
 #include "AYTest.h"
 #include <fstream>
 #include <cstdio>

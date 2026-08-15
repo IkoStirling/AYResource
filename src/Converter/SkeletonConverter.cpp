@@ -1,6 +1,6 @@
-#include "Converter\SkeletonConverter.h"
-#include "assetsImpl/AYSkeleton.h"
-#include "IAYSkeleton.h"
+#include "AYResource/Converter/SkeletonConverter.h"
+#include "AYResource/assetsImpl/Skeleton.h"
+#include "AYResource/assetsDefs/ISkeleton.h"
 #include "AYIO/File.h"
 #include <AYLog.h>
 #include <AYStorage/Guid.h>

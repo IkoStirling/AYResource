@@ -1,6 +1,6 @@
-#include "Converter\FontConverter.h"
-#include "Loader\FontLoader.h"
-#include "AYFontAsset.h"
+#include "AYResource/Converter/FontConverter.h"
+#include "AYResource/Loader/FontLoader.h"
+#include "AYResource/assetsImpl/FontAsset.h"
 #include <AYIO/File.h>
 #include <AYStorage/Guid.h>
 #include <AYLog.h>

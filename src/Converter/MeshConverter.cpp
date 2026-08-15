@@ -1,7 +1,7 @@
-#include "Converter\MeshConverter.h"
-#include "Loader\MeshLoader.h"
-#include "AYMesh.h"
-#include "IAYMesh.h"
+#include "AYResource/Converter/MeshConverter.h"
+#include "AYResource/Loader/MeshLoader.h"
+#include "AYResource/assetsImpl/Mesh.h"
+#include "AYResource/assetsDefs/IMesh.h"
 #include "AYIO/File.h"
 #include <AYStorage/Guid.h>
 #include <AYLog.h>

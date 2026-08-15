@@ -122,7 +122,7 @@ FileWatcher / mtime → HotReloadWatcher (debounce)
 
 | Piece | Location |
 |-------|----------|
-| Core API | `AYResource::cookShipPackage` (`AYCookShip.h`) |
+| Core API | `AYResource::cookShipPackage` (`AYResource/CookShip.h`) |
 | CLI | `AYTool/cook_tool` → `--assets <cooked> --out <ship>` |
 | Runtime | `ResourceManager::openDatabase("ship/resources.db")` |
 
@@ -132,7 +132,7 @@ Load order after `openDatabase`: **DB record → pak (`in_package`) → loose fi
 
 | Piece | Location |
 |-------|----------|
-| Core API | `AYResource::importAsset` / `importAssetBatch` (`AYImportJob.h`) |
+| Core API | `AYResource::importAsset` / `importAssetBatch` (`AYResource/ImportJob.h`) |
 | CLI | `AYTool/import_tool` → `--in <src> --out <assetsDir>` |
 | Editor | `ayt::editor::Importer::importFile` → thin wrapper (cache: `ayeditor_cache/assets\`) |
 
@@ -154,15 +154,15 @@ Full contract: [`ownership-contracts.md`](ownership-contracts.md).
 
 Consumers should include `AYResource.h` and link `AYResource`. The following are **PUBLIC**:
 
-- `AYResource.h`, `interface/**`, `interface/assetsDefs/**`
-- `include/AYResource*.h`, `include/AYAssetPath.h`, `include/AYAsyncLoader.h`, `include/AYHotReloadWatcher.h`, `include/AYLooseDependency.h`, `include/AYCookShip.h`, `include/AYImportJob.h`
+- `AYResource.h`, `interface/**`, `interface/AYResource/assetsDefs/**`
+- `include/AYResource*.h`, `include/AYResource/AssetPath.h`, `include/AYResource/AsyncLoader.h`, `include/AYResource/HotReloadWatcher.h`, `include/AYResource/LooseDependency.h`, `include/AYResource/CookShip.h`, `include/AYResource/ImportJob.h`
 
 The following are **PRIVATE** to the library and unit tests (not propagated to dependents):
 
-- `include/assetsImpl/**` — concrete asset classes (`Mesh`, `Material`, …)
-- `include/Loader/**`, `include/Converter/**` — loaders and offline converters
+- `include/AYResource/assetsImpl/**` — concrete asset classes (`Mesh`, `Material`, …)
+- `include/AYResource/Loader/**`, `include/Converter/**` — loaders and offline converters
 
-Legacy `.ayshader` / `ShaderLoader` / `ShaderConverter` remain for offline tooling only; they are **not** registered in `initializeLoaders()`. Prefer **not** to `#include "assetsImpl/..."` from engine code; use `interface/assetsDefs/I*.h` instead.
+Legacy `.ayshader` / `ShaderLoader` / `ShaderConverter` remain for offline tooling only; they are **not** registered in `initializeLoaders()`. Prefer **not** to `#include "assetsImpl/..."` from engine code; use `interface/AYResource/assetsDefs/I*.h` instead.
 
 Enforcement (P6): `AYTest_PublicApiSurface` scans `AYRuntime` production sources; exceptions live in [`private-include-allowlist.txt`](private-include-allowlist.txt).
 

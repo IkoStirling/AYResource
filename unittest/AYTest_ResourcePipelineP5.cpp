@@ -1,6 +1,6 @@
 // AYTest_ResourcePipelineP5.cpp — P5: importAsset orchestration (no Assimp required)
 
-#include "AYImportJob.h"
+#include "AYResource/ImportJob.h"
 #include "AYTest.h"
 
 #include <AYIO/File.h>

@@ -1,7 +1,7 @@
 #include "AYResource.h"
-#include "interface/assetsDefs/IAYAudio.h"
-#include "assetsImpl/AYAudio.h"
-#include "Loader/AudioLoader.h"
+#include "AYResource/assetsDefs/IAudio.h"
+#include "AYResource/assetsImpl/Audio.h"
+#include "AYResource/Loader/AudioLoader.h"
 #include "AYTest.h"
 #include <fstream>
 #include <cstdio>

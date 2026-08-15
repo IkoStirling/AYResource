@@ -1,7 +1,7 @@
 // AYTest_ResourcePipelineP6.cpp — P6: unload/trim do not notify; hot-reload does
 
 #include "AYResource.h"
-#include "AYMesh.h"
+#include "AYResource/assetsImpl/Mesh.h"
 #include "AYTest.h"
 #include "AYStorage/IStorageDatabase.h"
 

@@ -1,5 +1,5 @@
-#include "Converter/ShaderConverter.h"
-#include "assetsImpl/AYShader.h"
+#include "AYResource/Converter/ShaderConverter.h"
+#include "AYResource/assetsImpl/Shader.h"
 #include <AYIO/File.h>
 #include <AYIO/Path.h>
 #include <AYStorage/Guid.h>

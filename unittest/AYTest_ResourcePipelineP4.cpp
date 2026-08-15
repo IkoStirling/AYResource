@@ -1,8 +1,8 @@
 // AYTest_ResourcePipelineP4.cpp — P4: cookShipPackage → openDatabase → load from pak
 
 #include "AYResource.h"
-#include "AYCookShip.h"
-#include "AYMesh.h"
+#include "AYResource/CookShip.h"
+#include "AYResource/assetsImpl/Mesh.h"
 #include "AYTest.h"
 
 #include <AYIO/File.h>

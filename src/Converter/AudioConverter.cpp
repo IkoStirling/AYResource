@@ -1,6 +1,6 @@
-#include "Converter\AudioConverter.h"
-#include "Converter\AudioDecoder.h"
-#include "Loader\AudioLoader.h"
+#include "AYResource/Converter/AudioConverter.h"
+#include "AYResource/Converter/AudioDecoder.h"
+#include "AYResource/Loader/AudioLoader.h"
 #include <AYIO/File.h>
 #include <AYIO/Directory.h>
 #include <AYStorage/Guid.h>

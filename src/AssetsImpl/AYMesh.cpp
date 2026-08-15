@@ -1,4 +1,4 @@
-#include "AYMesh.h"
+#include "AYResource/assetsImpl/Mesh.h"
 #include "AYIO.h"
 #include "AYMath/MathTypes.h"
 #include "AYMath/MathUtils.h"

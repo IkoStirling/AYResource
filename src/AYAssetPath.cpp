@@ -1,4 +1,4 @@
-#include "AYAssetPath.h"
+#include "AYResource/AssetPath.h"
 
 #include <AYIO/Path.h>
 #include <cctype>

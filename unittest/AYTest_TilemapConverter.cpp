@@ -14,9 +14,9 @@
 //      makeTilemapVirtualPath spelling is exact.
 
 #include "AYResource.h"
-#include "assetsImpl/AYTilemapAsset.h"
-#include "Converter/TilemapConverter.h"
-#include "AYVirtualAssetPath.h"
+#include "AYResource/assetsImpl/TilemapAsset.h"
+#include "AYResource/Converter/TilemapConverter.h"
+#include "AYResource/VirtualAssetPath.h"
 #include "AYTest.h"
 
 #include <fstream>

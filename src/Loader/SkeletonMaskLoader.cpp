@@ -1,5 +1,5 @@
-#include "Loader\SkeletonMaskLoader.h"
-#include "IAYResourceLoader.h"
+#include "AYResource/Loader/SkeletonMaskLoader.h"
+#include "AYResource/IResourceLoader.h"
 #include <cstring>
 
 namespace ayt::resource

@@ -12,9 +12,9 @@
 // in line with AYTest_Skeleton.cpp.
 
 #include "AYResource.h"
-#include "interface/assetsDefs/IAYSkeletonMask.h"
-#include "assetsImpl/AYSkeletonMask.h"
-#include "Loader/SkeletonMaskLoader.h"
+#include "AYResource/assetsDefs/ISkeletonMask.h"
+#include "AYResource/assetsImpl/SkeletonMask.h"
+#include "AYResource/Loader/SkeletonMaskLoader.h"
 #include "AYTest.h"
 
 #include <fstream>

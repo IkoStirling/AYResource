@@ -57,7 +57,7 @@ Related docs:
 4. **Dependency-aware.** Material references its textures by path; loader resolves them lazily. No global scan at startup.
 5. **Loose file in dev, pak/DB in ship.** Same L2 interface either way.
 6. **Stable L1 versions.** Loaders accept N-1; converters emit current N. Disk format changes go through `Extension` four-cc chunks first.
-7. **Public API surface is narrow and stable.** Game / ECS / editor code includes `interface/assetsDefs/IAY*.h` only; concrete impls are private to this module.
+7. **Public API surface is narrow and stable.** Game / ECS / editor code includes `interface/AYResource/assetsDefs/I*.h` only; concrete impls are private to this module.
 
 ---
 
@@ -112,72 +112,72 @@ AYResource/
 │
 ├── interface/                   # PUBLIC: contracts only
 │   ├── IAYResource.h            # Base IResource
-│   ├── IAYResourceLoader.h      # Loader contract
-│   ├── IAYConverter.h           # Converter contract
+│   ├── AYResource/IResourceLoader.h      # Loader contract
+│   ├── AYResource/IConverter.h           # Converter contract
 │   └── assetsDefs/              # Per-asset L2 interfaces (PUBLIC)
-│       ├── IAYMesh.h
-│       ├── IAYSkeleton.h
-│       ├── IAYAnimation.h
-│       ├── IAYMaterial.h
-│       ├── IAYTexture.h
-│       ├── IAYAudio.h
-│       ├── IAYVideo.h
-│       ├── IAYFontAsset.h
-│       ├── IAYShader.h          # legacy; offline tooling only
-│       ├── IAYPhysics.h
-│       └── IAYScript.h
+│       ├── AYResource/assetsDefs/IMesh.h
+│       ├── AYResource/assetsDefs/ISkeleton.h
+│       ├── AYResource/assetsDefs/IAnimation.h
+│       ├── AYResource/assetsDefs/IMaterial.h
+│       ├── AYResource/assetsDefs/ITexture.h
+│       ├── AYResource/assetsDefs/IAudio.h
+│       ├── AYResource/assetsDefs/IVideo.h
+│       ├── AYResource/assetsDefs/IFontAsset.h
+│       ├── AYResource/assetsImpl/Shader.h          # legacy; offline tooling only
+│       ├── AYResource/assetsDefs/IPhysics.h
+│       └── AYResource/assetsImpl/Script.h
 │
 ├── include/                     # PUBLIC headers + PRIVATE impl
-│   ├── AYResourceManager.h      # PUBLIC: cache + async load
-│   ├── AYResourceCache.h        # PUBLIC: weak/strong cache
-│   ├── AYResourceHandle.h       # PUBLIC: ref-counted handle
-│   ├── AYResourceRegistry.h     # PUBLIC: loader routing
-│   ├── AYResourceBootstrap.h    # PUBLIC: initializeLoaders()
-│   ├── AYAsyncLoader.h          # PUBLIC: real async + progress + cancel
-│   ├── AYAssetPath.h            # PUBLIC: path resolver (dev/asset root)
-│   ├── AYHotReloadWatcher.h     # PUBLIC: file-watcher for hot-reload
-│   ├── AYLooseDependency.h      # PUBLIC: .aydep.json loose-side loader
-│   ├── AYIntermediateAsset.h    # PUBLIC-ish: shared between Conv + tests
+│   ├── AYResource/ResourceManager.h      # PUBLIC: cache + async load
+│   ├── AYResource/ResourceCache.h        # PUBLIC: weak/strong cache
+│   ├── AYResource/ResourceHandle.h       # PUBLIC: ref-counted handle
+│   ├── AYResource/ResourceRegistry.h     # PUBLIC: loader routing
+│   ├── AYResource/ResourceBootstrap.h    # PUBLIC: initializeLoaders()
+│   ├── AYResource/AsyncLoader.h          # PUBLIC: real async + progress + cancel
+│   ├── AYResource/AssetPath.h            # PUBLIC: path resolver (dev/asset root)
+│   ├── AYResource/HotReloadWatcher.h     # PUBLIC: file-watcher for hot-reload
+│   ├── AYResource/LooseDependency.h      # PUBLIC: .aydep.json loose-side loader
+│   ├── AYResource/IntermediateAsset.h    # PUBLIC-ish: shared between Conv + tests
 │   ├── assetsImpl/              # PRIVATE: concrete IResource classes
-│   │   ├── AYMesh.h / .cpp
-│   │   ├── AYSkeleton.h / .cpp
-│   │   ├── AYAnimation.h / .cpp
-│   │   ├── AYMaterial.h / .cpp
-│   │   ├── AYTexture.h / .cpp
-│   │   ├── AYAudio.h / .cpp
-│   │   ├── AYVideo.h / .cpp
-│   │   ├── AYFontAsset.h / .cpp
-│   │   ├── AYShader.h / .cpp
-│   │   ├── AYPhysics.h / .cpp
-│   │   └── AYScript.h / .cpp
+│   │   ├── AYResource/assetsImpl/Mesh.h / .cpp
+│   │   ├── AYResource/assetsImpl/Skeleton.h / .cpp
+│   │   ├── AYResource/assetsImpl/Animation.h / .cpp
+│   │   ├── AYResource/assetsImpl/Material.h / .cpp
+│   │   ├── AYResource/assetsImpl/Texture.h / .cpp
+│   │   ├── AYResource/assetsImpl/Audio.h / .cpp
+│   │   ├── AYResource/assetsImpl/Video.h / .cpp
+│   │   ├── AYResource/assetsImpl/FontAsset.h / .cpp
+│   │   ├── AYResource/assetsImpl/Shader.h / .cpp
+│   │   ├── AYResource/assetsImpl/Physics.h / .cpp
+│   │   └── AYResource/assetsImpl/Script.h / .cpp
 │   ├── Loader/                  # PRIVATE: per-format loaders
-│   │   ├── MeshLoader.h / .cpp
-│   │   ├── SkeletonLoader.h / .cpp
-│   │   ├── AnimationLoader.h / .cpp
-│   │   ├── MaterialLoader.h / .cpp
-│   │   ├── TextureLoader.h / .cpp
-│   │   ├── AudioLoader.h / .cpp
-│   │   ├── VideoLoader.h / .cpp
-│   │   ├── FontLoader.h / .cpp
-│   │   ├── ShaderLoader.h / .cpp       # legacy
-│   │   ├── ScriptLoader.h / .cpp
-│   │   ├── PhysicsLoader.h / .cpp
-│   │   └── MaterialFile.h / .cpp        # multi-material bundle helper
+│   │   ├── AYResource/Loader/MeshLoader.h / .cpp
+│   │   ├── AYResource/Loader/SkeletonLoader.h / .cpp
+│   │   ├── AYResource/Loader/AnimationLoader.h / .cpp
+│   │   ├── AYResource/Loader/MaterialLoader.h / .cpp
+│   │   ├── AYResource/Loader/TextureLoader.h / .cpp
+│   │   ├── AYResource/Loader/AudioLoader.h / .cpp
+│   │   ├── AYResource/Loader/VideoLoader.h / .cpp
+│   │   ├── AYResource/Loader/FontLoader.h / .cpp
+│   │   ├── AYResource/Loader/ShaderLoader.h / .cpp       # legacy
+│   │   ├── AYResource/Loader/ScriptLoader.h / .cpp
+│   │   ├── AYResource/Loader/PhysicsLoader.h / .cpp
+│   │   └── AYResource/Loader/MaterialFile.h / .cpp        # multi-material bundle helper
 │   └── Converter/               # PRIVATE: offline converters
-│       ├── FBXConverter.h / .cpp
-│       ├── FBXParser.h / .cpp
-│       ├── GLTFConverter.h / .cpp       # stub today
-│       ├── MeshConverter.h / .cpp
-│       ├── SkeletonConverter.h / .cpp
-│       ├── AnimationConverter.h / .cpp
-│       ├── MaterialConverter.h / .cpp
-│       ├── TextureConverter.h / .cpp
-│       ├── ITextureCompressor.h         # BC1/BC3/BC5/BC7 abstraction
-│       ├── TextureCompressor.h / .cpp   # factory
-│       ├── AudioConverter.h / .cpp
-│       ├── VideoConverter.h / .cpp
-│       ├── FontConverter.h / .cpp
-│       └── ShaderConverter.h / .cpp     # legacy
+│       ├── AYResource/Converter/AYResource/Converter/AYResource/Converter/FBXConverter.h / .cpp
+│       ├── AYResource/Converter/AYResource/Converter/AYResource/Converter/FBXParser.h / .cpp
+│       ├── AYResource/Converter/AYResource/Converter/AYResource/Converter/GLTFConverter.h / .cpp       # stub today
+│       ├── AYResource/Converter/AYResource/Converter/AYResource/Converter/MeshConverter.h / .cpp
+│       ├── AYResource/Converter/AYResource/Converter/AYResource/Converter/SkeletonConverter.h / .cpp
+│       ├── AYResource/Converter/AYResource/Converter/AYResource/Converter/AnimationConverter.h / .cpp
+│       ├── AYResource/Converter/AYResource/Converter/AYResource/Converter/MaterialConverter.h / .cpp
+│       ├── AYResource/Converter/AYResource/Converter/AYResource/Converter/TextureConverter.h / .cpp
+│       ├── AYResource/Converter/ITextureCompressor.h         # BC1/BC3/BC5/BC7 abstraction
+│       ├── AYResource/Converter/AYResource/Converter/AYResource/Converter/TextureCompressor.h / .cpp   # factory
+│       ├── AYResource/Converter/AYResource/Converter/AYResource/Converter/AudioConverter.h / .cpp
+│       ├── AYResource/Converter/AYResource/Converter/AYResource/Converter/VideoConverter.h / .cpp
+│       ├── AYResource/Converter/AYResource/Converter/AYResource/Converter/FontConverter.h / .cpp
+│       └── AYResource/Converter/AYResource/Converter/AYResource/Converter/ShaderConverter.h / .cpp     # legacy
 │
 ├── src/                         # Implementations of public include/*
 │   ├── AYResourceManager.cpp
@@ -188,8 +188,8 @@ AYResource/
 │   ├── AYHotReloadWatcher.cpp
 │   ├── AYLooseDependency.cpp
 │   ├── IAYConverter.cpp                 # factory + shared logic
-│   ├── AssetsImpl/                      # mirrors include/assetsImpl/
-│   ├── Loader/                          # mirrors include/Loader/
+│   ├── AssetsImpl/                      # mirrors include/AYResource/assetsImpl/
+│   ├── Loader/                          # mirrors include/AYResource/Loader/
 │   └── Converter/                       # mirrors include/Converter/
 │
 ├── docs/
@@ -314,7 +314,7 @@ FBXParser → IntermediateAsset
 .aydep.json
 ```
 
-`IntermediateAsset` (in `include/AYIntermediateAsset.h`) is the format-neutral in-memory representation:
+`IntermediateAsset` (in `include/AYResource/IntermediateAsset.h`) is the format-neutral in-memory representation:
 
 ```cpp
 struct MeshData       { name, positions, normals, uvs, tangents, colors,
@@ -336,7 +336,7 @@ struct IntermediateAsset {
 
 ### 5.2 IConverter contract
 
-`interface/IAYConverter.h`:
+`interface/AYResource/IConverter.h`:
 
 ```cpp
 class IConverter {
@@ -480,7 +480,7 @@ CMake: `AY_RESOURCE_USE_SABA` (OFF by default). When OFF, `MMDConverter` is not 
 
 ### 6.1 Loader contract
 
-`interface/IAYResourceLoader.h`:
+`interface/AYResource/IResourceLoader.h`:
 
 ```cpp
 class IResourceLoader {
@@ -511,11 +511,11 @@ public:
 
 | Component | File | Responsibility |
 |-----------|------|---------------|
-| `AYResourceManager` | `include/AYResourceManager.h` | Public load/loadAsync/unload; resolves path → loader; owns cache |
-| `AYResourceCache`   | `include/AYResourceCache.h`   | Strong + weak cache; LRU; thread-safe (`std::mutex`) |
-| `AYResourceHandle<T>`| `include/AYResourceHandle.h`  | Ref-counted accessor; live handles LRU-protect the asset |
-| `AYAsyncLoader`     | `include/AYAsyncLoader.h`     | Real async (`std::promise`), progress callback, cancel |
-| `AYHotReloadWatcher`| `include/AYHotReloadWatcher.h`| Polls `mtime`; on change, invalidates handle, reloads on next access |
+| `AYResourceManager` | `include/AYResource/ResourceManager.h` | Public load/loadAsync/unload; resolves path → loader; owns cache |
+| `AYResourceCache`   | `include/AYResource/ResourceCache.h`   | Strong + weak cache; LRU; thread-safe (`std::mutex`) |
+| `AYResourceHandle<T>`| `include/AYResource/ResourceHandle.h`  | Ref-counted accessor; live handles LRU-protect the asset |
+| `AYAsyncLoader`     | `include/AYResource/AsyncLoader.h`     | Real async (`std::promise`), progress callback, cancel |
+| `AYHotReloadWatcher`| `include/AYResource/HotReloadWatcher.h`| Polls `mtime`; on change, invalidates handle, reloads on next access |
 
 Async semantics (current implementation):
 
@@ -566,11 +566,11 @@ Per `ENGINE-FOUNDATION-PLAN.md` §4.3:
 
 ## 7. L2 — Asset interfaces
 
-All L2 interfaces live in `interface/assetsDefs/IAY*.h` and are **the public contract**.
+All L2 interfaces live in `interface/AYResource/assetsDefs/I*.h` and are **the public contract**.
 
 ### 7.1 `IAYMesh`
 
-Source: `interface/assetsDefs/IAYMesh.h`
+Source: `interface/AYResource/assetsDefs/IMesh.h`
 
 ```cpp
 enum class MeshAttribute : UInt8 {
@@ -647,7 +647,7 @@ public:
 
 ### 7.2 `IAYSkeleton`
 
-Source: `interface/assetsDefs/IAYSkeleton.h`
+Source: `interface/AYResource/assetsDefs/ISkeleton.h`
 
 ```cpp
 struct Bone {
@@ -683,7 +683,7 @@ public:
 
 ### 7.3 `IAYAnimation`
 
-Source: `interface/assetsDefs/IAYAnimation.h`
+Source: `interface/AYResource/assetsDefs/IAnimation.h`
 
 ```cpp
 enum class AnimTrackType : UInt8 { Vector3, Quaternion, Float };
@@ -720,7 +720,7 @@ public:
 
 ### 7.4 `IAYMaterial`
 
-Source: `interface/assetsDefs/IAYMaterial.h`
+Source: `interface/AYResource/assetsDefs/IMaterial.h`
 
 ```cpp
 class IMaterial : public IResource {
@@ -749,7 +749,7 @@ public:
 
 ### 7.5 `IAYTexture`, `IAYAudio`, `IAYVideo`, `IAYFontAsset`, `IAYPhysics`, `IAYScript`, `IAYShader`
 
-Each is a thin, stable interface — see headers in `interface/assetsDefs/`. Two cross-cutting notes:
+Each is a thin, stable interface — see headers in `interface/AYResource/assetsDefs/`. Two cross-cutting notes:
 
 - `IAudio` / `.ayaudio`: **ship = PCM**; Dev loose WAV/MP3/OGG decode policy locked in §4.2.1 (and `AYAudio/design.md` §2.3). Older “Format enum pick compressed at runtime” notes are superseded for v1.
 - `IAYShader` is **legacy**; runtime uses `AYShader::ShaderResourcePool` directly with Phoskia source.
@@ -765,25 +765,25 @@ From `runtime-conventions.md` §8 + `ENGINE-FOUNDATION-PLAN.md` §4.1.
 ```
 AYResource.h
 interface/**
-interface/assetsDefs/**
+interface/AYResource/assetsDefs/**
 include/AYResource*.h
-include/AYAssetPath.h
-include/AYAsyncLoader.h
-include/AYHotReloadWatcher.h
-include/AYLooseDependency.h
+include/AYResource/AssetPath.h
+include/AYResource/AsyncLoader.h
+include/AYResource/HotReloadWatcher.h
+include/AYResource/LooseDependency.h
 ```
 
-Game / ECS / editor code includes `interface/assetsDefs/IAY*.h` only. It links `AYResource` and calls `AYResourceManager::load<T>` / `loadAsync<T>` / `AYResourceHandle<T>`.
+Game / ECS / editor code includes `interface/AYResource/assetsDefs/I*.h` only. It links `AYResource` and calls `AYResourceManager::load<T>` / `loadAsync<T>` / `AYResourceHandle<T>`.
 
 ### 8.2 PRIVATE — this module + tests only
 
 ```
-include/assetsImpl/**   — concrete IResource classes (AYMesh, AYMaterial, …)
-include/Loader/**       — per-format loaders
+include/AYResource/assetsImpl/**   — concrete IResource classes (AYMesh, AYMaterial, …)
+include/AYResource/Loader/**       — per-format loaders
 include/Converter/**    — offline converters
 ```
 
-A PR that exposes `assetsImpl/AYMesh.h` to another module **fails review**.
+A PR that exposes `AYResource/assetsImpl/Mesh.h` to another module **fails review**.
 
 ### 8.3 Cross-module include / link rules
 
@@ -791,10 +791,10 @@ A PR that exposes `assetsImpl/AYMesh.h` to another module **fails review**.
 
 | Module | May include from AYResource | Must NOT include |
 |--------|----------------------------|------------------|
-| `AYEntity` (ECS) | `interface/assetsDefs/IAY*.h` | `include/assetsImpl/*`, `include/Loader/*`, `include/Converter/*` |
+| `AYEntity` (ECS) | `interface/AYResource/assetsDefs/I*.h` | `include/AYResource/assetsImpl/*`, `include/AYResource/Loader/*`, `include/Converter/*` |
 | `AYRenderer` | `IAY*` (+ `assetsImpl` only inside `src/detail/` if cast needed) | n/a (owns L3 bridge) |
-| `AYAnimation` | `interface/assetsDefs/IAYMesh.h`, `IAYSkeleton.h`, `IAYAnimation.h` | `assetsImpl/*`, anything bgfx |
-| `AYEditor` | `interface/**`, `IAYConverter.h` / `AYImportJob.h`, `AYResourceBootstrap.h` | `include/Loader/*`, `assetsImpl/*` |
+| `AYAnimation` | `interface/AYResource/assetsDefs/IAnimation.h` | `assetsImpl/*`, anything bgfx |
+| `AYEditor` | `interface/**`, `AYResource/IConverter.h` / `AYResource/ImportJob.h`, `AYResource/ResourceBootstrap.h` | `include/AYResource/Loader/*`, `assetsImpl/*` |
 
 Known transitional exceptions: [`docs/private-include-allowlist.txt`](docs/private-include-allowlist.txt).
 
