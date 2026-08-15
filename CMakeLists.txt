@@ -75,6 +75,7 @@ target_link_libraries(${MODULE_NAME}
         AYIO
         AYStorage
         AYTask
+        AYEventSystem
     PRIVATE
         AYLog
         assimp::assimp

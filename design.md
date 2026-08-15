@@ -36,6 +36,8 @@ Related docs:
 
 `AYResource` owns **L1 content** (`.ay*` files on disk + offline converters) and **L2 runtime assets** (CPU-decoded `IResource` objects, cached, dependency-aware). It is the bridge between offline authoring tools (FBX / glTF / PNG / …) and the runtime engine.
 
+**EventBus:** `AsyncLoader` posts `ResourceLoadCompleteEvent` / `ResourceLoadFailedEvent` when an async load finishes (see `AYRuntime/AYEventSystem/README.md`). Sync `_loadInternal` paths do not post.
+
 ### 1.2 Non-goals (enforced in code review)
 
 | AYResource does NOT | Owner instead |

@@ -4,10 +4,47 @@
 #include "aytask/ITaskScheduler.h"
 #include "aytask/LambdaTask.h"
 
+#include <ayevent/EventBus.h>
+#include <ayevent/Events/ResourceEvents.h>
+
+#include <functional>
 #include <utility>
 
 namespace ayt::resource
 {
+
+namespace {
+
+uint64_t pathHandle(const std::string& path)
+{
+    return static_cast<uint64_t>(std::hash<std::string>{}(path));
+}
+
+void postLoadOutcome(const std::string& path,
+                     const std::shared_ptr<IResource>& resource,
+                     bool cancelled)
+{
+    auto& bus = ayt::event::EventBus::instance();
+    const uint64_t handle = pathHandle(path);
+    if (resource) {
+        bus.post(ayt::event::ResourceLoadCompleteEvent{
+            handle,
+            /*refCount=*/1,
+            /*ok=*/true});
+        return;
+    }
+    // Cancel or load failure — Failed + Complete(ok=false) so dependents
+    // that only listen to Complete still see a terminal signal.
+    bus.post(ayt::event::ResourceLoadFailedEvent{
+        handle,
+        cancelled ? 1 : 2});
+    bus.post(ayt::event::ResourceLoadCompleteEvent{
+        handle,
+        /*refCount=*/0,
+        /*ok=*/false});
+}
+
+} // namespace
 
 AsyncLoader::AsyncLoader()
     : AsyncLoader(ayt::task::ITaskScheduler::defaultScheduler())
@@ -46,6 +83,7 @@ std::shared_future<std::shared_ptr<IResource>> AsyncLoader::loadAsync(
     // cooperative via LoadTask::cancelled only.
     ayt::task::ITask* ayTask = ayt::task::makeTask([load]() {
         auto complete = [&](std::shared_ptr<IResource> resource, float progress) {
+            const bool cancelled = load->cancelled.load(std::memory_order_acquire);
             try {
                 load->promise.set_value(resource);
             } catch (const std::future_error&) {
@@ -54,6 +92,7 @@ std::shared_future<std::shared_ptr<IResource>> AsyncLoader::loadAsync(
             if (load->onProgress) {
                 load->onProgress(load->path, progress);
             }
+            postLoadOutcome(load->path, resource, cancelled);
             if (load->callback) {
                 load->callback(std::move(resource));
             }
