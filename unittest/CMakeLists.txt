@@ -61,5 +61,4 @@ target_compile_definitions(${MODULE_NAME} PRIVATE
     AY_RUNTIME_ROOT="${_ay_runtime_root}"
 )
 
-ay_configure_test_tmpdir(${MODULE_NAME})
-add_test(NAME ${MODULE_NAME} COMMAND ${MODULE_NAME})
+ay_add_test(${MODULE_NAME})
