@@ -131,11 +131,13 @@ TEST_SUITE(AudioDecoderTests)
         CHECK(res != nullptr);
         auto* audio = dynamic_cast<Audio*>(res.get());
         CHECK(audio != nullptr);
-        CHECK(audio->getSampleRate() == 44100);
+        CHECK(audio->getSampleRate() == kEngineAudioSampleRate);
         CHECK(audio->getChannels() == 2);
         CHECK(audio->getBitsPerSample() == 16);
-        CHECK(audio->getSampleCount() == 64);
-        CHECK(audio->getDataSize() == 64 * 2 * 2);
+        const UInt64 expectedFrames =
+            (64u * kEngineAudioSampleRate + 44100u / 2u) / 44100u;
+        CHECK(audio->getSampleCount() == expectedFrames);
+        CHECK(audio->getDataSize() == expectedFrames * 2 * 2);
     }
 
     TEST_CASE(IConverterCreateForLooseAudio) {
