@@ -35,6 +35,34 @@ TEST_CASE(texture_stem_and_path_contract)
           std::string("textures/tex_skin_d.aytex"));
 }
 
+TEST_CASE(texture_path_extension_overload_contract)
+{
+    // Dev raw-reference mode: extensions beyond ".aytex".
+    CHECK(makeTextureVirtualPath("tex_skin", "_d", ".png") ==
+          std::string("textures/tex_skin_d.png"));
+    CHECK(makeTextureVirtualPath("skin", "_d", ".jpg") ==
+          std::string("textures/skin_d.jpg"));
+    CHECK(makeTextureVirtualPathFromSource("tex/skin.png", "_d", ".png") ==
+          std::string("textures/tex_skin_d.png"));
+}
+
+TEST_CASE(texture_dev_extension_of_contract)
+{
+    // Authoring formats keep their source extension (lowercased)...
+    CHECK(textureDevExtensionOf("tex/skin.PNG") == ".png");
+    CHECK(textureDevExtensionOf("photo.JPG") == ".jpg");
+    CHECK(textureDevExtensionOf("logo.jpeg") == ".jpeg");
+    CHECK(textureDevExtensionOf("scene.bmp") == ".bmp");
+    // ...but container/passthrough formats always resolve to .aytex so
+    // parser references and converter output can never drift apart.
+    CHECK(textureDevExtensionOf("tex/skin.dds") == ".aytex");
+    CHECK(textureDevExtensionOf("tex/skin.DDS") == ".aytex");
+    CHECK(textureDevExtensionOf("tex/skin.aytex") == ".aytex");
+    // No extension / trailing dot → .aytex fallback.
+    CHECK(textureDevExtensionOf("tex/skin") == ".aytex");
+    CHECK(textureDevExtensionOf("tex/skin.") == ".aytex");
+}
+
 TEST_CASE(material_convertAll_emits_one_file_per_material)
 {
     namespace fs = std::filesystem;

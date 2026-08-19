@@ -47,10 +47,18 @@ public:
     void setTextureUsageSuffix(const std::string& suffix) { _textureUsageSuffix = suffix; }
     const std::string& getTextureUsageSuffix() const { return _textureUsageSuffix; }
 
+    /// Dev raw-reference mode (ImportOptions.cookTextures=false): texture
+    /// params reference the source extension (textures/foo_d.png) instead
+    /// of .aytex. dds/aytex sources are excluded — they still flow through
+    /// the passthrough → .aytex cook path (zero decode).
+    void setPreserveSourceExtension(bool preserve) { _preserveSourceExtension = preserve; }
+    bool getPreserveSourceExtension() const { return _preserveSourceExtension; }
+
 private:
     std::string _sourcePath;
     std::string _assetBaseName;
     std::string _textureUsageSuffix = "_d";
+    bool _preserveSourceExtension = false;
     IConverter::LoadOption _loadOption = IConverter::LoadOption::Full;  // 默认 Full 模式
     bool _separateModels = true;  // 默认分离，每个 aiMesh 一个 MeshData
     std::unique_ptr<IntermediateAsset> _result;

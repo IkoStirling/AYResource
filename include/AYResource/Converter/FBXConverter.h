@@ -34,6 +34,13 @@ public:
     void setLoadOption(IConverter::LoadOption option) override { loadOption = option; }
     IConverter::LoadOption getLoadOption() const { return loadOption; }
 
+    // Dev raw-reference mode (ImportOptions.cookTextures=false): texture
+    // params reference the source extension and TextureConverter copies
+    // sources verbatim (rawCopy); release mode cooks BC7+mips → .aytex.
+    // Default true keeps direct FBXConverter::convert() callers unchanged.
+    void setCookTextures(bool cook) override { _cookTextures = cook; }
+    bool getCookTextures() const { return _cookTextures; }
+
     /// @brief 设置是否按 FBX 节点分离模型
     /// @param separate true=每个节点一个MeshData，false=合并所有到一个MeshData
     void setSeparateModels(bool separate) { separateModels = separate; }
@@ -44,6 +51,7 @@ private:
     std::string outputDir;
     IConverter::LoadOption loadOption = IConverter::LoadOption::Full;  // 默认 Full 模式
     bool separateModels = true;  // 默认分离，每个 aiMesh 一个 MeshData
+    bool _cookTextures = true;   // 默认 cook（旧行为）；importAsset dev 模式传 false
 
     // 子转换器
     MeshConverter meshConverter;

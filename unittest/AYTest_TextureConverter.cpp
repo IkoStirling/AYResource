@@ -3,6 +3,7 @@
 #include "AYResource/Converter/TextureConverter.h"
 #include "AYResource/IConverter.h"
 #include "AYTest.h"
+#include <AYIO/File.h>
 #include <fstream>
 #include <cstdio>
 #include <cstring>
@@ -175,6 +176,14 @@ TEST_SUITE(TextureConverterTests)
 
         auto conv6 = IConverter::create("unknown.xyz");
         CHECK(conv6 == nullptr);
+
+        auto conv7 = IConverter::create("photo.jpg");
+        CHECK(conv7 != nullptr);
+        CHECK(strcmp(conv7->getSourceType(), "Texture") == 0);
+
+        auto conv8 = IConverter::create("photo.jpeg");
+        CHECK(conv8 != nullptr);
+        CHECK(strcmp(conv8->getSourceType(), "Texture") == 0);
     }
 
     TEST_CASE(ConvertInvalidPath) {
@@ -190,6 +199,112 @@ TEST_SUITE(TextureConverterTests)
         CHECK(result.resources.size() == 0);
     }
 
+    TEST_CASE(RawCopyFromPathCopiesSourceBytes) {
+        const std::string root = "ayres_tex_raw_tmp";
+        std::error_code ec;
+        std::filesystem::remove_all(root, ec);
+        std::filesystem::create_directories(root + "/src");
+        std::filesystem::create_directories(root + "/out");
+
+        // rawCopy never decodes — any bytes with a png extension suffice.
+        const std::vector<UInt8> payload = {
+            0x89, 0x50, 0x4E, 0x47, 0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE};
+        {
+            std::ofstream out(root + "/src/tex.png", std::ios::binary);
+            out.write(reinterpret_cast<const char*>(payload.data()),
+                      static_cast<std::streamsize>(payload.size()));
+        }
+
+        TextureConverter conv;
+        conv.setOutputDir(root + "/out");
+        conv.setRawCopy(true);
+        auto res = conv.convertFromPath("tex.png", "tex", root + "/src");
+
+        CHECK(res.resources.size() == 1u);
+        CHECK(res.resources[0].path == "textures/tex_d.png");
+        CHECK(res.resources[0].type == "Texture");
+        CHECK(res.resources[0].size == payload.size());
+
+        const std::string outPath = root + "/out/textures/tex_d.png";
+        CHECK(ayt::io::File::exists(outPath));
+        std::vector<UInt8> onDisk;
+        {
+            std::ifstream in(outPath, std::ios::binary);
+            in.seekg(0, std::ios::end);
+            const auto n = in.tellg();
+            in.seekg(0, std::ios::beg);
+            onDisk.resize(static_cast<size_t>(n));
+            in.read(reinterpret_cast<char*>(onDisk.data()), n);
+        }
+        CHECK(onDisk == payload);
+
+        // Second call with same source size → SKIP path, bytes unchanged.
+        auto res2 = conv.convertFromPath("tex.png", "tex", root + "/src");
+        CHECK(res2.resources.size() == 1u);
+        CHECK(res2.resources[0].path == "textures/tex_d.png");
+        std::vector<UInt8> onDisk2;
+        {
+            std::ifstream in(outPath, std::ios::binary);
+            in.seekg(0, std::ios::end);
+            const auto n = in.tellg();
+            in.seekg(0, std::ios::beg);
+            onDisk2.resize(static_cast<size_t>(n));
+            in.read(reinterpret_cast<char*>(onDisk2.data()), n);
+        }
+        CHECK(onDisk2 == payload);
+
+        std::filesystem::remove_all(root, ec);
+    }
+
+    TEST_CASE(RawCopyOffKeepsDecodePath) {
+        const std::string root = "ayres_tex_raw_off_tmp";
+        std::error_code ec;
+        std::filesystem::remove_all(root, ec);
+        std::filesystem::create_directories(root + "/src");
+        std::filesystem::create_directories(root + "/out");
+        {
+            std::ofstream out(root + "/src/tex.png", std::ios::binary);
+            const char junk[] = {0x00, 0x01, 0x02, 0x03};
+            out.write(junk, sizeof(junk));
+        }
+
+        // Default (rawCopy=false): png must decode — junk bytes fail, and
+        // crucially nothing is copied (no textures/tex_d.png appears).
+        TextureConverter conv;
+        conv.setOutputDir(root + "/out");
+        auto res = conv.convertFromPath("tex.png", "tex", root + "/src");
+        CHECK(res.resources.size() == 0u);
+        CHECK(!ayt::io::File::exists(root + "/out/textures/tex_d.png"));
+
+        std::filesystem::remove_all(root, ec);
+    }
+
+    TEST_CASE(RawCopyExcludesDdsSource) {
+        const std::string root = "ayres_tex_raw_dds_tmp";
+        std::error_code ec;
+        std::filesystem::remove_all(root, ec);
+        std::filesystem::create_directories(root + "/src");
+        std::filesystem::create_directories(root + "/out");
+        {
+            std::ofstream out(root + "/src/tex.dds", std::ios::binary);
+            const char junk[] = {0x44, 0x44, 0x53, 0x20, 0x00, 0x00, 0x00, 0x00};
+            out.write(junk, sizeof(junk));
+        }
+
+        // dds is excluded from rawCopy: passthrough (default on) still
+        // produces an .aytex so the FBXParser reference stays consistent.
+        TextureConverter conv;
+        conv.setOutputDir(root + "/out");
+        conv.setRawCopy(true);
+        auto res = conv.convertFromPath("tex.dds", "tex", root + "/src");
+
+        CHECK(res.resources.size() == 1u);
+        CHECK(res.resources[0].path == "textures/tex_d.aytex");
+        CHECK(ayt::io::File::exists(root + "/out/textures/tex_d.aytex"));
+
+        std::filesystem::remove_all(root, ec);
+    }
+
 TEST_SUITE_END
 
 TEST_SUITE(TextureLoaderTests)
@@ -200,7 +315,13 @@ TEST_SUITE(TextureLoaderTests)
         CHECK(loader.canLoad("textures/diffuse_d.aytex") == true);
         CHECK(loader.canLoad("path/to/normal_n.aytex") == true);
         CHECK(loader.canLoad("texture.aymesh") == false);
+        // Dev raw-reference mode (AY_TEXTURE_LOOSE_FORMATS) also owns
+        // authoring formats; gated off, canLoad must stay strict.
+#if defined(AY_TEXTURE_LOOSE_FORMATS)
+        CHECK(loader.canLoad("texture.png") == true);
+#else
         CHECK(loader.canLoad("texture.png") == false);
+#endif
     }
 
     TEST_CASE(GetResourceType) {

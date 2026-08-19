@@ -60,7 +60,8 @@ TEST_CASE(extension_helpers_match_editor_contract)
     CHECK(isImportSupportedExtension("a.fbx"));
     CHECK(isImportSupportedExtension("a.glb"));
     CHECK(isImportSupportedExtension("a.png"));
-    CHECK(!isImportSupportedExtension("a.jpg"));
+    CHECK(isImportSupportedExtension("a.jpg"));
+    CHECK(isImportSupportedExtension("a.jpeg"));
 }
 
 TEST_CASE(import_empty_and_missing_and_unsupported)
@@ -78,7 +79,7 @@ TEST_CASE(import_empty_and_missing_and_unsupported)
     CHECK(missing.error.find("does not exist") != std::string::npos);
 
     cleanup();
-    const std::string bad = kRoot + "/stub.jpg";
+    const std::string bad = kRoot + "/stub.tiff";  // jpg/jpeg now importable
     CHECK(writeText(bad, "fake"));
     opts.sourcePath = bad;
     opts.outputDir = kRoot + "/assets";
@@ -177,6 +178,62 @@ TEST_CASE(import_batch_reports_per_item)
     CHECK(br.results[0].ok);
     CHECK(br.results[0].usedCache);
     CHECK(!br.results[1].ok);
+    cleanup();
+}
+
+TEST_CASE(import_texture_mode_gates_cache_hit)
+{
+    // Hand-written sidecars with a recorded textureMode ("raw"|"cook") must
+    // be a deterministic cache miss when the request differs, while legacy
+    // sidecars (no field — old cooked caches) hit under both modes.
+    struct ModeCase {
+        const char* stem;
+        const char* modeField;   // nullptr = legacy (no field)
+        bool cookRequested;
+        bool expectHit;
+    };
+    const ModeCase cases[] = {
+        {"hero_raw",   "\"textureMode\": \"raw\",",  false, true},
+        {"hero_raw",   "\"textureMode\": \"raw\",",  true,  false},
+        {"hero_cook",  "\"textureMode\": \"cook\",", true,  true},
+        {"hero_cook",  "\"textureMode\": \"cook\",", false, false},
+        {"hero_legacy", nullptr,                     false, true},
+        {"hero_legacy", nullptr,                     true,  true},
+    };
+
+    cleanup();
+    for (const ModeCase& c : cases) {
+        const std::string assets = kRoot + "/" + c.stem + "/assets";
+        const std::string src = kRoot + "/" + c.stem + "/" + c.stem + ".fbx";
+        CHECK(writeText(src, "not a real fbx — cache path must not convert"));
+        CHECK(writeText(assets + "/meshes/" + c.stem + ".aymesh", "m"));
+        CHECK(writeText(assets + "/skeletons/" + c.stem + ".ayskel", "s"));
+
+        std::string json = "{\n";
+        if (c.modeField != nullptr) {
+            json += "  " + std::string(c.modeField) + "\n";
+        }
+        json +=
+            "  \"resources\": [\n"
+            "    {\"path\": \"meshes/" + std::string(c.stem) +
+            ".aymesh\", \"type\": \"Mesh\", \"size\": 1},\n"
+            "    {\"path\": \"skeletons/" + std::string(c.stem) +
+            ".ayskel\", \"type\": \"Skeleton\", \"size\": 1}\n"
+            "  ],\n"
+            "  \"dependencies\": []\n"
+            "}\n";
+        CHECK(writeText(assets + "/" + c.stem + ".aydep.json", json));
+
+        ImportOptions opts;
+        opts.sourcePath = src;
+        opts.outputDir = assets;
+        opts.cookTextures = c.cookRequested;
+
+        ImportResult r = importAsset(opts);
+        // On miss the converter runs against "not a real fbx" and fails —
+        // usedCache is the invariant that matters here.
+        CHECK(r.usedCache == c.expectHit);
+    }
     cleanup();
 }
 

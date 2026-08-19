@@ -39,6 +39,16 @@ if(NOT DEFINED AY_AUDIO_LOOSE_FORMATS)
         "ON|OFF|CONFIG — allow Dev load of .wav/.mp3/.ogg without cook")
 endif()
 
+# Dev loose PNG/JPG/BMP/TGA texture loaders (dev raw-reference mode —
+# ImportOptions.cookTextures=false). Default ON for Debug/RelWithDebInfo;
+# OFF for Release. Gated so CookShip's extension-driven asset scan never
+# collects stray dev .png into release packs. Override:
+# -DAY_TEXTURE_LOOSE_FORMATS=ON|OFF
+if(NOT DEFINED AY_TEXTURE_LOOSE_FORMATS)
+    set(AY_TEXTURE_LOOSE_FORMATS "CONFIG" CACHE STRING
+        "ON|OFF|CONFIG — allow Dev load of raw .png/.jpg/.bmp/.tga textures")
+endif()
+
 add_library(${MODULE_NAME} STATIC ${SRC_FILES})
 
 target_include_directories(${MODULE_NAME}
@@ -66,6 +76,18 @@ elseif(AY_AUDIO_LOOSE_FORMATS STREQUAL "CONFIG")
     )
 else()
     message(FATAL_ERROR "AY_AUDIO_LOOSE_FORMATS must be ON, OFF, or CONFIG (got '${AY_AUDIO_LOOSE_FORMATS}')")
+endif()
+
+if(AY_TEXTURE_LOOSE_FORMATS STREQUAL "ON")
+    target_compile_definitions(${MODULE_NAME} PUBLIC AY_TEXTURE_LOOSE_FORMATS=1)
+elseif(AY_TEXTURE_LOOSE_FORMATS STREQUAL "OFF")
+    # Explicitly disabled in all configs.
+elseif(AY_TEXTURE_LOOSE_FORMATS STREQUAL "CONFIG")
+    target_compile_definitions(${MODULE_NAME} PUBLIC
+        $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:AY_TEXTURE_LOOSE_FORMATS=1>
+    )
+else()
+    message(FATAL_ERROR "AY_TEXTURE_LOOSE_FORMATS must be ON, OFF, or CONFIG (got '${AY_TEXTURE_LOOSE_FORMATS}')")
 endif()
 
 target_link_libraries(${MODULE_NAME}

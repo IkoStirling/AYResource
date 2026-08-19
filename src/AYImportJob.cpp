@@ -103,6 +103,17 @@ bool tryLoadCachedConversion(const ImportOptions& options,
         return false;
     }
 
+    // Dev/raw vs release/cook texture mode: a recorded mode that differs
+    // from the requested one invalidates the cache deterministically.
+    // Sidecars without the field (legacy) are accepted under both modes —
+    // old cooked .aytex caches keep working in dev.
+    if (!out.textureMode.empty()) {
+        const std::string wantMode = options.cookTextures ? "cook" : "raw";
+        if (out.textureMode != wantMode) {
+            return false;
+        }
+    }
+
     const std::string ext = importExtensionOf(options.sourcePath);
     if (options.requireCharacterAssets && isSceneExtension(ext)) {
         bool hasMesh = false;
@@ -153,6 +164,7 @@ bool isImportSupportedExtension(const std::string& sourcePath)
         || ext == "gltf" || ext == "glb"
         || ext == "png" || ext == "bmp"
         || ext == "tga" || ext == "dds"
+        || ext == "jpg" || ext == "jpeg"
         || ext == "wav" || ext == "mp3" || ext == "ogg";
 }
 
@@ -182,7 +194,7 @@ ImportResult importAsset(const ImportOptions& options,
         const std::string ext = importExtensionOf(options.sourcePath);
         r.error =
             "unsupported source extension '" + ext +
-            "'. Supported: .fbx .gltf .glb .png .bmp .tga .dds .wav .mp3 .ogg";
+            "'. Supported: .fbx .gltf .glb .png .bmp .tga .dds .jpg .jpeg .wav .mp3 .ogg";
         report(progress, ImportStage::Failed, 1.0f, r.error);
         return r;
     }
@@ -242,6 +254,7 @@ ImportResult importAsset(const ImportOptions& options,
     try {
         converter->setOutputDir(options.outputDir);
         converter->setLoadOption(options.loadOption);
+        converter->setCookTextures(options.cookTextures);
         r.conversion = converter->convert();
     } catch (const std::exception& e) {
         r.error = std::string("converter threw: ") + e.what();
@@ -297,6 +310,7 @@ ImportBatchResult importAssetBatch(const ImportBatchOptions& options,
         one.loadOption = options.loadOption;
         one.force = options.force;
         one.requireCharacterAssets = options.requireCharacterAssets;
+        one.cookTextures = options.cookTextures;
 
         ImportProgressFn wrapped;
         if (progress) {

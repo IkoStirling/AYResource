@@ -3,12 +3,86 @@
 #include "AYMath/MathTypes.h"
 #include "AYMath/MathUtils.h"
 #include "AYIO/File.h"
+// Dev loose png/jpg/... decode. Declaration only — STB_IMAGE_IMPLEMENTATION
+// is defined once in Converter/TextureConverter.cpp (stb is a per-TU
+// header; including the header here links against that implementation).
+#include <stb_image.h>
 #define NOMINMAX
+#include <cctype>
 #include <cstring>
 #include <cstdio>
 
 namespace ayt::resource
 {
+
+namespace {
+
+std::string lowerExtensionOf(const std::string& path)
+{
+    const size_t dot = path.find_last_of('.');
+    if (dot == std::string::npos || dot + 1 >= path.size()) {
+        return {};
+    }
+    std::string ext = path.substr(dot);
+    for (char& c : ext) {
+        c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+    }
+    return ext;
+}
+
+#if defined(AY_TEXTURE_LOOSE_FORMATS)
+// Dev/editor authoring formats decodable by stb_image. Mirrors the
+// AY_AUDIO_LOOSE_FORMATS gating: cook pipeline owns .aytex; dev texture
+// references keep the source extension (.png/.jpg/...) and are decoded
+// here as single-level RGBA8 (the GPU upload path only consumes mip 0).
+bool isLooseTextureExtension(const std::string& ext)
+{
+    return ext == ".png" || ext == ".jpg" || ext == ".jpeg"
+        || ext == ".bmp" || ext == ".tga";
+}
+
+std::shared_ptr<Texture> loadLooseImage(const std::string& path)
+{
+    ayt::io::File file(path, ayt::io::File::Mode::BinaryRead);
+    if (!file.isOpen()) {
+        return nullptr;
+    }
+    const size_t fileSize = file.size();
+    if (fileSize == 0) {
+        return nullptr;
+    }
+    std::vector<UInt8> fileBytes(fileSize);
+    if (file.read(fileBytes.data(), fileSize) != fileSize) {
+        return nullptr;
+    }
+
+    int w = 0;
+    int h = 0;
+    int comp = 0;
+    unsigned char* pixels = stbi_load_from_memory(
+        fileBytes.data(), static_cast<int>(fileBytes.size()),
+        &w, &h, &comp, STBI_rgb_alpha);
+    if (pixels == nullptr || w <= 0 || h <= 0) {
+        return nullptr;
+    }
+
+    auto texture = std::make_shared<Texture>();
+    texture->_width  = static_cast<UInt32>(w);
+    texture->_height = static_cast<UInt32>(h);
+    texture->_format = TextureFormat::RGBA8;
+    texture->_mipmapCount = 1;
+    const UInt32 pixelBytes =
+        static_cast<UInt32>(w) * static_cast<UInt32>(h) * 4;
+    texture->setImageData(pixels, pixelBytes);
+    stbi_image_free(pixels);
+    texture->setMipmapLayout(std::vector<UInt32>{0},
+                             std::vector<UInt32>{pixelBytes});
+    texture->setLoaded(true);
+    return texture;
+}
+#endif
+
+} // namespace
 
 // ===== 常量 =====
 // ===== 常量 =====
@@ -276,17 +350,30 @@ void Texture::createCheckerboard(UInt32 width, UInt32 height, UInt32 checkSize) 
 // ===== TextureLoader =====
 
 bool TextureLoader::canLoad(const std::string& path) const {
-    if (path.size() < 6) {
-        return false;
+    if (path.size() >= 6 && path.compare(path.size() - 6, 6, EXTENSION) == 0) {
+        return true;
     }
-    return path.compare(path.size() - 6, 6, EXTENSION) == 0;
+#if defined(AY_TEXTURE_LOOSE_FORMATS)
+    return isLooseTextureExtension(lowerExtensionOf(path));
+#else
+    return false;
+#endif
 }
 
 std::shared_ptr<IResource> TextureLoader::load(const std::string& path) {
-    auto texture = std::make_shared<Texture>();
-    if (texture->load(path)) {
-        return texture;
+    const std::string ext = lowerExtensionOf(path);
+    if (ext == ".aytex") {
+        auto texture = std::make_shared<Texture>();
+        if (texture->load(path)) {
+            return texture;
+        }
+        return nullptr;
     }
+#if defined(AY_TEXTURE_LOOSE_FORMATS)
+    if (isLooseTextureExtension(ext)) {
+        return loadLooseImage(path);
+    }
+#endif
     return nullptr;
 }
 

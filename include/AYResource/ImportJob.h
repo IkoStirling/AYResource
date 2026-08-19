@@ -52,6 +52,13 @@ struct ImportOptions {
     bool force = false;                     ///< Skip .aydep.json cache reuse
     /// For .fbx/.gltf/.glb cache hits: require Mesh + Skeleton entries (Editor character path).
     bool requireCharacterAssets = true;
+    /// false (default, dev): textures are referenced raw — the source
+    /// png/jpg/… is copied into textures/ with its original extension and
+    /// .aymat points at it (TextureLoader decodes with stb at runtime).
+    /// true (release cook): full cook to .aytex (BC7 + mips). Mismatch
+    /// between the sidecar's textureMode and this flag invalidates the
+    /// cached .aydep.json (deterministic cache miss).
+    bool cookTextures = false;
 };
 
 struct ImportResult {
@@ -79,6 +86,7 @@ struct ImportBatchOptions {
     bool force = false;
     bool requireCharacterAssets = true;
     bool stopOnError = false;
+    bool cookTextures = false;              ///< see ImportOptions::cookTextures
 };
 
 struct ImportBatchResult {

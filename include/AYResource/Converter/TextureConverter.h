@@ -46,6 +46,17 @@ public:
     void setPassthrough(bool enable) { passthrough = enable; }
     bool getPassthrough() const { return passthrough; }
 
+    // ===== Dev raw-reference mode（ImportOptions.cookTextures=false）=====
+    // 开启后：png/jpg/bmp/tga 源文件原样拷贝到 textures/ 并保留原扩展名
+    // （如 textures/foo_d.png），.aymat 引用同扩展名路径，运行时由
+    // TextureLoader 的 stb 分支解码。dds/aytex 源仍走 passthrough → .aytex
+    // （零解码，且 .dds 不是运行时注册扩展）。
+    void setRawCopy(bool enable) { rawCopy = enable; }
+    bool getRawCopy() const { return rawCopy; }
+
+    // IConverter 开关传播：dev（false）→ rawCopy；发布（true）→ 关闭 rawCopy。
+    void setCookTextures(bool cook) override { rawCopy = !cook; }
+
     // ===== 用途后缀 =====
     void setUsageSuffix(const std::string& suffix) { usageSuffix = suffix; }
     const std::string& getUsageSuffix() const { return usageSuffix; }
@@ -71,6 +82,7 @@ private:
     TextureFormat outputFormat = TextureFormat::BC7;  // 默认 BC7 压缩（离线高质量）
     bool generateMipmaps = true;
     bool passthrough = true;  // 直接拷贝模式（跳过加载/解码/压缩）
+    bool rawCopy = false;     // dev raw-reference mode（见 setRawCopy）
     std::string usageSuffix = "_d";  // 默认 diffuse
     ayt::math::FGuid lastGuid;
 };

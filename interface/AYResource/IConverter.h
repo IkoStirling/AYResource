@@ -32,6 +32,13 @@ struct ConversionResult {
     std::vector<ConvertedResource> resources;
     std::vector<Dependency> dependencies;
 
+    // Texture mode of the produced assets; empty = legacy sidecar (written
+    // before textureMode existed — accepted under both import modes so old
+    // cooked caches stay usable in dev). "raw" = textures referenced/copied
+    // with original extension (ImportOptions.cookTextures=false); "cook" =
+    // full BC7+mips .aytex. JSON round-trips as an optional field.
+    std::string textureMode;
+
     // JSON 序列化（离线模式用）
     std::string toJson() const;
     static ConversionResult fromJson(const std::string& json);
@@ -52,6 +59,11 @@ class IConverter {
 	    virtual void setSourcePath(const std::string& path) = 0;
 	    virtual void setOutputDir(const std::string& dir) = 0;
 	    virtual void setLoadOption(LoadOption option) = 0;
+
+	    // Dev raw-reference mode (see ImportOptions::cookTextures).
+	    // Default no-op: converters that care (FBXConverter → its parser
+	    // + TextureConverter rawCopy) override this.
+	    virtual void setCookTextures(bool /*cook*/) {}
 
 	    // ===== 转换 =====
 	    virtual ConversionResult convert() = 0;

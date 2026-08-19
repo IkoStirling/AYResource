@@ -118,7 +118,8 @@ std::unique_ptr<IConverter> IConverter::create(const std::string& sourcePath) {
         return std::make_unique<FBXConverter>(sourcePath);
     } else if (ext == "gltf" || ext == "glb") {
         return std::make_unique<GLTFConverter>(sourcePath);
-    } else if (ext == "png" || ext == "bmp" || ext == "tga" || ext == "dds") {
+    } else if (ext == "png" || ext == "bmp" || ext == "tga" || ext == "dds"
+               || ext == "jpg" || ext == "jpeg") {
         return std::make_unique<TextureConverter>(sourcePath);
     } else if (ext == "wav" || ext == "mp3" || ext == "ogg") {
         return std::make_unique<AudioConverter>(sourcePath);
@@ -130,6 +131,9 @@ std::unique_ptr<IConverter> IConverter::create(const std::string& sourcePath) {
 std::string ConversionResult::toJson() const {
     std::ostringstream oss;
     oss << "{\n";
+    if (!textureMode.empty()) {
+        oss << "  \"textureMode\": \"" << textureMode << "\",\n";
+    }
     oss << "  \"resources\": [\n";
     for (size_t i = 0; i < resources.size(); i++) {
         const auto& res = resources[i];
@@ -152,6 +156,11 @@ std::string ConversionResult::toJson() const {
 
 ConversionResult ConversionResult::fromJson(const std::string& json) {
     ConversionResult result;
+
+    // Optional textureMode field; absent = legacy sidecar (accepted under
+    // both import modes). Parse it before resources so a mode mismatch can
+    // be decided in tryLoadCachedConversion.
+    (void)parseJsonStringField(json, 0, "textureMode", result.textureMode);
 
     // Resources MUST be parsed — Importer cache reuse checks hasMesh/hasSkel
     // on this array. A previous implementation only read dependencies, so

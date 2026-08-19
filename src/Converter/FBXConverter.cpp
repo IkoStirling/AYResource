@@ -58,6 +58,10 @@ ConversionResult FBXConverter::convert() {
     parser.setSeparateModels(separateModels);
     parser.setAssetBaseName(baseName);
     parser.setTextureUsageSuffix(textureConverter.getUsageSuffix());
+    // Dev raw-reference mode: .aymat points at raw png/jpg/... and the
+    // texture converter copies sources verbatim instead of BC7-cooking.
+    parser.setPreserveSourceExtension(!_cookTextures);
+    textureConverter.setRawCopy(!_cookTextures);
 
     if (!parser.parse(sourcePath)) {
         ayt::log::error("[FBXConverter] Failed to parse FBX: %s", sourcePath.c_str());
@@ -192,8 +196,13 @@ ConversionResult FBXConverter::convert() {
             result.dependencies.push_back(dep);
         }
         for (const auto& texPath : mat.texturePaths) {
+            // Dev mode: same extension spelling as FBXParser's param ref
+            // (textureDevExtensionOf), so this fallback dedups against the
+            // emitted param path instead of leaking a dead .aytex edge.
+            const char* ext = _cookTextures ? ".aytex" : nullptr;
             const std::string cooked = makeTextureVirtualPathFromSource(
-                texPath, textureConverter.getUsageSuffix());
+                texPath, textureConverter.getUsageSuffix(),
+                ext != nullptr ? ext : textureDevExtensionOf(texPath).c_str());
             if (!emitted.insert(cooked).second) continue;
             ConversionResult::Dependency dep;
             dep.from = matPath;
@@ -251,6 +260,7 @@ ConversionResult FBXConverter::convert() {
 
     // 8. 写入依赖文件
     if (!outputDir.empty()) {
+        result.textureMode = _cookTextures ? "cook" : "raw";
         std::string depFilePath = outputDir + "/" + baseName + ".aydep.json";
         std::string jsonContent = result.toJson();
         writeFile(depFilePath, jsonContent.data(), jsonContent.size());

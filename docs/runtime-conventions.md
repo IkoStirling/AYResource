@@ -179,3 +179,40 @@ left out of Phase 0's exit criteria:
 - **F-01**: `SubmeshData::vertexOffset` is dropped by `MeshConverter` (Phase 1 R-02 + AN-01 territory).
 - **F-02**: `IMesh::Submesh` has no `#pragma pack` — future 8-byte fields will silently pad SUBM chunks.
 - **F-03**: `_setForTest*` family is public on `Mesh` — should be demoted to a friend class or test-only namespace in Phase 1.
+
+## 11. 纹理 dev 直引契约（Texture dev raw-reference mode）
+
+开发期默认**不 cook 纹理**：FBX 导入时 `.aymat` 的纹理参数直接引用源图扩展名
+（`textures/{stem}_d.png` / `_d.jpg` …），`TextureConverter` 把源文件**原样拷贝**
+进 `textures/`；运行时 `TextureLoader` 用 stb_image 解码为单级 RGBA8 上传。
+发布期才 cook 成 BC7+mips 的 `.aytex`。
+
+### 开关与模式
+
+| 入口 | 行为 |
+|---|---|
+| 默认（dev） | `ImportOptions.cookTextures=false` → raw 直引 |
+| 发布 | `AY_IMPORT_COOK_TEXTURES=1`（编辑器）或 `import_tool --cook-textures` → BC7+mips cook，与旧行为一致 |
+| 直接调用 `FBXConverter::convert()` | `_cookTextures` 默认 `true`，零翻转（保护既有调用方） |
+
+`.aydep.json` 记录 `"textureMode": "raw" | "cook"`；**无该字段 = legacy 旧缓存**，
+两种模式下都命中（旧 .aytex 缓存 dev 下照常渲染）。记录模式与请求模式不符 →
+确定性缓存 miss（全量重导），绝不返回错模式的缓存。
+
+### 路径契约（唯一拼写，见 `VirtualAssetPath.h`）
+
+- 引用（FBXParser / dep 兜底）与输出（TextureConverter）共用
+  `textures/{stem}{suffix}{ext}`；dev 下 `ext` = 源扩展名小写，**dds/aytex 源除外**
+  （`textureDevExtensionOf` 强制 `.aytex` —— dds 走零解码 passthrough，防止悬空 .dds 引用）。
+- 运行时 `TextureLoader` 的 loose 分支受编译宏 `AY_TEXTURE_LOOSE_FORMATS` 门控
+  （镜像 `AY_AUDIO_LOOSE_FORMATS`；Debug/RelWithDebInfo 默认开，Release 关）。
+  关闭时 `.png/.jpg/...` 不被注册/解析 —— `CookShip` 不会把 dev 残留图收进发布 pak。
+
+### 规则
+
+- 纹理源文件变更后必须 `AY_EDITOR_FORCE_IMPORT=1`（或 `--force`）重导：
+  raw 拷贝的 SKIP 判定只比对文件大小，同尺寸不同内容不会自动重拷。
+- GPU 上传只消费 mip 0（BGFXAdapter 单级）——dev 单级 RGBA8 与发布视觉行为一致；
+  真 mipmap 是独立优化项。
+- 嵌入式纹理（FBX 内嵌）无源文件可拷，继续 cook（规模小）。
+- GLTF 导入路径不受影响（沿用既有 cook 行为）。

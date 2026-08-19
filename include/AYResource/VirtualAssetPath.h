@@ -6,6 +6,7 @@
 // MUST use these helpers so mesh materialSlots, on-disk .aymat/.aytex, and
 // dependency edges all agree. Do not invent parallel path spelling.
 
+#include <cctype>
 #include <cstddef>
 #include <string>
 
@@ -48,18 +49,57 @@ inline std::string makeTextureStemFromSourcePath(const std::string& sourcePath) 
     return stem;
 }
 
+// textures/{stem}{usageSuffix}{ext} — dev raw-reference mode (ImportOptions
+// cookTextures=false) keeps the source extension (e.g. ".png") so .aymat
+// materials point at the raw image copied into textures/. Release cook
+// always uses ".aytex".
+inline std::string makeTextureVirtualPath(
+    const std::string& stem,
+    const std::string& usageSuffix,
+    const char* ext) {
+    return "textures/" + stem + usageSuffix + ext;
+}
+
 // textures/{stem}{usageSuffix}.aytex  — always .aytex (even passthrough cook)
 inline std::string makeTextureVirtualPath(
     const std::string& stem,
     const std::string& usageSuffix = kDefaultDiffuseUsageSuffix) {
-    return "textures/" + stem + usageSuffix + ".aytex";
+    return makeTextureVirtualPath(stem, usageSuffix, ".aytex");
+}
+
+inline std::string makeTextureVirtualPathFromSource(
+    const std::string& sourcePath,
+    const std::string& usageSuffix,
+    const char* ext) {
+    return makeTextureVirtualPath(makeTextureStemFromSourcePath(sourcePath),
+                                  usageSuffix, ext);
 }
 
 inline std::string makeTextureVirtualPathFromSource(
     const std::string& sourcePath,
     const std::string& usageSuffix = kDefaultDiffuseUsageSuffix) {
-    return makeTextureVirtualPath(makeTextureStemFromSourcePath(sourcePath),
-                                  usageSuffix);
+    return makeTextureVirtualPathFromSource(sourcePath, usageSuffix, ".aytex");
+}
+
+// Extension for a dev raw-reference texture virtual path: the lower-cased
+// source extension for authoring formats (".png"/".jpg"/...), ".aytex" for
+// dds/aytex sources (their cook path is zero-decode passthrough and .dds
+// is not a registered runtime extension). Used by FBXParser (param refs)
+// and FBXConverter (.aydep fallback) so the .aymat reference and the
+// dependency edge always agree.
+inline std::string textureDevExtensionOf(const std::string& sourcePath) {
+    const size_t dot = sourcePath.find_last_of('.');
+    if (dot == std::string::npos || dot + 1 >= sourcePath.size()) {
+        return ".aytex";
+    }
+    std::string e = sourcePath.substr(dot);
+    for (char& c : e) {
+        c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+    }
+    if (e == ".dds" || e == ".aytex") {
+        return ".aytex";
+    }
+    return e;
 }
 
 // tilemaps/{baseName}.aytilemap — CM-2 (2026-08-11). Single spelling for

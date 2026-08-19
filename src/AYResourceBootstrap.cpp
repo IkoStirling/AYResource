@@ -66,6 +66,18 @@ bool initializeLoaders()
         ResourceRegistry::registerExtension(".mp3", "Audio");
         ResourceRegistry::registerExtension(".ogg", "Audio");
 #endif
+#if defined(AY_TEXTURE_LOOSE_FORMATS)
+        // Dev/Editor: same Texture loader also owns loose authoring formats
+        // (dev raw-reference mode — ImportOptions.cookTextures=false copies
+        // source png/jpg/... into textures/ and .aymat points at them).
+        // Gated so release packs never collect stray .png via
+        // CookShip::isCookableAsset (extension registry drives that scan).
+        ResourceRegistry::registerExtension(".png", "Texture");
+        ResourceRegistry::registerExtension(".jpg", "Texture");
+        ResourceRegistry::registerExtension(".jpeg", "Texture");
+        ResourceRegistry::registerExtension(".bmp", "Texture");
+        ResourceRegistry::registerExtension(".tga", "Texture");
+#endif
         g_loadersInitialized.store(ok);
     });
     return g_loadersInitialized.load();

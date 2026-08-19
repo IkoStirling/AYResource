@@ -74,6 +74,16 @@ static bool writeFile(const std::string& path, const void* data, size_t size) {
     return ayt::io::File::atomicWrite(path, data, size);
 }
 
+// 文件大小（0 = 不可读/空）。rawCopy 的 SKIP 判定用大小相等代表
+// "输出与源一致"（字节级拷贝的等价物，支撑中断恢复）。
+static uint64_t fileSizeOf(const std::string& path) {
+    ayt::io::File f(path, ayt::io::File::Mode::BinaryRead);
+    if (!f.isOpen()) {
+        return 0;
+    }
+    return static_cast<uint64_t>(f.size());
+}
+
 // 读取已有 aytex 文件的格式信息
 // 返回 true 如果成功读取，format 会被设置为文件的压缩格式
 static bool getAytexFormat(const std::string& path, UInt8& format) {
@@ -356,6 +366,45 @@ ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
     std::string ext = getExtension(fullPath);
     for (auto& c : ext) c = static_cast<char>(tolower(c));
 
+    // Dev raw-reference mode: copy source bytes verbatim into textures/
+    // with the original extension; .aymat (FBXParser, same stem+suffix)
+    // points there and TextureLoader decodes it with stb at runtime.
+    // dds/aytex excluded — they flow through passthrough → .aytex below
+    // (zero decode, and .dds is not a registered runtime extension).
+    if (rawCopy && ext != "dds" && ext != "aytex") {
+        const std::string rawFileName = textureName + usageSuffix + "." + ext;
+        const std::string rawVirtualPath = "textures/" + rawFileName;
+        const std::string rawFullOutputPath =
+            outputDir.empty() ? std::string() : outputDir + "/" + rawVirtualPath;
+
+        const uint64_t srcSize = fileSizeOf(fullPath);
+        if (srcSize == 0) {
+            return result;  // 源不可读 — 与解码路径的失败契约一致
+        }
+        if (!rawFullOutputPath.empty() && ayt::io::File::exists(rawFullOutputPath)
+            && fileSizeOf(rawFullOutputPath) == srcSize) {
+            printf("  [SKIP] %s (size matches, skip)\n", rawFileName.c_str());
+        } else {
+            printf("  [COPY] %s\n", rawFileName.c_str());
+            std::vector<UInt8> bytes(static_cast<size_t>(srcSize));
+            ayt::io::File srcFile(fullPath, ayt::io::File::Mode::BinaryRead);
+            if (!srcFile.isOpen() || srcFile.read(bytes.data(), bytes.size()) != bytes.size()) {
+                return result;
+            }
+            if (!rawFullOutputPath.empty()
+                && !writeFile(rawFullOutputPath, bytes.data(), bytes.size())) {
+                return result;
+            }
+        }
+
+        ConversionResult::ConvertedResource res;
+        res.path = rawVirtualPath;
+        res.type = "Texture";
+        res.size = srcSize;
+        result.resources.push_back(res);
+        return result;
+    }
+
     // 构建输出路径 — 虚拟路径始终为 .aytex（与 aymat 引用契约一致）。
     std::string outputFileName = textureName + usageSuffix + ".aytex";
     std::string virtualPath = "textures/" + outputFileName;
@@ -546,13 +595,54 @@ ConversionResult TextureConverter::convert() {
         return result;
     }
 
-    // 构建输出路径
-    std::string baseName = getFileName(sourcePath);
+    // 构建输出路径 — stem 必须剥离扩展名（dev raw 分支与 cook 分支
+    // 同一命名契约 textures/{stem}{suffix}.{ext}）。
+    std::string baseName = getBaseName(sourcePath);
     std::string outputFileName = baseName + usageSuffix + ".aytex";
     std::string virtualPath = "textures/" + outputFileName;
     std::string fullOutputPath;
     if (!outputDir.empty()) {
         fullOutputPath = outputDir + "/" + virtualPath;
+    }
+
+    // Dev raw-reference mode (single-image import entry; naming aligned
+    // with convertFromPath's stem+suffix contract). Same exclusions as
+    // convertFromPath: dds/aytex keep flowing through the cook path.
+    std::string ext = getExtension(sourcePath);
+    for (auto& c : ext) c = static_cast<char>(tolower(c));
+
+    if (rawCopy && ext != "dds" && ext != "aytex") {
+        const std::string rawFileName = baseName + usageSuffix + "." + ext;
+        const std::string rawVirtualPath = "textures/" + rawFileName;
+        const std::string rawFullOutputPath =
+            outputDir.empty() ? std::string() : outputDir + "/" + rawVirtualPath;
+
+        const uint64_t srcSize = fileSizeOf(sourcePath);
+        if (srcSize == 0) {
+            return result;
+        }
+        if (!rawFullOutputPath.empty() && ayt::io::File::exists(rawFullOutputPath)
+            && fileSizeOf(rawFullOutputPath) == srcSize) {
+            printf("  [SKIP] %s (size matches, skip)\n", rawFileName.c_str());
+        } else {
+            printf("  [COPY] %s\n", rawFileName.c_str());
+            std::vector<UInt8> bytes(static_cast<size_t>(srcSize));
+            ayt::io::File srcFile(sourcePath, ayt::io::File::Mode::BinaryRead);
+            if (!srcFile.isOpen() || srcFile.read(bytes.data(), bytes.size()) != bytes.size()) {
+                return result;
+            }
+            if (!rawFullOutputPath.empty()
+                && !writeFile(rawFullOutputPath, bytes.data(), bytes.size())) {
+                return result;
+            }
+        }
+
+        ConversionResult::ConvertedResource res;
+        res.path = rawVirtualPath;
+        res.type = "Texture";
+        res.size = srcSize;
+        result.resources.push_back(res);
+        return result;
     }
 
     // 跳过已存在的文件（中断恢复）
@@ -567,9 +657,6 @@ ConversionResult TextureConverter::convert() {
             }
         }
     }
-
-    std::string ext = getExtension(sourcePath);
-    for (auto& c : ext) c = static_cast<char>(tolower(c));
 
     // 加载源图像
     std::vector<UInt8> pixels;
@@ -600,7 +687,7 @@ ConversionResult TextureConverter::convert() {
     UInt32 mipWidth = width;
     UInt32 mipHeight = height;
     UInt32 mipCount = 1;
-    while (mipWidth > 1 || mipHeight > 1) {
+    while (mipCount < 16 && (mipWidth > 1 || mipHeight > 1)) {
         mipWidth = ayt::math::max(1u, mipWidth / 2);
         mipHeight = ayt::math::max(1u, mipHeight / 2);
         mipCount++;
@@ -608,47 +695,73 @@ ConversionResult TextureConverter::convert() {
 
     if (!generateMipmaps) {
         mipCount = 1;
-        mipWidth = width;
-        mipHeight = height;
     }
 
     texture._mipmapCount = mipCount;
 
-    // 收集 mip 数据
-    std::vector<std::vector<UInt8>> mipDatas(mipCount);
-    std::vector<UInt32> mipSizes(mipCount);
+    // 生成 RGBA mipmap 链（固定 RGBA8 生成，输出格式在扁平化时决定）。
+    // 旧实现用 computeMipSize(BC*) 分配 mip 缓冲却按 3bpp 直写 ——
+    // BC 格式下越界写坏堆（4096 图即崩溃），且从未真正压缩。
+    std::vector<std::vector<UInt8>> mipRGBA(mipCount);
+    std::vector<UInt32> mipRGBAWidth(mipCount);
+    std::vector<UInt32> mipRGBAHeight(mipCount);
+
+    mipRGBA[0] = pixels;
+    mipRGBAWidth[0] = width;
+    mipRGBAHeight[0] = height;
 
     mipWidth = width;
     mipHeight = height;
-    mipDatas[0] = pixels;
-    mipSizes[0] = static_cast<UInt32>(pixels.size());
-
     for (UInt32 i = 1; i < mipCount; i++) {
         mipWidth = ayt::math::max(1u, mipWidth / 2);
         mipHeight = ayt::math::max(1u, mipHeight / 2);
-        UInt32 mipSize = Texture::computeMipSize(mipWidth, mipHeight, texture._format);
-        mipDatas[i].resize(mipSize);
-        generateMipmapLevel(mipDatas[i - 1].data(), mipWidth * 2, mipHeight * 2,
-                            texture._format, mipDatas[i].data());
-        mipSizes[i] = mipSize;
+        mipRGBAWidth[i] = mipWidth;
+        mipRGBAHeight[i] = mipHeight;
+        mipRGBA[i].resize(mipWidth * mipHeight * 4);
+        generateMipmapLevel(mipRGBA[i - 1].data(), mipRGBAWidth[i - 1], mipRGBAHeight[i - 1],
+                            TextureFormat::RGBA8, mipRGBA[i].data());
     }
 
-    // 扁平化存储到 imageData
+    // 扁平化存储（BC 格式则压缩；与 convertFromPath 相同流程）
     size_t totalSize = 0;
     for (UInt32 i = 0; i < mipCount; i++) {
-        totalSize += mipSizes[i];
+        totalSize += Texture::computeMipSize(mipRGBAWidth[i], mipRGBAHeight[i], outputFormat);
     }
 
     UInt8* dstPtr = texture.mutableImageData(totalSize);
     std::vector<UInt32> mipOffsets(mipCount);
-    std::vector<UInt32> mipSizesOut(mipCount);
+    std::vector<UInt32> mipSizes(mipCount);
+
+    const bool isBC = outputFormat == TextureFormat::BC7
+        || outputFormat == TextureFormat::BC3
+        || outputFormat == TextureFormat::BC1
+        || outputFormat == TextureFormat::BC5;
+    std::unique_ptr<ITextureCompressor> compressor;
+    if (isBC) {
+        compressor = TextureCompressor::create((outputFormat == TextureFormat::BC7)
+            ? TextureCompressor::Format::BC7 : TextureCompressor::Format::BC3);
+        if (!compressor) {
+            return result;
+        }
+    }
+
     for (UInt32 i = 0; i < mipCount; i++) {
         mipOffsets[i] = static_cast<UInt32>(dstPtr - texture.getImageDataBytes());
-        mipSizesOut[i] = mipSizes[i];
-        std::memcpy(dstPtr, mipDatas[i].data(), mipSizes[i]);
-        dstPtr += mipSizes[i];
+        if (compressor) {
+            auto compressed = compressor->compress(
+                mipRGBA[i].data(), mipRGBAWidth[i], mipRGBAHeight[i]);
+            const UInt32 compressedSize = static_cast<UInt32>(compressed.size());
+            std::memcpy(dstPtr, compressed.data(), compressedSize);
+            mipSizes[i] = compressedSize;
+            dstPtr += compressedSize;
+        } else {
+            const UInt32 dataSize = mipRGBAWidth[i] * mipRGBAHeight[i] * 4;
+            std::memcpy(dstPtr, mipRGBA[i].data(), dataSize);
+            mipSizes[i] = dataSize;
+            dstPtr += dataSize;
+        }
     }
-    texture.setMipmapLayout(std::move(mipOffsets), std::move(mipSizesOut));
+    texture.setMipmapLayout(std::move(mipOffsets), std::move(mipSizes));
     texture.setLoaded(true);
 
     // 计算 GUID

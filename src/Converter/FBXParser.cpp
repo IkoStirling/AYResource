@@ -589,15 +589,24 @@ void FBXParser::_extractMaterialTextures(const aiMaterial* mat, MaterialData& ma
             std::string path(texPath.C_Str());
             if (path.empty()) continue;
 
-            // Virtual path uses flattened stem + usage + .aytex.
+            // Virtual path uses flattened stem + usage + extension.
             // texturePaths keeps the Assimp path so convertFromPath can
             // open absolute or FBX-relative sources.
             const std::string textureName = makeTextureStemFromSourcePath(path);
 
+            // Dev raw-reference mode: keep the source extension (e.g. .png)
+            // so .aymat points at the raw image copied into textures/;
+            // TextureLoader decodes it with stb at runtime. dds/aytex
+            // sources stay on .aytex (zero-decode passthrough cook, and
+            // .dds is not a registered runtime extension).
+            const std::string texExt =
+                _preserveSourceExtension ? textureDevExtensionOf(path) : ".aytex";
+
             Param param;
             param.name = paramName;
             param.type = MaterialParamType::Texture2D;
-            param.texturePath = makeTextureVirtualPath(textureName, _textureUsageSuffix);
+            param.texturePath = makeTextureVirtualPath(textureName, _textureUsageSuffix,
+                                                       texExt.c_str());
             material.parameters.push_back(param);
 
             material.texturePaths.push_back(path);
