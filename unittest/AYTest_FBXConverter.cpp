@@ -62,7 +62,15 @@ TEST_SUITE(FBXConverterTests)
 
         FBXConverter converter(objPath.string());
         converter.setOutputDir(root.string());
+        MaterialImportPolicy policy;
+        policy.tag = "unit-material-policy-v1";
+        // Assimp reserves slot 0 for OBJ's implicit default material;
+        // ImportedMaterial is the explicit slot 1 from the MTL file.
+        policy.maskIndices = "1";
+        policy.doubleSidedIndices = "1";
+        converter.setMaterialImportPolicy(policy);
         const ConversionResult result = converter.convert();
+        CHECK(result.materialPolicyTag == policy.tag);
 
         bool checkedMaterial = false;
         for (const auto& resource : result.resources) {
@@ -72,6 +80,15 @@ TEST_SUITE(FBXConverterTests)
             Material material;
             CHECK(material.load((root / resource.path).string()));
             CHECK(std::string(material.getShader()) == "pbr.phoskia");
+            if (std::string(material.getName()) != "ImportedMaterial") {
+                continue;
+            }
+            CHECK(material.hasParameter("__ayAlphaMode"));
+            CHECK(material.getInt("__ayAlphaMode") == 1);
+            CHECK(material.hasParameter("__ayAlphaCutoff"));
+            CHECK(material.getFloat("__ayAlphaCutoff") == 0.5f);
+            CHECK(material.hasParameter("__ayDoubleSided"));
+            CHECK(material.getBool("__ayDoubleSided"));
             checkedMaterial = true;
         }
         CHECK(checkedMaterial);

@@ -4,9 +4,91 @@
 #include <AYLog.h>
 #include <sstream>
 #include <set>
+#include <cstdlib>
+#include <unordered_set>
 
 namespace ayt::resource
 {
+
+namespace {
+
+std::unordered_set<size_t> parseMaterialIndices(const std::string& csv)
+{
+    std::unordered_set<size_t> out;
+    const char* cursor = csv.c_str();
+    while (*cursor != '\0') {
+        while (*cursor == ',' || *cursor == ';' || *cursor == ' '
+               || *cursor == '\t') {
+            ++cursor;
+        }
+        if (*cursor == '\0') break;
+        char* end = nullptr;
+        const unsigned long value = std::strtoul(cursor, &end, 10);
+        if (end == cursor) {
+            while (*cursor != '\0' && *cursor != ',' && *cursor != ';') ++cursor;
+            continue;
+        }
+        out.insert(static_cast<size_t>(value));
+        cursor = end;
+    }
+    return out;
+}
+
+void setIntParameter(MaterialData& material, const char* name, int value)
+{
+    for (Param& param : material.parameters) {
+        if (param.name == name) {
+            param.type = MaterialParamType::Int;
+            param.intValue = value;
+            return;
+        }
+    }
+    Param param;
+    param.name = name;
+    param.type = MaterialParamType::Int;
+    param.intValue = value;
+    material.parameters.push_back(param);
+}
+
+void setBoolParameter(MaterialData& material, const char* name, bool value)
+{
+    for (Param& param : material.parameters) {
+        if (param.name == name) {
+            param.type = MaterialParamType::Bool;
+            param.boolValue = value;
+            return;
+        }
+    }
+    Param param;
+    param.name = name;
+    param.type = MaterialParamType::Bool;
+    param.boolValue = value;
+    material.parameters.push_back(param);
+}
+
+void applyMaterialPolicy(std::vector<MaterialData>& materials,
+                         const MaterialImportPolicy& policy)
+{
+    const auto opaque = parseMaterialIndices(policy.opaqueIndices);
+    const auto mask = parseMaterialIndices(policy.maskIndices);
+    const auto blend = parseMaterialIndices(policy.blendIndices);
+    const auto doubleSided = parseMaterialIndices(policy.doubleSidedIndices);
+
+    for (size_t i = 0; i < materials.size(); ++i) {
+        int mode = -1;
+        if (opaque.count(i) != 0) mode = 0;
+        if (mask.count(i) != 0) mode = 1;
+        if (blend.count(i) != 0) mode = 2;
+        if (mode >= 0) {
+            setIntParameter(materials[i], "__ayAlphaMode", mode);
+        }
+        if (doubleSided.count(i) != 0) {
+            setBoolParameter(materials[i], "__ayDoubleSided", true);
+        }
+    }
+}
+
+} // namespace
 
 // 写入二进制文件
 static bool writeFile(const std::string& path, const void* data, size_t size) {
@@ -73,6 +155,8 @@ ConversionResult FBXConverter::convert() {
         ayt::log::error("[FBXConverter] Parser returned null asset: %s", sourcePath.c_str());
         return result;
     }
+
+    applyMaterialPolicy(asset->materials, _materialPolicy);
 
     ayt::log::info("[FBXConverter] Parsed FBX - meshes=%zu materials=%zu textures=%zu skeletons=%zu",
              asset->meshes.size(), asset->materials.size(),
@@ -258,9 +342,11 @@ ConversionResult FBXConverter::convert() {
         }
     }
 
+    result.textureMode = _cookTextures ? "cook" : "raw";
+    result.materialPolicyTag = _materialPolicy.tag;
+
     // 8. 写入依赖文件
     if (!outputDir.empty()) {
-        result.textureMode = _cookTextures ? "cook" : "raw";
         std::string depFilePath = outputDir + "/" + baseName + ".aydep.json";
         std::string jsonContent = result.toJson();
         writeFile(depFilePath, jsonContent.data(), jsonContent.size());

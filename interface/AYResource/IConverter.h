@@ -8,6 +8,18 @@
 namespace ayt::resource
 {
 
+// Optional per-source material policy supplied by editor/project config.
+// FBX often exposes a TransparencyFactor texture for every material while
+// omitting a usable alpha-mode flag, so importers need an explicit override
+// instead of guessing from texture pixels.
+struct MaterialImportPolicy {
+    std::string tag;
+    std::string opaqueIndices;
+    std::string maskIndices;
+    std::string blendIndices;
+    std::string doubleSidedIndices;
+};
+
 // ===== ConversionResult — 转换结果结构 =====
 // 用于 Converter 输出文件 + 依赖信息
 struct ConversionResult {
@@ -38,6 +50,9 @@ struct ConversionResult {
     // with original extension (ImportOptions.cookTextures=false); "cook" =
     // full BC7+mips .aytex. JSON round-trips as an optional field.
     std::string textureMode;
+    // Cache discriminator for material classification. A requested non-empty
+    // tag invalidates legacy sidecars that lack the imported surface modes.
+    std::string materialPolicyTag;
 
     // JSON 序列化（离线模式用）
     std::string toJson() const;
@@ -64,6 +79,7 @@ class IConverter {
 	    // Default no-op: converters that care (FBXConverter → its parser
 	    // + TextureConverter rawCopy) override this.
 	    virtual void setCookTextures(bool /*cook*/) {}
+	    virtual void setMaterialImportPolicy(const MaterialImportPolicy& /*policy*/) {}
 
 	    // ===== 转换 =====
 	    virtual ConversionResult convert() = 0;

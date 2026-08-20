@@ -59,6 +59,7 @@ struct ImportOptions {
     /// between the sidecar's textureMode and this flag invalidates the
     /// cached .aydep.json (deterministic cache miss).
     bool cookTextures = false;
+    MaterialImportPolicy materialPolicy;
 };
 
 struct ImportResult {
@@ -87,6 +88,7 @@ struct ImportBatchOptions {
     bool requireCharacterAssets = true;
     bool stopOnError = false;
     bool cookTextures = false;              ///< see ImportOptions::cookTextures
+    MaterialImportPolicy materialPolicy;
 };
 
 struct ImportBatchResult {

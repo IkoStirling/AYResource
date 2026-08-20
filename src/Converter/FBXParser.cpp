@@ -626,11 +626,49 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
     const aiMaterial* mat = static_cast<const aiMaterial*>(aiMatPtr);
 
     MaterialData material;
-    material.name = "material_" + std::to_string(index);
+    aiString sourceMaterialName;
+    if (mat->Get(AI_MATKEY_NAME, sourceMaterialName) == AI_SUCCESS
+        && sourceMaterialName.length > 0) {
+        material.name = sourceMaterialName.C_Str();
+    } else {
+        material.name = "material_" + std::to_string(index);
+    }
     // The runtime PBR source is shipped by AYRenderer and seeded into the
     // Editor asset root. Keep this flat virtual path aligned with
     // RenderAssetBridge's root-relative shader resolution.
     material.shader = "pbr.phoskia";
+
+    // Import surface metadata as ordinary .aymat parameters so the v1 binary
+    // layout remains compatible. FBX files that expose real scalar opacity or
+    // blend state get Blend; otherwise default to Opaque. Project/editor
+    // material policy can override these values after parsing.
+    float importedOpacity = 1.0f;
+    const bool hasOpacity =
+        mat->Get(AI_MATKEY_OPACITY, importedOpacity) == AI_SUCCESS;
+    aiBlendMode importedBlend = aiBlendMode_Default;
+    const bool hasBlend =
+        mat->Get(AI_MATKEY_BLEND_FUNC, importedBlend) == AI_SUCCESS;
+    int importedTwoSided = 0;
+    (void)mat->Get(AI_MATKEY_TWOSIDED, importedTwoSided);
+
+    Param alphaModeParam;
+    alphaModeParam.name = "__ayAlphaMode";
+    alphaModeParam.type = MaterialParamType::Int;
+    alphaModeParam.intValue =
+        ((hasOpacity && importedOpacity < 0.999f) || hasBlend) ? 2 : 0;
+    material.parameters.push_back(alphaModeParam);
+
+    Param alphaCutoffParam;
+    alphaCutoffParam.name = "__ayAlphaCutoff";
+    alphaCutoffParam.type = MaterialParamType::Float;
+    alphaCutoffParam.floatValue = 0.5f;
+    material.parameters.push_back(alphaCutoffParam);
+
+    Param doubleSidedParam;
+    doubleSidedParam.name = "__ayDoubleSided";
+    doubleSidedParam.type = MaterialParamType::Bool;
+    doubleSidedParam.boolValue = importedTwoSided != 0;
+    material.parameters.push_back(doubleSidedParam);
 
     // baseColor (albedo)
     aiColor4D baseColor;

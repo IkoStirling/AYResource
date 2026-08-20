@@ -113,6 +113,10 @@ bool tryLoadCachedConversion(const ImportOptions& options,
             return false;
         }
     }
+    if (!options.materialPolicy.tag.empty()
+        && out.materialPolicyTag != options.materialPolicy.tag) {
+        return false;
+    }
 
     const std::string ext = importExtensionOf(options.sourcePath);
     if (options.requireCharacterAssets && isSceneExtension(ext)) {
@@ -255,6 +259,7 @@ ImportResult importAsset(const ImportOptions& options,
         converter->setOutputDir(options.outputDir);
         converter->setLoadOption(options.loadOption);
         converter->setCookTextures(options.cookTextures);
+        converter->setMaterialImportPolicy(options.materialPolicy);
         r.conversion = converter->convert();
     } catch (const std::exception& e) {
         r.error = std::string("converter threw: ") + e.what();
@@ -311,6 +316,7 @@ ImportBatchResult importAssetBatch(const ImportBatchOptions& options,
         one.force = options.force;
         one.requireCharacterAssets = options.requireCharacterAssets;
         one.cookTextures = options.cookTextures;
+        one.materialPolicy = options.materialPolicy;
 
         ImportProgressFn wrapped;
         if (progress) {
