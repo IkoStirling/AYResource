@@ -322,6 +322,10 @@ void FBXParser::_parseAllMeshesAsOne(const aiScene* scene) {
         submesh.startIndex = indexOffset;
         submesh.indexCount = meshIndexCount;
         submesh.vertexOffset = vertexOffset;
+        // materialSlots is emitted in the same order as submeshes.  The
+        // runtime index must address that vector, not Assimp's scene-wide
+        // material table (which can be sparse after mesh filtering).
+        submesh.materialIndex = static_cast<UInt32>(mesh.materialSlots.size());
         mesh.submeshes.push_back(submesh);
 
         // Material slot — must match MaterialConverter / FBXConverter contract.
@@ -531,6 +535,10 @@ void FBXParser::_collectNodeMeshes(const aiNode* node, const aiScene* scene, con
             submesh.startIndex = indexOffset;
             submesh.indexCount = meshIndexCount;
             submesh.vertexOffset = vertexOffset;
+            // Keep the submesh-to-slot mapping explicit.  Leaving the
+            // default zero here made every part of a merged character use
+            // the first material at runtime.
+            submesh.materialIndex = static_cast<UInt32>(mesh.materialSlots.size());
             mesh.submeshes.push_back(submesh);
 
             // Material slot — must match MaterialConverter / FBXConverter contract.
