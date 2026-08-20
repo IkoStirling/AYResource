@@ -222,6 +222,8 @@ std::vector<ConversionResult::ConvertedResource> MaterialConverter::convertAll(
         material->initialise(
             matData.name.empty() ? fallbackName.c_str() : matData.name.c_str(),
             matData.shader.c_str());
+        material->setSurfaceProperties(matData.alphaMode, matData.alphaCutoff,
+                                       matData.doubleSided);
 
         for (const auto& param : matData.parameters) {
             switch (param.type) {
@@ -258,6 +260,12 @@ std::vector<ConversionResult::ConvertedResource> MaterialConverter::convertAll(
         const std::string shader = material->getShader();
         contentData.insert(contentData.end(), name.begin(), name.end());
         contentData.insert(contentData.end(), shader.begin(), shader.end());
+        contentData.push_back(static_cast<UInt8>(material->getAlphaMode()));
+        contentData.push_back(material->isDoubleSided() ? UInt8{1} : UInt8{0});
+        const Float32 cutoff = material->getAlphaCutoff();
+        const UInt8* cutoffBytes = reinterpret_cast<const UInt8*>(&cutoff);
+        contentData.insert(contentData.end(), cutoffBytes,
+                           cutoffBytes + sizeof(cutoff));
         material->forEachParameterHashSink(
             [&contentData](const std::string& pname, MaterialParamType ptype,
                            const UInt8* bytes, size_t n) {

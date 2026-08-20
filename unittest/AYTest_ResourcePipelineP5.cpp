@@ -36,7 +36,10 @@ bool writeText(const std::string& path, const std::string& text)
 
 std::string sampleDepJson()
 {
-    return R"({
+    // Emit the current importer contract; legacy/mismatched tags are covered
+    // separately and must never hit the FBX cache.
+    return std::string(R"({
+  "importerContractTag": ")") + kFbxImporterContractTag + R"(",
   "resources": [
     {"path": "meshes/hero.aymesh", "type": "Mesh", "size": 12},
     {"path": "skeletons/hero.ayskel", "type": "Skeleton", "size": 8}
@@ -159,7 +162,9 @@ TEST_CASE(import_batch_reports_per_item)
     CHECK(writeText(assets + "/meshes/a.aymesh", "m"));
     CHECK(writeText(assets + "/skeletons/a.ayskel", "s"));
     CHECK(writeText(assets + "/a.aydep.json",
-                    R"({"resources":[{"path":"meshes/a.aymesh","type":"Mesh","size":1},{"path":"skeletons/a.ayskel","type":"Skeleton","size":1}],"dependencies":[]})"));
+                    std::string("{\"importerContractTag\":\"") +
+                        kFbxImporterContractTag +
+                        "\",\"resources\":[{\"path\":\"meshes/a.aymesh\",\"type\":\"Mesh\",\"size\":1},{\"path\":\"skeletons/a.ayskel\",\"type\":\"Skeleton\",\"size\":1}],\"dependencies\":[]}"));
     // b has no cache → will fail at Assimp convert or empty result; with force
     // false and no sidecar, convert runs — may throw or return empty.
     // Use missing file for deterministic fail instead.
@@ -184,8 +189,9 @@ TEST_CASE(import_batch_reports_per_item)
 TEST_CASE(import_texture_mode_gates_cache_hit)
 {
     // Hand-written sidecars with a recorded textureMode ("raw"|"cook") must
-    // be a deterministic cache miss when the request differs, while legacy
-    // sidecars (no field — old cooked caches) hit under both modes.
+    // be a deterministic cache miss when the request differs. A missing
+    // textureMode remains compatible with either texture mode, independently
+    // of the required FBX importer contract tag.
     struct ModeCase {
         const char* stem;
         const char* modeField;   // nullptr = legacy (no field)
@@ -210,6 +216,9 @@ TEST_CASE(import_texture_mode_gates_cache_hit)
         CHECK(writeText(assets + "/skeletons/" + c.stem + ".ayskel", "s"));
 
         std::string json = "{\n";
+        json += "  \"importerContractTag\": \"";
+        json += kFbxImporterContractTag;
+        json += "\",\n";
         if (c.modeField != nullptr) {
             json += "  " + std::string(c.modeField) + "\n";
         }
@@ -234,6 +243,27 @@ TEST_CASE(import_texture_mode_gates_cache_hit)
         // usedCache is the invariant that matters here.
         CHECK(r.usedCache == c.expectHit);
     }
+    cleanup();
+}
+
+TEST_CASE(import_fbx_contract_tag_invalidates_legacy_cache)
+{
+    cleanup();
+    const std::string assets = kRoot + "/legacy/assets";
+    const std::string src = kRoot + "/legacy/legacy.fbx";
+    CHECK(writeText(src, "not a real fbx — a stale cache must reconvert"));
+    CHECK(writeText(assets + "/meshes/legacy.aymesh", "m"));
+    CHECK(writeText(assets + "/skeletons/legacy.ayskel", "s"));
+    CHECK(writeText(
+        assets + "/legacy.aydep.json",
+        R"({"resources":[{"path":"meshes/legacy.aymesh","type":"Mesh","size":1},{"path":"skeletons/legacy.ayskel","type":"Skeleton","size":1}],"dependencies":[]})"));
+
+    ImportOptions opts;
+    opts.sourcePath = src;
+    opts.outputDir = assets;
+    ImportResult r = importAsset(opts);
+
+    CHECK(!r.usedCache);
     cleanup();
 }
 

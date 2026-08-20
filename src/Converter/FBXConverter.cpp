@@ -6,6 +6,8 @@
 #include <set>
 #include <cstdlib>
 #include <unordered_set>
+#include <algorithm>
+#include <cctype>
 
 namespace ayt::resource
 {
@@ -34,36 +36,41 @@ std::unordered_set<size_t> parseMaterialIndices(const std::string& csv)
     return out;
 }
 
-void setIntParameter(MaterialData& material, const char* name, int value)
+std::unordered_set<std::string> parseMaterialNames(const std::string& list)
 {
-    for (Param& param : material.parameters) {
-        if (param.name == name) {
-            param.type = MaterialParamType::Int;
-            param.intValue = value;
-            return;
-        }
+    std::unordered_set<std::string> out;
+    size_t begin = 0;
+    while (begin <= list.size()) {
+        const size_t end = list.find(';', begin);
+        std::string name = list.substr(begin, end == std::string::npos
+            ? std::string::npos : end - begin);
+        const auto notSpace = [](unsigned char c) { return !std::isspace(c); };
+        name.erase(name.begin(), std::find_if(name.begin(), name.end(), notSpace));
+        name.erase(std::find_if(name.rbegin(), name.rend(), notSpace).base(), name.end());
+        if (!name.empty()) out.insert(std::move(name));
+        if (end == std::string::npos) break;
+        begin = end + 1;
     }
-    Param param;
-    param.name = name;
-    param.type = MaterialParamType::Int;
-    param.intValue = value;
-    material.parameters.push_back(param);
+    return out;
 }
 
-void setBoolParameter(MaterialData& material, const char* name, bool value)
+const char* alphaModeName(MaterialAlphaMode mode)
 {
-    for (Param& param : material.parameters) {
-        if (param.name == name) {
-            param.type = MaterialParamType::Bool;
-            param.boolValue = value;
-            return;
-        }
+    switch (mode) {
+    case MaterialAlphaMode::Mask: return "mask";
+    case MaterialAlphaMode::Blend: return "blend";
+    default: return "opaque";
     }
-    Param param;
-    param.name = name;
-    param.type = MaterialParamType::Bool;
-    param.boolValue = value;
-    material.parameters.push_back(param);
+}
+
+const char* surfaceSourceName(MaterialSurfaceSource source)
+{
+    switch (source) {
+    case MaterialSurfaceSource::ExplicitSource: return "explicit-fbx";
+    case MaterialSurfaceSource::CompatibilityRule: return "compat-rule";
+    case MaterialSurfaceSource::ConfigOverride: return "config-override";
+    default: return "default";
+    }
 }
 
 void applyMaterialPolicy(std::vector<MaterialData>& materials,
@@ -73,17 +80,27 @@ void applyMaterialPolicy(std::vector<MaterialData>& materials,
     const auto mask = parseMaterialIndices(policy.maskIndices);
     const auto blend = parseMaterialIndices(policy.blendIndices);
     const auto doubleSided = parseMaterialIndices(policy.doubleSidedIndices);
+    const auto opaqueNames = parseMaterialNames(policy.opaqueNames);
+    const auto maskNames = parseMaterialNames(policy.maskNames);
+    const auto blendNames = parseMaterialNames(policy.blendNames);
+    const auto doubleSidedNames = parseMaterialNames(policy.doubleSidedNames);
 
     for (size_t i = 0; i < materials.size(); ++i) {
         int mode = -1;
         if (opaque.count(i) != 0) mode = 0;
         if (mask.count(i) != 0) mode = 1;
         if (blend.count(i) != 0) mode = 2;
+        if (opaqueNames.count(materials[i].name) != 0) mode = 0;
+        if (maskNames.count(materials[i].name) != 0) mode = 1;
+        if (blendNames.count(materials[i].name) != 0) mode = 2;
         if (mode >= 0) {
-            setIntParameter(materials[i], "__ayAlphaMode", mode);
+            materials[i].alphaMode = static_cast<MaterialAlphaMode>(mode);
+            materials[i].surfaceSource = MaterialSurfaceSource::ConfigOverride;
         }
-        if (doubleSided.count(i) != 0) {
-            setBoolParameter(materials[i], "__ayDoubleSided", true);
+        if (doubleSided.count(i) != 0
+            || doubleSidedNames.count(materials[i].name) != 0) {
+            materials[i].doubleSided = true;
+            materials[i].surfaceSource = MaterialSurfaceSource::ConfigOverride;
         }
     }
 }
@@ -157,6 +174,16 @@ ConversionResult FBXConverter::convert() {
     }
 
     applyMaterialPolicy(asset->materials, _materialPolicy);
+
+    for (size_t i = 0; i < asset->materials.size(); ++i) {
+        const MaterialData& material = asset->materials[i];
+        ayt::log::info(
+            "[FBXConverter] material[%zu] name='%s' alpha=%s cutoff=%.3f "
+            "doubleSided=%s source=%s",
+            i, material.name.c_str(), alphaModeName(material.alphaMode),
+            material.alphaCutoff, material.doubleSided ? "true" : "false",
+            surfaceSourceName(material.surfaceSource));
+    }
 
     ayt::log::info("[FBXConverter] Parsed FBX - meshes=%zu materials=%zu textures=%zu skeletons=%zu",
              asset->meshes.size(), asset->materials.size(),
@@ -344,6 +371,9 @@ ConversionResult FBXConverter::convert() {
 
     result.textureMode = _cookTextures ? "cook" : "raw";
     result.materialPolicyTag = _materialPolicy.tag;
+    // Keep this sidecar discriminator coupled to the complete cooked FBX
+    // coordinate, skinning and material-surface contract.
+    result.importerContractTag = kFbxImporterContractTag;
 
     // 8. 写入依赖文件
     if (!outputDir.empty()) {

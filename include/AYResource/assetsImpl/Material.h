@@ -30,6 +30,9 @@ public:
     // ===== IMaterial =====
     const char* getName() const override { return _name.c_str(); }
     const char* getShader() const override { return _shader.c_str(); }
+    MaterialAlphaMode getAlphaMode() const override { return _alphaMode; }
+    Float32 getAlphaCutoff() const override { return _alphaCutoff; }
+    Bool isDoubleSided() const override { return _doubleSided; }
 
     UInt32 getParameterCount() const override { return static_cast<UInt32>(_params.size()); }
     bool hasParameter(const char* name) const override;
@@ -62,6 +65,12 @@ public:
     // ===== Setters =====
     void setName(const std::string& name) { _name = name; }
     void setShader(const std::string& shader) { _shader = shader; }
+    void setSurfaceProperties(MaterialAlphaMode alphaMode, Float32 alphaCutoff,
+                              Bool doubleSided) {
+        _alphaMode = alphaMode;
+        _alphaCutoff = alphaCutoff;
+        _doubleSided = doubleSided;
+    }
 
     void setFloat(const char* name, Float32 value);
     void setInt(const char* name, Int32 value);
@@ -197,6 +206,13 @@ private:
     // ===== Basic info =====
     std::string _name;
     std::string _shader;
+    MaterialAlphaMode _alphaMode = MaterialAlphaMode::Opaque;
+    Float32 _alphaCutoff = 0.5f;
+    Bool _doubleSided = false;
+    // Legacy MaterialFile segments had no per-material header. Keep the
+    // encoding version so getMaterialDataSize() reports the bytes actually
+    // consumed when reading one of those old multi-material packs.
+    UInt8 _materialDataEncodingVersion = 2;
 
     // ===== Path =====
     std::string _path;

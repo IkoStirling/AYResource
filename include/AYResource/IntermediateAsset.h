@@ -36,6 +36,22 @@ enum class MaterialParamType : UInt8 {
     Bool = 9
 };
 
+// Surface routing is material metadata, not a shader parameter.  Keeping it
+// typed here lets every source converter produce the same contract and keeps
+// AYRenderer from inferring pass selection from texture pixels.
+enum class MaterialAlphaMode : UInt8 {
+    Opaque = 0,
+    Mask = 1,
+    Blend = 2
+};
+
+enum class MaterialSurfaceSource : UInt8 {
+    Default = 0,
+    ExplicitSource = 1,
+    CompatibilityRule = 2,
+    ConfigOverride = 3
+};
+
 // ===== 中间数据结构 =====
 
 struct Param {
@@ -81,6 +97,10 @@ struct MeshData {
 struct MaterialData {
     std::string name;
     std::string shader;
+    MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
+    float alphaCutoff = 0.5f;
+    bool doubleSided = false;
+    MaterialSurfaceSource surfaceSource = MaterialSurfaceSource::Default;
     std::vector<Param> parameters;
     // 原始纹理路径（用于 Converter 查找源文件）
     std::vector<std::string> texturePaths;

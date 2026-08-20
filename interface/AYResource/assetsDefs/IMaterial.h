@@ -15,6 +15,9 @@ public:
     // ===== Properties =====
     virtual const char* getName() const = 0;
     virtual const char* getShader() const = 0;
+    virtual MaterialAlphaMode getAlphaMode() const = 0;
+    virtual Float32 getAlphaCutoff() const = 0;
+    virtual Bool isDoubleSided() const = 0;
 
     // ===== Parameters =====
     virtual UInt32 getParameterCount() const = 0;
@@ -46,7 +49,9 @@ public:
     virtual const char* getTexture(const char* name) const = 0;
 
     // ===== Constants =====
-    static constexpr UInt32 VERSION = 1;
+    // v2 promotes surface routing out of magic shader parameters. The loader
+    // still accepts v1 and migrates __ay* parameters into these typed fields.
+    static constexpr UInt32 VERSION = 2;
     static constexpr UInt32 MAGIC = 0x544D5941; // 'AYMT'
 };
 

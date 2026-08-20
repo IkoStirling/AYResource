@@ -8,6 +8,9 @@
 namespace ayt::resource
 {
 
+inline constexpr const char* kFbxImporterContractTag =
+    "fbx-assimp-lh-yup-zfwd-ccw-uvtop-m-surface-v4";
+
 // Optional per-source material policy supplied by editor/project config.
 // FBX often exposes a TransparencyFactor texture for every material while
 // omitting a usable alpha-mode flag, so importers need an explicit override
@@ -18,6 +21,13 @@ struct MaterialImportPolicy {
     std::string maskIndices;
     std::string blendIndices;
     std::string doubleSidedIndices;
+    // Stable overrides. Entries are separated with ';' so material names may
+    // contain spaces or commas. Name rules take precedence over legacy index
+    // rules and survive FBX material reordering.
+    std::string opaqueNames;
+    std::string maskNames;
+    std::string blendNames;
+    std::string doubleSidedNames;
 };
 
 // ===== ConversionResult — 转换结果结构 =====
@@ -53,6 +63,9 @@ struct ConversionResult {
     // Cache discriminator for material classification. A requested non-empty
     // tag invalidates legacy sidecars that lack the imported surface modes.
     std::string materialPolicyTag;
+    // Importer-owned cache discriminator for coordinate, skeleton palette and
+    // binary semantic changes. Old FBX sidecars without it must be rebuilt.
+    std::string importerContractTag;
 
     // JSON 序列化（离线模式用）
     std::string toJson() const;

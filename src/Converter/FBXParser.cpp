@@ -3,12 +3,14 @@
 #include "AYResource/assetsDefs/IMesh.h"
 #include <assimp/scene.h>
 #include <assimp/Importer.hpp>
+#include <assimp/config.h>
 #include <assimp/postprocess.h>
 #include <unordered_map>
 #include <unordered_set>
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
+#include <functional>
 
 namespace ayt::resource
 {
@@ -26,8 +28,18 @@ bool FBXParser::parse(const std::string& sourcePath) {
     }
 
     Assimp::Importer importer;
+    // FBXImporter already interprets the file's declared Up axis unless this
+    // property is explicitly disabled. Convert source units to meters before
+    // post-processing so meshes, node translations, bone offsets and
+    // animation translations all share the same scale.
+    importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_IGNORE_UP_DIRECTION, false);
+    importer.SetPropertyBool(AI_CONFIG_FBX_CONVERT_TO_M, true);
 
-    unsigned int flags = aiProcess_Triangulate | aiProcess_JoinIdenticalVertices;
+    unsigned int flags = aiProcess_Triangulate
+                       | aiProcess_JoinIdenticalVertices
+                       | aiProcess_MakeLeftHanded
+                       | aiProcess_FlipWindingOrder
+                       | aiProcess_LimitBoneWeights;
     if (_loadOption == IConverter::LoadOption::MeshOnly) {
         // MeshOnly: 最小后处理
     } else {
@@ -47,6 +59,7 @@ bool FBXParser::parse(const std::string& sourcePath) {
     }
 
     _result = std::make_unique<IntermediateAsset>();
+    _prepareSkeletonMapping(scene);
 
     // 解析所有 Mesh - Submesh 永不分离，按顶级节点分组
     if (_separateModels) {
@@ -71,6 +84,9 @@ bool FBXParser::parse(const std::string& sourcePath) {
 
     // 解析所有 Skeleton
     _parseSkeletons(scene);
+    if (!_validateSkinningContract()) {
+        return false;
+    }
 
     // R-02: 解析 Animations (MeshOnly 跳过;Full 时全量提取)
     if (_loadOption != IConverter::LoadOption::MeshOnly) {
@@ -82,6 +98,75 @@ bool FBXParser::parse(const std::string& sourcePath) {
 
 std::unique_ptr<IntermediateAsset> FBXParser::getResult() {
     return std::move(_result);
+}
+
+namespace {
+
+ayt::math::Float4x4 toAyMatrix(const aiMatrix4x4& source)
+{
+    ayt::math::Float4x4 out;
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            out(r, c) = source[r][c];
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+void FBXParser::_prepareSkeletonMapping(const aiScene* scene)
+{
+    _boneNameToIndex.clear();
+    _boneOffsets.clear();
+    _boneNodeNames.clear();
+    if (!scene) return;
+
+    // aiBone::mOffsetMatrix is the authoritative mesh-bind -> bone-bind
+    // transform. Keep the first value for duplicate bone names; FBX meshes in
+    // one armature should expose the same offset for every occurrence.
+    for (unsigned int mi = 0; mi < scene->mNumMeshes; ++mi) {
+        const aiMesh* mesh = scene->mMeshes[mi];
+        if (!mesh) continue;
+        for (unsigned int bi = 0; bi < mesh->mNumBones; ++bi) {
+            const aiBone* bone = mesh->mBones[bi];
+            if (!bone) continue;
+            const std::string name = bone->mName.C_Str();
+            _boneNodeNames.insert(name);
+            _boneOffsets.emplace(name, toAyMatrix(bone->mOffsetMatrix));
+        }
+    }
+
+    // Runtime palettes require parent-before-child ordering. Assign the
+    // scene-wide indices by hierarchy, never by per-mesh mBones order.
+    std::function<void(const aiNode*)> visit = [&](const aiNode* node) {
+        if (!node) return;
+        const std::string name = node->mName.C_Str();
+        if (_boneNodeNames.find(name) != _boneNodeNames.end()
+            && _boneNameToIndex.find(name) == _boneNameToIndex.end()) {
+            _boneNameToIndex.emplace(
+                name, static_cast<UInt32>(_boneNameToIndex.size()));
+        }
+        for (unsigned int i = 0; i < node->mNumChildren; ++i) {
+            visit(node->mChildren[i]);
+        }
+    };
+    visit(scene->mRootNode);
+
+    // Malformed files can reference a bone with no matching aiNode. Preserve
+    // a deterministic slot so vertex weights never silently target bone 0;
+    // _parseSkeletons emits an identity-rest fallback for these slots.
+    std::vector<std::string> missingNames;
+    for (const std::string& name : _boneNodeNames) {
+        if (_boneNameToIndex.find(name) == _boneNameToIndex.end()) {
+            missingNames.push_back(name);
+        }
+    }
+    std::sort(missingNames.begin(), missingNames.end());
+    for (const std::string& name : missingNames) {
+            _boneNameToIndex.emplace(
+                name, static_cast<UInt32>(_boneNameToIndex.size()));
+    }
 }
 
 // 辅助函数：复制顶点属性数据
@@ -187,13 +272,15 @@ void FBXParser::_parseAllMeshesAsOne(const aiScene* scene) {
     }
     if (mergedAttributeMask & (1u << static_cast<UInt8>(MeshAttribute::SkinWeight))) {
         mesh.skinWeights.resize(totalVertexCount * 8, 0.0f);  // 4 indices + 4 weights per vertex
-        // 初始化：每个顶点的默认权重（如果没有骨骼影响）
+        // Start empty. A fallback to bone 0 is installed only after all real
+        // influences have been collected; pre-seeding weight0=1 blended every
+        // skinned vertex with bone 0 and visibly distorted multi-part models.
         for (UInt32 v = 0; v < totalVertexCount; v++) {
             mesh.skinWeights[v * 8 + 0] = 0.0f;  // bone index 0
             mesh.skinWeights[v * 8 + 1] = 0.0f;  // bone index 1
             mesh.skinWeights[v * 8 + 2] = 0.0f;  // bone index 2
             mesh.skinWeights[v * 8 + 3] = 0.0f;  // bone index 3
-            mesh.skinWeights[v * 8 + 4] = 1.0f;  // weight 0 = 1 (默认完全受骨骼0影响)
+            mesh.skinWeights[v * 8 + 4] = 0.0f;
             mesh.skinWeights[v * 8 + 5] = 0.0f;  // weight 1
             mesh.skinWeights[v * 8 + 6] = 0.0f;  // weight 2
             mesh.skinWeights[v * 8 + 7] = 0.0f;  // weight 3
@@ -267,19 +354,16 @@ void FBXParser::_parseAllMeshesAsOne(const aiScene* scene) {
 
         // 复制骨骼权重数据
         if (mesh.attributeMask & (1u << static_cast<UInt8>(MeshAttribute::SkinWeight))) {
-            // 构建骨骼名称到局部索引的映射
-            std::unordered_map<std::string, UInt32> boneNameToLocalIndex;
-            for (UInt32 bi = 0; bi < m->mNumBones; bi++) {
-                boneNameToLocalIndex[m->mBones[bi]->mName.C_Str()] = bi;
-            }
-
             // 遍历每个骨骼，填充顶点权重
             for (UInt32 bi = 0; bi < m->mNumBones; bi++) {
                 const aiBone* bone = m->mBones[bi];
+                const auto globalBone =
+                    _boneNameToIndex.find(bone->mName.C_Str());
+                if (globalBone == _boneNameToIndex.end()) continue;
                 for (unsigned int wi = 0; wi < bone->mNumWeights; wi++) {
                     const aiVertexWeight& vw = bone->mWeights[wi];
                     UInt32 vertexIndex = vertexOffset + vw.mVertexId;
-                    UInt32 slot = 0;
+                    UInt32 slot = 4;
 
                     // 找到第一个空的权重槽
                     for (UInt32 s = 0; s < 4; s++) {
@@ -289,8 +373,10 @@ void FBXParser::_parseAllMeshesAsOne(const aiScene* scene) {
                         }
                     }
 
-                    // 填充骨骼索引和权重
-                    mesh.skinWeights[vertexIndex * 8 + slot] = static_cast<float>(bi);  // bone index (存储为float)
+                    if (slot == 4) continue;
+                    // Store the scene-wide SkeletonData palette index.
+                    mesh.skinWeights[vertexIndex * 8 + slot] =
+                        static_cast<float>(globalBone->second);
                     mesh.skinWeights[vertexIndex * 8 + 4 + slot] = vw.mWeight;           // weight
                 }
             }
@@ -305,6 +391,9 @@ void FBXParser::_parseAllMeshesAsOne(const aiScene* scene) {
                     for (UInt32 s = 0; s < 4; s++) {
                         mesh.skinWeights[(vertexOffset + v) * 8 + 4 + s] /= totalWeight;
                     }
+                } else {
+                    mesh.skinWeights[(vertexOffset + v) * 8 + 0] = 0.0f;
+                    mesh.skinWeights[(vertexOffset + v) * 8 + 4] = 1.0f;
                 }
             }
         }
@@ -410,7 +499,7 @@ void FBXParser::_collectNodeMeshes(const aiNode* node, const aiScene* scene, con
                 mesh.skinWeights[v * 8 + 1] = 0.0f;
                 mesh.skinWeights[v * 8 + 2] = 0.0f;
                 mesh.skinWeights[v * 8 + 3] = 0.0f;
-                mesh.skinWeights[v * 8 + 4] = 1.0f;
+                mesh.skinWeights[v * 8 + 4] = 0.0f;
                 mesh.skinWeights[v * 8 + 5] = 0.0f;
                 mesh.skinWeights[v * 8 + 6] = 0.0f;
                 mesh.skinWeights[v * 8 + 7] = 0.0f;
@@ -484,26 +573,25 @@ void FBXParser::_collectNodeMeshes(const aiNode* node, const aiScene* scene, con
 
             // 复制骨骼权重数据
             if (mesh.attributeMask & (1u << static_cast<UInt8>(MeshAttribute::SkinWeight))) {
-                // 构建骨骼名称到局部索引的映射
-                std::unordered_map<std::string, UInt32> boneNameToLocalIndex;
-                for (UInt32 bi = 0; bi < m->mNumBones; bi++) {
-                    boneNameToLocalIndex[m->mBones[bi]->mName.C_Str()] = bi;
-                }
-
                 // 遍历每个骨骼，填充顶点权重
                 for (UInt32 bi = 0; bi < m->mNumBones; bi++) {
                     const aiBone* bone = m->mBones[bi];
+                    const auto globalBone =
+                        _boneNameToIndex.find(bone->mName.C_Str());
+                    if (globalBone == _boneNameToIndex.end()) continue;
                     for (unsigned int wi = 0; wi < bone->mNumWeights; wi++) {
                         const aiVertexWeight& vw = bone->mWeights[wi];
                         UInt32 vertexIndex = vertexOffset + vw.mVertexId;
-                        UInt32 slot = 0;
+                        UInt32 slot = 4;
                         for (UInt32 s = 0; s < 4; s++) {
                             if (mesh.skinWeights[vertexIndex * 8 + 4 + s] < 0.001f) {
                                 slot = s;
                                 break;
                             }
                         }
-                        mesh.skinWeights[vertexIndex * 8 + slot] = static_cast<float>(bi);
+                        if (slot == 4) continue;
+                        mesh.skinWeights[vertexIndex * 8 + slot] =
+                            static_cast<float>(globalBone->second);
                         mesh.skinWeights[vertexIndex * 8 + 4 + slot] = vw.mWeight;
                     }
                 }
@@ -518,6 +606,9 @@ void FBXParser::_collectNodeMeshes(const aiNode* node, const aiScene* scene, con
                         for (UInt32 s = 0; s < 4; s++) {
                             mesh.skinWeights[(vertexOffset + v) * 8 + 4 + s] /= totalWeight;
                         }
+                    } else {
+                        mesh.skinWeights[(vertexOffset + v) * 8 + 0] = 0.0f;
+                        mesh.skinWeights[(vertexOffset + v) * 8 + 4] = 1.0f;
                     }
                 }
             }
@@ -638,10 +729,11 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
     // RenderAssetBridge's root-relative shader resolution.
     material.shader = "pbr.phoskia";
 
-    // Import surface metadata as ordinary .aymat parameters so the v1 binary
-    // layout remains compatible. FBX files that expose real scalar opacity or
-    // blend state get Blend; otherwise default to Opaque. Project/editor
-    // material policy can override these values after parsing.
+    // Import surface metadata into the typed material contract. FBX files
+    // that expose a real scalar opacity or blend state get Blend; otherwise
+    // stay conservatively Opaque. An opacity texture alone is deliberately
+    // not enough: many FBX exporters connect the base-color texture to the
+    // TransparencyFactor slot for every material.
     float importedOpacity = 1.0f;
     const bool hasOpacity =
         mat->Get(AI_MATKEY_OPACITY, importedOpacity) == AI_SUCCESS;
@@ -651,24 +743,14 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
     int importedTwoSided = 0;
     (void)mat->Get(AI_MATKEY_TWOSIDED, importedTwoSided);
 
-    Param alphaModeParam;
-    alphaModeParam.name = "__ayAlphaMode";
-    alphaModeParam.type = MaterialParamType::Int;
-    alphaModeParam.intValue =
-        ((hasOpacity && importedOpacity < 0.999f) || hasBlend) ? 2 : 0;
-    material.parameters.push_back(alphaModeParam);
-
-    Param alphaCutoffParam;
-    alphaCutoffParam.name = "__ayAlphaCutoff";
-    alphaCutoffParam.type = MaterialParamType::Float;
-    alphaCutoffParam.floatValue = 0.5f;
-    material.parameters.push_back(alphaCutoffParam);
-
-    Param doubleSidedParam;
-    doubleSidedParam.name = "__ayDoubleSided";
-    doubleSidedParam.type = MaterialParamType::Bool;
-    doubleSidedParam.boolValue = importedTwoSided != 0;
-    material.parameters.push_back(doubleSidedParam);
+    const bool explicitBlend = (hasOpacity && importedOpacity < 0.999f) || hasBlend;
+    material.alphaMode = explicitBlend
+        ? MaterialAlphaMode::Blend : MaterialAlphaMode::Opaque;
+    material.alphaCutoff = 0.5f;
+    material.doubleSided = importedTwoSided != 0;
+    material.surfaceSource = (explicitBlend || material.doubleSided)
+        ? MaterialSurfaceSource::ExplicitSource
+        : MaterialSurfaceSource::Default;
 
     // baseColor (albedo)
     aiColor4D baseColor;
@@ -816,35 +898,105 @@ UInt8 FBXParser::_getMeshAttributeMask(const aiMesh* m) {
 }
 
 void FBXParser::_parseSkeletons(const aiScene* scene) {
-    // 收集所有骨骼节点名称（在任意 mesh 中出现的骨骼）
-    std::unordered_set<std::string> boneNodeNames;
-    for (unsigned int mi = 0; mi < scene->mNumMeshes; mi++) {
-        const aiMesh* m = scene->mMeshes[mi];
-        for (unsigned int bi = 0; bi < m->mNumBones; bi++) {
-            boneNodeNames.insert(std::string(m->mBones[bi]->mName.C_Str()));
-        }
-    }
-
-    if (boneNodeNames.empty()) {
+    if (_boneNodeNames.empty()) {
         return; // 没有骨骼
     }
 
-    // 创建 SkeletonData 并收集骨骼
+    // Pre-size to the exact scene-wide palette used by mesh weights.
     SkeletonData skeleton;
     skeleton.name = "Skeleton";
-    _collectSkeletonBones(scene->mRootNode, -1, boneNodeNames, skeleton);
+    skeleton.bones.resize(_boneNameToIndex.size());
+    _collectSkeletonBones(scene->mRootNode, -1, _boneNodeNames, skeleton,
+                          ayt::math::Float4x4::identity());
+
+    // A referenced aiBone without a matching node is malformed but can still
+    // be represented deterministically. Keep its authoritative offset and an
+    // identity rest transform; diagnostics make the degradation visible.
+    for (const auto& entry : _boneNameToIndex) {
+        BoneData& bone = skeleton.bones[entry.second];
+        if (!bone.name.empty()) continue;
+        bone.name = entry.first;
+        bone.parentIndex = -1;
+        const auto offset = _boneOffsets.find(entry.first);
+        bone.inverseBindMatrix = offset != _boneOffsets.end()
+            ? offset->second : ayt::math::Float4x4::identity();
+        std::fprintf(stderr,
+                     "[FBXParser] bone '%s' has no matching node; "
+                     "using identity rest pose\n",
+                     entry.first.c_str());
+    }
 
     if (!skeleton.bones.empty()) {
         _result->skeletons.push_back(std::move(skeleton));
     }
 }
 
+bool FBXParser::_validateSkinningContract() const
+{
+    std::size_t boneCount = 0;
+    if (!_result->skeletons.empty()) {
+        boneCount = _result->skeletons.front().bones.size();
+        for (std::size_t i = 0; i < boneCount; ++i) {
+            const BoneData& bone = _result->skeletons.front().bones[i];
+            if (bone.name.empty()
+                || bone.parentIndex >= static_cast<int>(i)) {
+                std::fprintf(stderr,
+                             "[FBXParser] invalid skeleton palette at bone %zu "
+                             "name='%s' parent=%d\n",
+                             i, bone.name.c_str(), bone.parentIndex);
+                return false;
+            }
+        }
+    }
+
+    for (const MeshData& mesh : _result->meshes) {
+        if (mesh.skinWeights.empty()) continue;
+        const std::size_t vertexCount = mesh.positions.size() / 3u;
+        if (boneCount == 0 || mesh.skinWeights.size() != vertexCount * 8u) {
+            std::fprintf(stderr,
+                         "[FBXParser] mesh '%s' has invalid skin payload "
+                         "(vertices=%zu floats=%zu bones=%zu)\n",
+                         mesh.name.c_str(), vertexCount,
+                         mesh.skinWeights.size(), boneCount);
+            return false;
+        }
+        for (std::size_t v = 0; v < vertexCount; ++v) {
+            float sum = 0.0f;
+            for (std::size_t slot = 0; slot < 4; ++slot) {
+                const float indexValue = mesh.skinWeights[v * 8u + slot];
+                const float weight = mesh.skinWeights[v * 8u + 4u + slot];
+                const UInt32 index = static_cast<UInt32>(indexValue + 0.5f);
+                if (weight > 0.0f
+                    && (index >= boneCount
+                        || std::abs(indexValue - static_cast<float>(index)) > 0.001f)) {
+                    std::fprintf(stderr,
+                                 "[FBXParser] mesh '%s' vertex %zu references "
+                                 "invalid bone %.3f/%zu\n",
+                                 mesh.name.c_str(), v, indexValue, boneCount);
+                    return false;
+                }
+                sum += weight;
+            }
+            if (std::abs(sum - 1.0f) > 0.002f) {
+                std::fprintf(stderr,
+                             "[FBXParser] mesh '%s' vertex %zu weight sum %.6f\n",
+                             mesh.name.c_str(), v, sum);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 void FBXParser::_collectSkeletonBones(const aiNode* node, int parentIndex,
                                       const std::unordered_set<std::string>& boneNodeNames,
-                                      SkeletonData& skeleton) {
+                                      SkeletonData& skeleton,
+                                      const ayt::math::Float4x4& fromParentBone) {
     if (!node) return;
 
     std::string nodeName = node->mName.C_Str();
+    const ayt::math::Float4x4 local =
+        fromParentBone * toAyMatrix(node->mTransformation);
 
     // 检查是否是骨骼节点
     bool isBone = boneNodeNames.find(nodeName) != boneNodeNames.end();
@@ -855,34 +1007,39 @@ void FBXParser::_collectSkeletonBones(const aiNode* node, int parentIndex,
         bone.name = nodeName;
         bone.parentIndex = parentIndex;
 
-        // 获取节点变换作为绑定姿势的逆矩阵
-        aiMatrix4x4 invBind = node->mTransformation;
-        invBind.Inverse();
-        // 转换为 Float4x4 (Assimp 是 column-major，AYMath 也是 column-major)
-        for (int r = 0; r < 4; r++) {
-            for (int c = 0; c < 4; c++) {
-                bone.inverseBindMatrix(r, c) = invBind[r][c];
-            }
+        // The offset is defined by the skin cluster, not by inverse(local).
+        // Using inverse(node local) only worked accidentally for one-bone
+        // hierarchies and broke bind pose as soon as parents were present.
+        const auto offset = _boneOffsets.find(nodeName);
+        bone.inverseBindMatrix = offset != _boneOffsets.end()
+            ? offset->second : local.inverse();
+
+        // Fold non-bone ancestors between this bone and its nearest runtime
+        // bone parent into one local transform. This preserves FBX armature/
+        // pivot nodes without adding palette slots that meshes never index.
+        if (!local.decompose(bone.localPosition,
+                             bone.localRotation,
+                             bone.localScale)) {
+            bone.localPosition = ayt::math::FVector3(0, 0, 0);
+            bone.localRotation = ayt::math::FQuaternion::identity();
+            bone.localScale = ayt::math::FVector3(1, 1, 1);
         }
 
-        // R-02: 从 aiNode::mTransformation 分解 TRS,作为本地 rest pose
-        // Assimp 的 Decompose 返回 void,对正常 TRS 输入总是写入值;
-        // 极端退化情况(如全 0 缩放)由调用方在后续步过滤,这里直接采信。
-        aiVector3D trans;
-        aiQuaternion rot;
-        aiVector3D scale;
-        node->mTransformation.Decompose(scale, rot, trans);
-        bone.localPosition = ayt::math::FVector3(trans.x, trans.y, trans.z);
-        bone.localRotation = ayt::math::FQuaternion(rot.x, rot.y, rot.z, rot.w);
-        bone.localScale    = ayt::math::FVector3(scale.x, scale.y, scale.z);
-
-        thisIndex = static_cast<int>(skeleton.bones.size());
-        skeleton.bones.push_back(std::move(bone));
+        const auto mapped = _boneNameToIndex.find(nodeName);
+        if (mapped != _boneNameToIndex.end()
+            && mapped->second < skeleton.bones.size()) {
+            thisIndex = static_cast<int>(mapped->second);
+            skeleton.bones[mapped->second] = std::move(bone);
+        }
     }
 
     // 递归处理子节点
+    const ayt::math::Float4x4 childAccumulator = isBone
+        ? ayt::math::Float4x4::identity() : local;
     for (unsigned int i = 0; i < node->mNumChildren; i++) {
-        _collectSkeletonBones(node->mChildren[i], thisIndex, boneNodeNames, skeleton);
+        _collectSkeletonBones(node->mChildren[i],
+                              isBone ? thisIndex : parentIndex,
+                              boneNodeNames, skeleton, childAccumulator);
     }
 }
 

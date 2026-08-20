@@ -119,6 +119,10 @@ bool tryLoadCachedConversion(const ImportOptions& options,
     }
 
     const std::string ext = importExtensionOf(options.sourcePath);
+    // v4 contract covers surface semantics plus LH/Y-up/+Z/CCW/top-UV/meters.
+    if (ext == "fbx" && out.importerContractTag != kFbxImporterContractTag) {
+        return false;
+    }
     if (options.requireCharacterAssets && isSceneExtension(ext)) {
         bool hasMesh = false;
         bool hasSkel = false;

@@ -3,6 +3,7 @@
 #include "AYResource/IConverter.h"
 #include <string>
 #include <memory>
+#include <unordered_map>
 #include <unordered_set>
 
 // 前向声明
@@ -62,6 +63,12 @@ private:
     IConverter::LoadOption _loadOption = IConverter::LoadOption::Full;  // 默认 Full 模式
     bool _separateModels = true;  // 默认分离，每个 aiMesh 一个 MeshData
     std::unique_ptr<IntermediateAsset> _result;
+    // One scene-wide palette order shared by every mesh and SkeletonData.
+    // aiMesh::mBones is mesh-local and cannot be written directly as the
+    // runtime joint index when a character contains multiple submeshes.
+    std::unordered_map<std::string, UInt32> _boneNameToIndex;
+    std::unordered_map<std::string, ayt::math::Float4x4> _boneOffsets;
+    std::unordered_set<std::string> _boneNodeNames;
 
     // 解析辅助
     void _parseMesh(const void* aiMesh, size_t index, const std::string& uniqueName);
@@ -71,9 +78,12 @@ private:
     void _parseAllMeshesAsOne(const aiScene* scene);
     void _collectNodeMeshes(const aiNode* node, const aiScene* scene, const std::string& parentPath);
     void _parseSkeletons(const aiScene* scene);
+    void _prepareSkeletonMapping(const aiScene* scene);
+    bool _validateSkinningContract() const;
     void _collectSkeletonBones(const aiNode* node, int parentIndex,
                                const std::unordered_set<std::string>& boneNodeNames,
-                               SkeletonData& skeleton);
+                               SkeletonData& skeleton,
+                               const ayt::math::Float4x4& fromParentBone);
     // R-02: 把 aiNodeAnim 的 channel 转换为 3 条 KeyframeTrack (position/rotation/scale)
     // valueType 由 property 推断 (rotation → Quaternion, 其它 → Vector3)
     void _parseAnimations(const aiScene* scene);

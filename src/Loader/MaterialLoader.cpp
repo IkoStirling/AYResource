@@ -13,9 +13,9 @@ namespace ayt::resource
 
 // ===== Material 文件头 (二进制格式) =====
 #pragma pack(push, 1)
-struct MaterialBinaryHeader {
+struct MaterialBinaryHeaderV1 {
     UInt32 magic;              // 'AYMT' = 0x544D5941
-    UInt16 version;            // 版本 = 1
+    UInt16 version;
     FGuid guid;                // 资源唯一标识 (16 bytes)
     UInt8  flags;              // 标志
     UInt8  parameterCount;     // 参数数量
@@ -23,7 +23,31 @@ struct MaterialBinaryHeader {
     UInt32 shaderLength;       // shader 字符串长度
     UInt32 dataSize;           // 参数数据总大小
 };
+
+struct MaterialBinaryHeaderV2 {
+    UInt32 magic;
+    UInt16 version;
+    FGuid guid;
+    // bits 0..1: MaterialAlphaMode, bit 2: double-sided.
+    UInt8  flags;
+    UInt8  parameterCount;
+    UInt32 nameLength;
+    UInt32 shaderLength;
+    UInt32 dataSize;
+    Float32 alphaCutoff;
+};
+
+struct MaterialDataSurfaceHeaderV2 {
+    UInt32 magic; // 'AMD2'
+    UInt8 flags;
+    UInt8 reserved[3];
+    Float32 alphaCutoff;
+};
 #pragma pack(pop)
+
+constexpr UInt8 kAlphaModeMask = 0x03u;
+constexpr UInt8 kDoubleSidedFlag = 0x04u;
+constexpr UInt32 kMaterialDataSurfaceMagicV2 = 0x32444D41u;
 
 // ===== Material =====
 
@@ -33,6 +57,10 @@ void Material::clearImpl() {
     _params.clear();
     _name.clear();
     _shader.clear();
+    _alphaMode = MaterialAlphaMode::Opaque;
+    _alphaCutoff = 0.5f;
+    _doubleSided = false;
+    _materialDataEncodingVersion = 2;
     _path.clear();
 }
 
@@ -278,7 +306,7 @@ bool Material::load(const std::string& path) {
     }
 
     size_t fileSize = file.size();
-    if (fileSize < sizeof(MaterialBinaryHeader)) {
+    if (fileSize < sizeof(MaterialBinaryHeaderV1)) {
         return false;
     }
 
@@ -291,25 +319,39 @@ bool Material::load(const std::string& path) {
 }
 
 bool Material::loadFromBinary(const void* data, size_t size) {
-    if (!data || size < sizeof(MaterialBinaryHeader)) {
+    if (!data || size < sizeof(MaterialBinaryHeaderV1)) {
         return false;
     }
 
     clear();
 
     const UInt8* ptr = static_cast<const UInt8*>(data);
-    const MaterialBinaryHeader* header = reinterpret_cast<const MaterialBinaryHeader*>(ptr);
+    const MaterialBinaryHeaderV1* header =
+        reinterpret_cast<const MaterialBinaryHeaderV1*>(ptr);
 
     // 验证 magic 和 version
-    if (header->magic != IMaterial::MAGIC || header->version != IMaterial::VERSION) {
+    if (header->magic != IMaterial::MAGIC
+        || (header->version != 1 && header->version != IMaterial::VERSION)) {
         return false;
+    }
+
+    size_t headerSize = sizeof(MaterialBinaryHeaderV1);
+    if (header->version >= 2) {
+        if (size < sizeof(MaterialBinaryHeaderV2)) return false;
+        const auto* v2 = reinterpret_cast<const MaterialBinaryHeaderV2*>(ptr);
+        const UInt8 mode = v2->flags & kAlphaModeMask;
+        if (mode > static_cast<UInt8>(MaterialAlphaMode::Blend)) return false;
+        _alphaMode = static_cast<MaterialAlphaMode>(mode);
+        _alphaCutoff = v2->alphaCutoff;
+        _doubleSided = (v2->flags & kDoubleSidedFlag) != 0;
+        headerSize = sizeof(MaterialBinaryHeaderV2);
     }
 
     // 读取 GUID
     _guid = header->guid;
 
     // 读取 name
-    size_t offset = sizeof(MaterialBinaryHeader);
+    size_t offset = headerSize;
     if (header->nameLength > 0) {
         if (size < offset + header->nameLength) return false;
         _name.assign(reinterpret_cast<const char*>(ptr + offset), header->nameLength);
@@ -402,6 +444,24 @@ bool Material::loadFromBinary(const void* data, size_t size) {
         }
     }
 
+    // Compatibility migration for v1 assets produced by the first FBX
+    // surface-routing implementation. Renderer code only consumes the typed
+    // fields from this point onward.
+    if (header->version == 1) {
+        if (hasParameter("__ayAlphaMode")) {
+            const Int32 mode = getInt("__ayAlphaMode");
+            if (mode >= 0 && mode <= 2) {
+                _alphaMode = static_cast<MaterialAlphaMode>(mode);
+            }
+        }
+        if (hasParameter("__ayAlphaCutoff")) {
+            _alphaCutoff = getFloat("__ayAlphaCutoff");
+        }
+        if (hasParameter("__ayDoubleSided")) {
+            _doubleSided = getBool("__ayDoubleSided");
+        }
+    }
+
     _loaded = true;
     return true;
 }
@@ -444,26 +504,28 @@ bool Material::saveToBinary(std::vector<UInt8>& outData) const {
     }
 
     // 计算总大小
-    size_t totalSize = sizeof(MaterialBinaryHeader) + _name.size() + _shader.size() + paramsDataSize;
+    size_t totalSize = sizeof(MaterialBinaryHeaderV2) + _name.size() + _shader.size() + paramsDataSize;
     outData.resize(totalSize);
     UInt8* ptr = outData.data();
 
     // 写入 Custom Header
-    MaterialBinaryHeader header;
+    MaterialBinaryHeaderV2 header;
     std::memset(&header, 0, sizeof(header));
     header.magic = IMaterial::MAGIC;
     header.version = IMaterial::VERSION;
     header.guid = _guid;
-    header.flags = 0;
+    header.flags = static_cast<UInt8>(_alphaMode) & kAlphaModeMask;
+    if (_doubleSided) header.flags |= kDoubleSidedFlag;
     header.parameterCount = static_cast<UInt8>(_params.size());
     header.nameLength = static_cast<UInt32>(_name.size());
     header.shaderLength = static_cast<UInt32>(_shader.size());
     header.dataSize = static_cast<UInt32>(paramsDataSize);
+    header.alphaCutoff = _alphaCutoff;
 
     std::memcpy(ptr, &header, sizeof(header));
 
     // 写入 name
-    size_t offset = sizeof(MaterialBinaryHeader);
+    size_t offset = sizeof(MaterialBinaryHeaderV2);
     if (!_name.empty()) {
         std::memcpy(ptr + offset, _name.data(), _name.size());
         offset += _name.size();
@@ -563,12 +625,21 @@ bool Material::saveToMaterialData(std::vector<UInt8>& outData) const {
     }
 
     // 计算总大小：nameLength + name + shaderLength + shader + paramsLength + params
-    size_t totalSize = sizeof(UInt32) + _name.size()
+    size_t totalSize = sizeof(MaterialDataSurfaceHeaderV2)
+                      + sizeof(UInt32) + _name.size()
                       + sizeof(UInt32) + _shader.size()
                       + sizeof(UInt32) + paramsDataSize;
 
     outData.resize(totalSize);
     UInt8* ptr = outData.data();
+
+    MaterialDataSurfaceHeaderV2 surface{};
+    surface.magic = kMaterialDataSurfaceMagicV2;
+    surface.flags = static_cast<UInt8>(_alphaMode) & kAlphaModeMask;
+    if (_doubleSided) surface.flags |= kDoubleSidedFlag;
+    surface.alphaCutoff = _alphaCutoff;
+    std::memcpy(ptr, &surface, sizeof(surface));
+    ptr += sizeof(surface);
 
     // 写入 name
     UInt32 nameLen = static_cast<UInt32>(_name.size());
@@ -662,6 +733,23 @@ bool Material::loadFromMaterialData(const void* data, size_t size) {
     clear();
     const UInt8* ptr = static_cast<const UInt8*>(data);
     size_t offset = 0;
+
+    if (size >= sizeof(MaterialDataSurfaceHeaderV2)
+        && *reinterpret_cast<const UInt32*>(ptr) == kMaterialDataSurfaceMagicV2) {
+        const auto* surface =
+            reinterpret_cast<const MaterialDataSurfaceHeaderV2*>(ptr);
+        const UInt8 mode = surface->flags & kAlphaModeMask;
+        if (mode > static_cast<UInt8>(MaterialAlphaMode::Blend)) return false;
+        _alphaMode = static_cast<MaterialAlphaMode>(mode);
+        _alphaCutoff = surface->alphaCutoff;
+        _doubleSided = (surface->flags & kDoubleSidedFlag) != 0;
+        _materialDataEncodingVersion = 2;
+        offset += sizeof(MaterialDataSurfaceHeaderV2);
+    } else {
+        _materialDataEncodingVersion = 1;
+    }
+
+    if (offset + sizeof(UInt32) > size) return false;
 
     // 读取 name
     UInt32 nameLen = *reinterpret_cast<const UInt32*>(ptr + offset);
@@ -775,7 +863,8 @@ bool Material::loadFromMaterialData(const void* data, size_t size) {
 }
 
 size_t Material::getMaterialDataSize() const {
-    size_t size = 0;
+    size_t size = _materialDataEncodingVersion >= 2
+        ? sizeof(MaterialDataSurfaceHeaderV2) : 0;
     size += sizeof(UInt32) + _name.size();  // name
     size += sizeof(UInt32) + _shader.size();  // shader
 

@@ -137,6 +137,9 @@ std::string ConversionResult::toJson() const {
     if (!materialPolicyTag.empty()) {
         oss << "  \"materialPolicyTag\": \"" << materialPolicyTag << "\",\n";
     }
+    if (!importerContractTag.empty()) {
+        oss << "  \"importerContractTag\": \"" << importerContractTag << "\",\n";
+    }
     oss << "  \"resources\": [\n";
     for (size_t i = 0; i < resources.size(); i++) {
         const auto& res = resources[i];
@@ -166,6 +169,8 @@ ConversionResult ConversionResult::fromJson(const std::string& json) {
     (void)parseJsonStringField(json, 0, "textureMode", result.textureMode);
     (void)parseJsonStringField(json, 0, "materialPolicyTag",
                                result.materialPolicyTag);
+    (void)parseJsonStringField(json, 0, "importerContractTag",
+                               result.importerContractTag);
 
     // Resources MUST be parsed — Importer cache reuse checks hasMesh/hasSkel
     // on this array. A previous implementation only read dependencies, so
