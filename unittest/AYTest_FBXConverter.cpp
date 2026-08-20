@@ -12,6 +12,7 @@
 #include <vector>
 #include <fstream>
 #include <cstring>
+#include <filesystem>
 
 using namespace ayt::resource;
 using namespace ayt::math;
@@ -30,6 +31,51 @@ static std::string fbxTestOutputStaticDir() {
 }
 
 TEST_SUITE(FBXConverterTests)
+
+    TEST_CASE(ImportedMaterialUsesRuntimePbrShader) {
+        namespace fs = std::filesystem;
+        const fs::path root = ayt::test::testTmpPath("fbx_pbr_contract");
+        fs::create_directories(root);
+        const fs::path objPath = root / "triangle.obj";
+        const fs::path mtlPath = root / "triangle.mtl";
+        {
+            std::ofstream mtl(mtlPath);
+            mtl << "newmtl ImportedMaterial\n"
+                   "Kd 0.8 0.4 0.2\n"
+                   "Pm 0.7\n"
+                   "Pr 0.3\n";
+        }
+        {
+            std::ofstream obj(objPath);
+            obj << "mtllib triangle.mtl\n"
+                   "o Triangle\n"
+                   "v 0 0 0\n"
+                   "v 1 0 0\n"
+                   "v 0 1 0\n"
+                   "vt 0 0\n"
+                   "vt 1 0\n"
+                   "vt 0 1\n"
+                   "vn 0 0 1\n"
+                   "usemtl ImportedMaterial\n"
+                   "f 1/1/1 2/2/1 3/3/1\n";
+        }
+
+        FBXConverter converter(objPath.string());
+        converter.setOutputDir(root.string());
+        const ConversionResult result = converter.convert();
+
+        bool checkedMaterial = false;
+        for (const auto& resource : result.resources) {
+            if (resource.type != "Material") {
+                continue;
+            }
+            Material material;
+            CHECK(material.load((root / resource.path).string()));
+            CHECK(std::string(material.getShader()) == "pbr.phoskia");
+            checkedMaterial = true;
+        }
+        CHECK(checkedMaterial);
+    }
 
 // 注释掉 — 该 case 依赖磁盘上旧版 (Submesh 12 字节) .aymesh 文件
 // 旧文件 SUBM chunk size = N × 12,新 loader 按 N × 16 读会越界。
