@@ -188,7 +188,7 @@ private:
 
     // ===== Parameter storage =====
     struct ParameterValue {
-        MaterialParamType type;
+        MaterialParamType type = MaterialParamType::Float;
         union {
             Float32 floatValue;
             Float32 float2Value[2];
@@ -199,6 +199,15 @@ private:
             Float32 matrixValue[16]; // 4x4 matrix
         };
         std::string stringValue; // for texture paths
+
+        // Keep the string member's lifetime independent from the numeric
+        // union.  Material values are copied by unordered_map when a
+        // parameter is inserted; explicitly defaulting the special members
+        // makes that operation well-defined even in MSVC debug iterator mode.
+        ParameterValue() = default;
+        ParameterValue(const ParameterValue&) = default;
+        ParameterValue& operator=(const ParameterValue&) = default;
+        ~ParameterValue() = default;
     };
 
     std::unordered_map<std::string, ParameterValue> _params;

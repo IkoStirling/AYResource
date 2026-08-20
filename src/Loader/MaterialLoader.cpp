@@ -238,8 +238,8 @@ void Material::setFloat4(const char* name, const float value[4]) {
 void Material::setTexture(const char* name, const char* path) {
     ParameterValue pv;
     pv.type = MaterialParamType::Texture2D;
-    pv.stringValue = path;
-    _params[name] = pv;
+    pv.stringValue = path ? path : "";
+    _params[name ? name : ""] = std::move(pv);
 }
 
 void Material::setInt(const char* name, int value) {

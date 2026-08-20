@@ -4,6 +4,7 @@
 #include <AYSerializer.h>
 #include <AYStorage/Guid.h>
 #include <AYLog.h>
+#include <algorithm>
 #include <cstring>
 
 namespace ayt::resource
@@ -255,36 +256,31 @@ std::vector<ConversionResult::ConvertedResource> MaterialConverter::convertAll(
 
         material->setLoaded(true);
 
-        std::vector<UInt8> contentData;
-        const std::string name = material->getName();
-        const std::string shader = material->getShader();
-        contentData.insert(contentData.end(), name.begin(), name.end());
-        contentData.insert(contentData.end(), shader.begin(), shader.end());
-        contentData.push_back(static_cast<UInt8>(material->getAlphaMode()));
-        contentData.push_back(material->isDoubleSided() ? UInt8{1} : UInt8{0});
-        const Float32 cutoff = material->getAlphaCutoff();
-        const UInt8* cutoffBytes = reinterpret_cast<const UInt8*>(&cutoff);
-        contentData.insert(contentData.end(), cutoffBytes,
-                           cutoffBytes + sizeof(cutoff));
-        material->forEachParameterHashSink(
-            [&contentData](const std::string& pname, MaterialParamType ptype,
-                           const UInt8* bytes, size_t n) {
-                const UInt32 nameLen = static_cast<UInt32>(pname.size());
-                contentData.resize(contentData.size() + sizeof(UInt32) + nameLen);
-                UInt8* ptr = contentData.data() + contentData.size() - nameLen;
-                *reinterpret_cast<UInt32*>(ptr - sizeof(UInt32)) = nameLen;
-                memcpy(ptr, pname.data(), nameLen);
-                contentData.push_back(static_cast<UInt8>(ptype));
-                contentData.insert(contentData.end(), bytes, bytes + n);
-            });
+        std::vector<UInt8> binaryData;
+        if (!material->saveToBinary(binaryData)) {
+            ayt::log::warn("[MaterialConverter] saveToBinary failed for material %zu; skipping",
+                           i);
+            continue;
+        }
+
+        // Hash the canonical serialized representation.  This avoids a
+        // second hand-written walk over ParameterValue (which contains a
+        // string next to a numeric union) and guarantees that the GUID is
+        // derived from exactly the bytes the runtime will load.
+        std::vector<UInt8> contentData = binaryData;
+        constexpr size_t kGuidOffset = sizeof(UInt32) + sizeof(UInt16);
+        constexpr size_t kGuidSize = sizeof(ayt::math::FGuid);
+        if (contentData.size() >= kGuidOffset + kGuidSize) {
+            std::fill(contentData.begin() + kGuidOffset,
+                      contentData.begin() + kGuidOffset + kGuidSize, UInt8{0});
+        }
         const ayt::math::FGuid guid =
             ayt::storage::Guid::computeFromData(contentData.data(), contentData.size());
         material->setGuid(guid);
         lastGuid = guid;
-
-        std::vector<UInt8> binaryData;
+        // Persist the GUID that was just computed.
         if (!material->saveToBinary(binaryData)) {
-            ayt::log::warn("[MaterialConverter] saveToBinary failed for material %zu; skipping",
+            ayt::log::warn("[MaterialConverter] saveToBinary failed after GUID generation for material %zu; skipping",
                            i);
             continue;
         }
