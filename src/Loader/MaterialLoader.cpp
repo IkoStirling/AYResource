@@ -52,6 +52,7 @@ constexpr UInt32 kMaterialDataSurfaceMagicV2 = 0x32444D41u;
 // ===== Material =====
 
 Material::Material() = default;
+Material::~Material() = default;
 
 void Material::clearImpl() {
     _params.clear();

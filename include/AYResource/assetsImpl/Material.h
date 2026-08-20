@@ -20,7 +20,11 @@ class Material : public IMaterial {
 
 public:
     Material();
-    virtual ~Material() = default;
+    // Keep destruction in one AYResource translation unit. Material owns
+    // several STL objects and its private layout is not part of the public
+    // ABI; an inline defaulted destructor lets large static-library clients
+    // contribute stale COMDAT bodies after a layout change.
+    ~Material() override;
 
     // ===== IResource =====
     bool load(const std::string& path) override;
