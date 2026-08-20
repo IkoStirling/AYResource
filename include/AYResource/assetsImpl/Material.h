@@ -189,15 +189,18 @@ private:
     // ===== Parameter storage =====
     struct ParameterValue {
         MaterialParamType type = MaterialParamType::Float;
-        union {
-            Float32 floatValue;
-            Float32 float2Value[2];
-            Float32 float3Value[3];
-            Float32 float4Value[4];
-            Int32 intValue;
-            Bool boolValue;
-            Float32 matrixValue[16]; // 4x4 matrix
-        };
+        // These fields intentionally are not a union.  A union placed next
+        // to std::string has no active-member tracking and is very easy to
+        // copy incorrectly through unordered_map/debug-iterator machinery.
+        // The extra storage is negligible compared with a material and
+        // keeps every value fully initialized and independently copyable.
+        Float32 floatValue = 0.0f;
+        Float32 float2Value[2] = {0.0f, 0.0f};
+        Float32 float3Value[3] = {0.0f, 0.0f, 0.0f};
+        Float32 float4Value[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        Int32 intValue = 0;
+        Bool boolValue = false;
+        Float32 matrixValue[16] = {}; // 4x4 matrix
         std::string stringValue; // for texture paths
 
         // Keep the string member's lifetime independent from the numeric

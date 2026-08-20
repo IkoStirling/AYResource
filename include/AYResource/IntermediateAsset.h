@@ -57,15 +57,17 @@ enum class MaterialSurfaceSource : UInt8 {
 struct Param {
     std::string name;
     MaterialParamType type;
-    union {
-        float floatValue;
-        float float2Value[2];
-        float float3Value[3];
-        float float4Value[4];
-        float matrixValue[16]; // Float4x4
-        int intValue;
-        bool boolValue;
-    };
+    // Keep the intermediate representation trivially safe to copy.  FBX
+    // parameters are moved through vectors before MaterialConverter stores
+    // them in an unordered_map; an anonymous union beside std::string makes
+    // that path unnecessarily fragile in MSVC debug builds.
+    float floatValue = 0.0f;
+    float float2Value[2] = {0.0f, 0.0f};
+    float float3Value[3] = {0.0f, 0.0f, 0.0f};
+    float float4Value[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float matrixValue[16] = {};
+    int intValue = 0;
+    bool boolValue = false;
     std::string texturePath; // for Texture2D/3D/Cube
 };
 
