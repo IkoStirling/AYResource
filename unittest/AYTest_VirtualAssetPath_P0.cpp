@@ -1,5 +1,6 @@
 #include "AYTest.h"
 #include "AYResource/VirtualAssetPath.h"
+#include "AYResource/MaterialTextureContract.h"
 #include "AYResource/Converter/MaterialConverter.h"
 #include "AYResource/IntermediateAsset.h"
 #include "AYResource/assetsImpl/Material.h"
@@ -44,6 +45,34 @@ TEST_CASE(texture_path_extension_overload_contract)
           std::string("textures/skin_d.jpg"));
     CHECK(makeTextureVirtualPathFromSource("tex/skin.png", "_d", ".png") ==
           std::string("textures/tex_skin_d.png"));
+}
+
+TEST_CASE(material_texture_semantics_have_distinct_paths_and_color_spaces)
+{
+    const auto base = materialTextureContract("baseColorTexture");
+    const auto normal = materialTextureContract("normalTexture");
+    const auto roughness = materialTextureContract("roughnessTexture");
+    const auto opacity = materialTextureContract("opacityTexture");
+
+    CHECK(std::string(base.usageSuffix) == "_d");
+    CHECK(base.colorSpace == TextureColorSpace::Srgb);
+    CHECK(std::string(normal.usageSuffix) == "_n");
+    CHECK(normal.colorSpace == TextureColorSpace::Linear);
+    CHECK(normal.normalY == NormalMapY::Positive);
+    CHECK(std::string(roughness.usageSuffix) == "_r");
+    CHECK(std::string(opacity.usageSuffix) == "_o");
+    CHECK(makeTextureVirtualPath("shared", base.usageSuffix, ".png")
+          != makeTextureVirtualPath("shared", opacity.usageSuffix, ".png"));
+    CHECK(sameMaterialTextureSource(".\\Textures\\Dress.PNG",
+                                    "textures/dress.png"));
+    CHECK_FALSE(sameMaterialTextureSource("textures/dress.png",
+                                          "textures/dress-opacity.png"));
+    CHECK(materialOpacitySourceValue(MaterialOpacitySource::BaseColorAlpha)
+          == 0.0f);
+    CHECK(materialOpacitySourceValue(MaterialOpacitySource::TextureRed)
+          == 1.0f);
+    CHECK(materialOpacitySourceValue(MaterialOpacitySource::TextureAlpha)
+          == 2.0f);
 }
 
 TEST_CASE(texture_dev_extension_of_contract)

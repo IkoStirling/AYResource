@@ -1,6 +1,8 @@
-// 临时调试文件 - 打印节点树结构
+// Assimp source audit helper. Kept outside AYResource's src/ glob so it is
+// built only when an importer investigation explicitly needs it.
 #include <assimp/scene.h>
 #include <assimp/Importer.hpp>
+#include <assimp/postprocess.h>
 #include <iostream>
 #include <cstdio>
 
@@ -28,8 +30,18 @@ void printNodeTree(const aiNode* node, int depth, const aiScene* scene) {
             if (mi < scene->mNumMeshes) {
                 const aiMesh* m = scene->mMeshes[mi];
                 for (int j = 0; j < depth; j++) printf("  ");
-                printf("    -> Mesh[%u]: %u vertices, %u faces\n", 
-                       mi, m->mNumVertices, m->mNumFaces);
+                printf("    -> Mesh[%u] '%s': material=%u vertices=%u faces=%u "
+                       "bones=%u morphTargets=%u\n",
+                       mi, m->mName.C_Str(), m->mMaterialIndex,
+                       m->mNumVertices, m->mNumFaces, m->mNumBones,
+                       m->mNumAnimMeshes);
+                for (unsigned int ai = 0; ai < m->mNumAnimMeshes; ++ai) {
+                    const aiAnimMesh* morph = m->mAnimMeshes[ai];
+                    if (!morph) continue;
+                    printf("      morph[%u] '%s' vertices=%u weight=%.6f\n",
+                           ai, morph->mName.C_Str(), morph->mNumVertices,
+                           morph->mWeight);
+                }
             }
         }
     }
@@ -40,16 +52,20 @@ void printNodeTree(const aiNode* node, int depth, const aiScene* scene) {
     }
 }
 
-int main() {
-    const char* paths[] = {
-        "D:/Projects/AliyatRenderer/assets/core/models/sour-miku-Creamy/Sour.fbx"
-    };
-    
+int main(int argc, char** argv) {
+    if (argc != 2) {
+        std::fprintf(stderr, "usage: assimp_audit <source.fbx>\n");
+        return 2;
+    }
+
+    const char* paths[] = { argv[1] };
     for (const char* path : paths) {
         Assimp::Importer importer;
-        const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_JoinIdenticalVertices);
+        const aiScene* scene = importer.ReadFile(
+            path, aiProcess_Triangulate | aiProcess_JoinIdenticalVertices);
         if (!scene) {
-            printf("Failed to load: %s\n", path);
+            printf("Failed to load: %s (%s)\n", path,
+                   importer.GetErrorString());
             continue;
         }
         
@@ -57,10 +73,44 @@ int main() {
         printf("scene->mNumMeshes = %u\n", scene->mNumMeshes);
         printf("scene->mRootNode->mNumMeshes = %u\n", scene->mRootNode->mNumMeshes);
         printf("scene->mRootNode->mNumChildren = %u\n", scene->mRootNode->mNumChildren);
+
+        printf("\nMaterials:\n");
+        for (unsigned int i = 0; i < scene->mNumMaterials; ++i) {
+            aiString name;
+            scene->mMaterials[i]->Get(AI_MATKEY_NAME, name);
+            printf("  material[%u] '%s'\n", i, name.C_Str());
+        }
+
+        printf("\nAnimations:\n");
+        for (unsigned int i = 0; i < scene->mNumAnimations; ++i) {
+            const aiAnimation* anim = scene->mAnimations[i];
+            printf("  animation[%u] '%s' duration=%.6f tps=%.6f "
+                   "nodeChannels=%u morphChannels=%u\n",
+                   i, anim->mName.C_Str(), anim->mDuration,
+                   anim->mTicksPerSecond, anim->mNumChannels,
+                   anim->mNumMorphMeshChannels);
+            for (unsigned int c = 0; c < anim->mNumMorphMeshChannels; ++c) {
+                const aiMeshMorphAnim* channel = anim->mMorphMeshChannels[c];
+                if (!channel) continue;
+                printf("    morphChannel[%u] '%s' keys=%u\n", c,
+                       channel->mName.C_Str(), channel->mNumKeys);
+                for (unsigned int k = 0; k < channel->mNumKeys; ++k) {
+                    const aiMeshMorphKey& key = channel->mKeys[k];
+                    printf("      key[%u] time=%.6f values=%u", k,
+                           key.mTime, key.mNumValuesAndWeights);
+                    const unsigned int shown =
+                        key.mNumValuesAndWeights < 8
+                            ? key.mNumValuesAndWeights : 8;
+                    for (unsigned int v = 0; v < shown; ++v) {
+                        printf(" [%u]=%.6f", key.mValues[v], key.mWeights[v]);
+                    }
+                    if (shown < key.mNumValuesAndWeights) printf(" ...");
+                    printf("\n");
+                }
+            }
+        }
         
         // 计算所有节点持有的 mesh 引用总数
-        unsigned int totalMeshRefs = 0;
-        
         printf("\nNode tree:\n");
         printNodeTree(scene->mRootNode, 0, scene);
         

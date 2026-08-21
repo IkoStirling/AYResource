@@ -8,8 +8,11 @@
 namespace ayt::resource
 {
 
-inline constexpr const char* kFbxImporterContractTag =
-    "fbx-assimp-explicit-source-space-lh-yup-zfwd-ccw-uvtop-m-v8";
+// Defined in IAYConverter.cpp instead of inline in this header.  The Windows
+// Ninja/MSVC dependency stream can be unreliable under localized /showIncludes
+// output; keeping this cache discriminator in one translation unit prevents
+// stale consumers from embedding different importer contract versions.
+extern const char kFbxImporterContractTag[];
 
 // Signed cardinal directions used by scene importers.  Auto keeps the source
 // format importer's declared axis metadata; explicit directions let an editor
@@ -33,11 +36,20 @@ enum class SourceCoordinateMode : uint8_t {
     Manual,
 };
 
+// UV coordinates are normalized to the engine's top-left texture origin at
+// import time.  FBX does not carry a reliable cross-DCC origin declaration,
+// so the source convention must be part of the import preset.
+enum class ImportUvOrigin : uint8_t {
+    TopLeft = 0,
+    BottomLeft,
+};
+
 struct SourceCoordinatePolicy {
     SourceCoordinateMode mode = SourceCoordinateMode::Auto;
     ImportAxis up = ImportAxis::PositiveY;
     ImportAxis forward = ImportAxis::PositiveZ;
     ImportHandedness handedness = ImportHandedness::Left;
+    ImportUvOrigin uvOrigin = ImportUvOrigin::TopLeft;
     // 0 = use the source file's unit metadata.  Otherwise this is the number
     // of meters represented by one source unit (for example 0.01 for cm).
     float metersPerUnit = 0.0f;
@@ -65,6 +77,9 @@ struct MaterialImportPolicy {
     std::string maskNames;
     std::string blendNames;
     std::string doubleSidedNames;
+    // Tangent-space normal convention selected by the importer UI.
+    // +1 = OpenGL/Blender green-up; -1 = DirectX green-down.
+    float normalMapYSign = 1.0f;
 };
 
 // ===== ConversionResult — 转换结果结构 =====

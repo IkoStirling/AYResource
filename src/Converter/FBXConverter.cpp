@@ -1,18 +1,268 @@
 #include "AYResource/Converter/FBXConverter.h"
+#include "AYResource/MaterialTextureContract.h"
+#include "AYResource/MaterialSurfaceClassifier.h"
 #include "AYResource/VirtualAssetPath.h"
 #include "AYIO/File.h"
 #include <AYLog.h>
+#include <stb_image.h>
 #include <sstream>
 #include <set>
 #include <cstdlib>
 #include <unordered_set>
+#include <unordered_map>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <filesystem>
+#include <memory>
 
 namespace ayt::resource
 {
 
+MaterialAlphaMode classifyMaterialAlphaCoverage(
+    const MaterialAlphaCoverage& coverage,
+    MaterialAlphaEvidence evidence)
+{
+    if (coverage.sampleCount == 0) {
+        return MaterialAlphaMode::Opaque;
+    }
+
+    const std::size_t nonOpaque =
+        coverage.transparentCount + coverage.partialCount;
+    // Ignore isolated interpolation/noise samples (at most 0.1%).
+    if (nonOpaque * 1000 <= coverage.sampleCount) {
+        return MaterialAlphaMode::Opaque;
+    }
+
+    // Binary cutouts can contain a small antialiased fringe.  Continuous
+    // alpha is Blend only when it forms more than 10% of non-opaque evidence.
+    if (coverage.partialCount * 10 <= nonOpaque) {
+        return MaterialAlphaMode::Mask;
+    }
+    // Base-color alpha is ambiguous in FBX: exporters frequently preserve an
+    // RGBA atlas even when the DCC material itself is Opaque/Hashed.  Routing
+    // such a surface through Blend removes depth writes and breaks occlusion
+    // inside a single submesh.  Only a distinct authored opacity input may
+    // infer true blending without an explicit scalar/source blend flag.
+    return evidence == MaterialAlphaEvidence::DedicatedOpacity
+        ? MaterialAlphaMode::Blend
+        : MaterialAlphaMode::Mask;
+}
+
+float inferMaterialAlphaCutoff(const MaterialAlphaCoverage& coverage,
+                               MaterialAlphaMode mode) noexcept
+{
+    if (mode != MaterialAlphaMode::Mask) {
+        return 0.5f;
+    }
+    // sampleAlpha classifies [0, 8] as transparent. When no referenced
+    // sample is in that range, 0.5 would turn an authored continuous-alpha
+    // garment into holes. Keep every meaningful non-zero texel instead.
+    if (coverage.transparentCount == 0 && coverage.partialCount != 0) {
+        return 9.0f / 255.0f;
+    }
+    return 0.5f;
+}
+
 namespace {
+
+struct DecodedImage {
+    int width = 0;
+    int height = 0;
+    int sourceChannels = 0;
+    std::vector<unsigned char> rgba;
+};
+
+const char* alphaModeName(MaterialAlphaMode mode);
+
+std::string resolveTextureSourcePath(const std::string& source,
+                                     const std::string& sourceDirectory)
+{
+    namespace fs = std::filesystem;
+    if (source.empty() || source[0] == '*') {
+        return {};
+    }
+    fs::path path(source);
+    if (path.is_relative()) {
+        path = fs::path(sourceDirectory) / path;
+    }
+    return path.lexically_normal().string();
+}
+
+std::shared_ptr<const DecodedImage> decodeImageCached(
+    const std::string& path,
+    std::unordered_map<std::string, std::shared_ptr<const DecodedImage>>& cache)
+{
+    const auto found = cache.find(path);
+    if (found != cache.end()) {
+        return found->second;
+    }
+
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    unsigned char* pixels = stbi_load(
+        path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+    if (!pixels || width <= 0 || height <= 0) {
+        if (pixels) stbi_image_free(pixels);
+        cache.emplace(path, nullptr);
+        return {};
+    }
+
+    auto image = std::make_shared<DecodedImage>();
+    image->width = width;
+    image->height = height;
+    image->sourceChannels = channels;
+    image->rgba.assign(
+        pixels, pixels + static_cast<std::size_t>(width) * height * 4);
+    stbi_image_free(pixels);
+    cache.emplace(path, image);
+    return image;
+}
+
+const MaterialData::TextureSource* findTextureSource(
+    const MaterialData& material, const char* parameterName)
+{
+    const auto found = std::find_if(
+        material.textureSources.begin(), material.textureSources.end(),
+        [parameterName](const MaterialData::TextureSource& source) {
+            return source.parameterName == parameterName;
+        });
+    return found == material.textureSources.end() ? nullptr : &*found;
+}
+
+float wrapUv(float value)
+{
+    value -= std::floor(value);
+    return value < 0.0f ? value + 1.0f : value;
+}
+
+void sampleAlpha(MaterialAlphaCoverage& coverage, const DecodedImage& image,
+                 float u, float v, bool useRedChannel)
+{
+    const int x = std::min(
+        image.width - 1, static_cast<int>(wrapUv(u) * image.width));
+    const int y = std::min(
+        image.height - 1, static_cast<int>(wrapUv(v) * image.height));
+    const std::size_t offset =
+        (static_cast<std::size_t>(y) * image.width + x) * 4;
+    const unsigned char alpha = image.rgba[offset + (useRedChannel ? 0 : 3)];
+    ++coverage.sampleCount;
+    if (alpha <= 8) {
+        ++coverage.transparentCount;
+    } else if (alpha >= 247) {
+        ++coverage.opaqueCount;
+    } else {
+        ++coverage.partialCount;
+    }
+}
+
+void sampleSubmeshAlpha(MaterialAlphaCoverage& coverage,
+                        const MeshData& mesh, const SubmeshData& submesh,
+                        const DecodedImage& image, bool useRedChannel)
+{
+    if (mesh.uvs.size() < 2 || submesh.startIndex >= mesh.indices.size()) {
+        return;
+    }
+    const std::size_t end = std::min<std::size_t>(
+        mesh.indices.size(),
+        static_cast<std::size_t>(submesh.startIndex) + submesh.indexCount);
+    // Vertices, edge midpoints and centroid cover both thin cutout borders
+    // and broad translucent regions without rasterizing full-resolution maps.
+    constexpr float barycentric[][3] = {
+        {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f},
+        {0.5f, 0.5f, 0.0f}, {0.0f, 0.5f, 0.5f}, {0.5f, 0.0f, 0.5f},
+        {1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f},
+    };
+    for (std::size_t i = submesh.startIndex; i + 2 < end; i += 3) {
+        const std::uint32_t i0 = mesh.indices[i + 0];
+        const std::uint32_t i1 = mesh.indices[i + 1];
+        const std::uint32_t i2 = mesh.indices[i + 2];
+        if ((static_cast<std::size_t>(std::max({i0, i1, i2})) * 2 + 1)
+            >= mesh.uvs.size()) {
+            continue;
+        }
+        const float u0 = mesh.uvs[i0 * 2 + 0];
+        const float v0 = mesh.uvs[i0 * 2 + 1];
+        const float u1 = mesh.uvs[i1 * 2 + 0];
+        const float v1 = mesh.uvs[i1 * 2 + 1];
+        const float u2 = mesh.uvs[i2 * 2 + 0];
+        const float v2 = mesh.uvs[i2 * 2 + 1];
+        for (const auto& b : barycentric) {
+            sampleAlpha(coverage, image,
+                u0 * b[0] + u1 * b[1] + u2 * b[2],
+                v0 * b[0] + v1 * b[1] + v2 * b[2], useRedChannel);
+        }
+    }
+}
+
+void inferMaterialSurfaceModes(IntermediateAsset& asset,
+                               const std::string& sourceDirectory)
+{
+    std::unordered_map<std::string, std::shared_ptr<const DecodedImage>> cache;
+    for (std::size_t materialIndex = 0;
+         materialIndex < asset.materials.size(); ++materialIndex) {
+        MaterialData& material = asset.materials[materialIndex];
+        // A scalar opacity/blend declaration is authoritative and must never
+        // be downgraded by a mostly opaque texture sample.
+        if (material.alphaMode == MaterialAlphaMode::Blend
+            && material.surfaceSource == MaterialSurfaceSource::ExplicitSource) {
+            continue;
+        }
+
+        const MaterialData::TextureSource* base =
+            findTextureSource(material, "baseColorTexture");
+        const MaterialData::TextureSource* opacity =
+            findTextureSource(material, "opacityTexture");
+        const bool hasDedicatedOpacity = opacity
+            && (!base || !sameMaterialTextureSource(
+                base->sourcePath, opacity->sourcePath));
+        const MaterialData::TextureSource* evidence =
+            hasDedicatedOpacity ? opacity : base;
+        if (!evidence) {
+            continue;
+        }
+
+        const std::string imagePath = resolveTextureSourcePath(
+            evidence->sourcePath, sourceDirectory);
+        const auto image = decodeImageCached(imagePath, cache);
+        if (!image) {
+            ayt::log::warn(
+                "[FBXConverter] alpha coverage skipped material[%zu] '%s': "
+                "cannot decode '%s'",
+                materialIndex, material.name.c_str(), imagePath.c_str());
+            continue;
+        }
+
+        MaterialAlphaCoverage coverage;
+        for (const MeshData& mesh : asset.meshes) {
+            for (const SubmeshData& submesh : mesh.submeshes) {
+                if (submesh.sourceMaterialIndex != materialIndex) continue;
+                sampleSubmeshAlpha(coverage, mesh, submesh, *image,
+                                   hasDedicatedOpacity);
+            }
+        }
+        if (coverage.sampleCount == 0) {
+            continue;
+        }
+
+        material.alphaMode = classifyMaterialAlphaCoverage(
+            coverage,
+            hasDedicatedOpacity ? MaterialAlphaEvidence::DedicatedOpacity
+                                : MaterialAlphaEvidence::BaseColorAlpha);
+        material.alphaCutoff = inferMaterialAlphaCutoff(
+            coverage, material.alphaMode);
+        material.surfaceSource = MaterialSurfaceSource::TextureCoverage;
+        ayt::log::info(
+            "[FBXConverter] alpha coverage material[%zu] '%s': samples=%zu "
+            "zero=%zu partial=%zu opaque=%zu -> %s cutoff=%.4f (%s channel)",
+            materialIndex, material.name.c_str(), coverage.sampleCount,
+            coverage.transparentCount, coverage.partialCount,
+            coverage.opaqueCount, alphaModeName(material.alphaMode),
+            material.alphaCutoff,
+            hasDedicatedOpacity ? "opacity-red" : "base-alpha/coverage");
+    }
+}
 
 std::unordered_set<size_t> parseMaterialIndices(const std::string& csv)
 {
@@ -67,7 +317,7 @@ const char* surfaceSourceName(MaterialSurfaceSource source)
 {
     switch (source) {
     case MaterialSurfaceSource::ExplicitSource: return "explicit-fbx";
-    case MaterialSurfaceSource::CompatibilityRule: return "compat-rule";
+    case MaterialSurfaceSource::TextureCoverage: return "texture-coverage";
     case MaterialSurfaceSource::ConfigOverride: return "config-override";
     default: return "default";
     }
@@ -84,14 +334,6 @@ void applyMaterialPolicy(std::vector<MaterialData>& materials,
     const auto maskNames = parseMaterialNames(policy.maskNames);
     const auto blendNames = parseMaterialNames(policy.blendNames);
     const auto doubleSidedNames = parseMaterialNames(policy.doubleSidedNames);
-
-    const auto normalizedTexturePath = [](std::string path) {
-        std::transform(path.begin(), path.end(), path.begin(),
-            [](unsigned char c) {
-                return c == '\\' ? '/' : static_cast<char>(std::tolower(c));
-            });
-        return path;
-    };
 
     for (size_t i = 0; i < materials.size(); ++i) {
         int mode = -1;
@@ -118,14 +360,29 @@ void applyMaterialPolicy(std::vector<MaterialData>& materials,
         // Mask/Blend retain one only when it references a genuinely distinct
         // texture.  Their base texture alpha remains authoritative otherwise.
         auto& parameters = materials[i].parameters;
-        std::string baseColorTexture;
-        for (const Param& param : parameters) {
-            if (param.type == MaterialParamType::Texture2D
-                && param.name == "baseColorTexture") {
-                baseColorTexture = normalizedTexturePath(param.texturePath);
+        for (Param& param : parameters) {
+            if (param.name == "normalYSign"
+                && param.type == MaterialParamType::Float) {
+                param.floatValue = policy.normalMapYSign < 0.0f ? -1.0f : 1.0f;
+            }
+        }
+        auto& textureSources = materials[i].textureSources;
+        std::string baseColorSource;
+        for (const MaterialData::TextureSource& source : textureSources) {
+            if (source.parameterName == "baseColorTexture") {
+                baseColorSource = source.sourcePath;
                 break;
             }
         }
+        const bool removeAllOpacity =
+            materials[i].alphaMode == MaterialAlphaMode::Opaque;
+        const bool removeAliasedOpacity = std::any_of(
+            textureSources.begin(), textureSources.end(),
+            [&baseColorSource](const MaterialData::TextureSource& source) {
+                return source.parameterName == "opacityTexture"
+                    && sameMaterialTextureSource(baseColorSource,
+                                                 source.sourcePath);
+            });
         parameters.erase(
             std::remove_if(parameters.begin(), parameters.end(),
                 [&](const Param& param) {
@@ -133,12 +390,57 @@ void applyMaterialPolicy(std::vector<MaterialData>& materials,
                         || param.name != "opacityTexture") {
                         return false;
                     }
-                    return materials[i].alphaMode == MaterialAlphaMode::Opaque
-                        || (!baseColorTexture.empty()
-                            && normalizedTexturePath(param.texturePath)
-                                == baseColorTexture);
+                    return removeAllOpacity || removeAliasedOpacity;
                 }),
             parameters.end());
+
+        textureSources.erase(
+            std::remove_if(textureSources.begin(), textureSources.end(),
+                [&](const MaterialData::TextureSource& source) {
+                    if (source.parameterName != "opacityTexture") {
+                        return false;
+                    }
+                    return removeAllOpacity
+                        || sameMaterialTextureSource(baseColorSource,
+                                                     source.sourcePath);
+                }),
+            textureSources.end());
+
+        // Keep the legacy source list coherent for diagnostics and for old
+        // consumers that do not understand semantic TextureSource records.
+        materials[i].texturePaths.clear();
+        for (const MaterialData::TextureSource& source : textureSources) {
+            if (std::find(materials[i].texturePaths.begin(),
+                          materials[i].texturePaths.end(), source.sourcePath)
+                == materials[i].texturePaths.end()) {
+                materials[i].texturePaths.push_back(source.sourcePath);
+            }
+        }
+
+        const bool hasDedicatedOpacity = std::any_of(
+            parameters.begin(), parameters.end(),
+            [](const Param& param) {
+                return param.type == MaterialParamType::Texture2D
+                    && param.name == "opacityTexture";
+            });
+        auto opacitySource = std::find_if(
+            parameters.begin(), parameters.end(),
+            [](const Param& param) {
+                return param.type == MaterialParamType::Float
+                    && param.name == "opacitySource";
+            });
+        const float opacitySourceValue = materialOpacitySourceValue(
+            hasDedicatedOpacity ? MaterialOpacitySource::TextureRed
+                                : MaterialOpacitySource::BaseColorAlpha);
+        if (opacitySource != parameters.end()) {
+            opacitySource->floatValue = opacitySourceValue;
+        } else {
+            Param param;
+            param.name = "opacitySource";
+            param.type = MaterialParamType::Float;
+            param.floatValue = opacitySourceValue;
+            parameters.push_back(std::move(param));
+        }
     }
 }
 
@@ -211,6 +513,15 @@ ConversionResult FBXConverter::convert() {
         return result;
     }
 
+    std::string fbxDir;
+    const size_t lastSlash = sourcePath.find_last_of("/\\");
+    if (lastSlash != std::string::npos) {
+        fbxDir = sourcePath.substr(0, lastSlash);
+    }
+
+    // Automatic evidence is the default; explicit project/import overrides
+    // are applied last so users can correct ambiguous authoring data.
+    inferMaterialSurfaceModes(*asset, fbxDir);
     applyMaterialPolicy(asset->materials, _materialPolicy);
 
     for (size_t i = 0; i < asset->materials.size(); ++i) {
@@ -248,24 +559,38 @@ ConversionResult FBXConverter::convert() {
     // 4b. 转换材质引用的外部纹理（从 texturePaths）
     {
         // 获取 FBX 所在目录，用于解析相对路径
-        std::string fbxDir;
-        size_t lastSlash = sourcePath.find_last_of("/\\");
-        if (lastSlash != std::string::npos) {
-            fbxDir = sourcePath.substr(0, lastSlash);
-        }
-
-        // 去重：已处理的纹理 stem
+        // Deduplicate by semantic output path, not source stem.  A single
+        // image referenced as base color and opacity has two different GPU
+        // sampling contracts and therefore two independently named assets.
         std::set<std::string> processedTextures;
 
         for (const auto& mat : asset->materials) {
+            for (const auto& source : mat.textureSources) {
+                if (!processedTextures.insert(source.virtualPath).second) {
+                    continue;
+                }
+                const std::string texName =
+                    makeTextureStemFromSourcePath(source.sourcePath);
+                auto texResult = textureConverter.convertFromPath(
+                    source.sourcePath, texName, fbxDir, source.usageSuffix);
+                for (auto& res : texResult.resources) {
+                    result.resources.push_back(res);
+                }
+            }
+            if (!mat.textureSources.empty()) {
+                continue;
+            }
             for (const auto& texPath : mat.texturePaths) {
                 const std::string texName = makeTextureStemFromSourcePath(texPath);
 
                 // 去重：同一纹理被多个材质引用时只处理一次
-                if (processedTextures.find(texName) != processedTextures.end()) {
+                const std::string legacyVirtual = makeTextureVirtualPathFromSource(
+                    texPath, textureConverter.getUsageSuffix(),
+                    _cookTextures ? ".aytex" : textureDevExtensionOf(texPath).c_str());
+                if (processedTextures.find(legacyVirtual) != processedTextures.end()) {
                     continue;
                 }
-                processedTextures.insert(texName);
+                processedTextures.insert(legacyVirtual);
 
                 // 转换纹理（虚拟路径 = makeTextureVirtualPath）
                 auto texResult = textureConverter.convertFromPath(texPath, texName, fbxDir);
@@ -343,6 +668,9 @@ ConversionResult FBXConverter::convert() {
             dep.from = matPath;
             dep.to = param.texturePath;
             result.dependencies.push_back(dep);
+        }
+        if (!mat.textureSources.empty()) {
+            continue;
         }
         for (const auto& texPath : mat.texturePaths) {
             // Dev mode: same extension spelling as FBXParser's param ref

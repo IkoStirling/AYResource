@@ -68,6 +68,10 @@ public:
     ConversionResult convertFromPath(const std::string& imagePath,
                                    const std::string& textureName,
                                    const std::string& baseFbxDir);
+    ConversionResult convertFromPath(const std::string& imagePath,
+                                   const std::string& textureName,
+                                   const std::string& baseFbxDir,
+                                   const std::string& usageSuffixOverride);
 
     // ===== 批量转换（从 IntermediateAsset） =====
     std::vector<ConversionResult::ConvertedResource> convertAll(

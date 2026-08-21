@@ -1,4 +1,5 @@
 #include "AYResource/Converter/FBXParser.h"
+#include "AYResource/MaterialTextureContract.h"
 #include "AYResource/VirtualAssetPath.h"
 #include "AYResource/assetsDefs/IMesh.h"
 #include <AYMath/MathUtils.h>
@@ -16,6 +17,24 @@
 
 namespace ayt::resource
 {
+
+namespace {
+
+float normalizeSourceUvV(const SourceCoordinatePolicy& policy, float v)
+{
+    return policy.uvOrigin == ImportUvOrigin::BottomLeft ? 1.0f - v : v;
+}
+
+float normalizeSourceTangentHandedness(const SourceCoordinatePolicy& policy,
+                                       float handedness)
+{
+    // Mirroring one UV axis reverses the bitangent direction.  Preserve the
+    // tangent-space basis by flipping its serialized handedness exactly once.
+    return policy.uvOrigin == ImportUvOrigin::BottomLeft
+        ? -handedness : handedness;
+}
+
+} // namespace
 
 FBXParser::FBXParser(const std::string& sourcePath)
     : _sourcePath(sourcePath) {}
@@ -68,6 +87,13 @@ bool FBXParser::parse(const std::string& sourcePath) {
     if (!scene->mRootNode) {
         return false;
     }
+
+    std::fprintf(stderr,
+                 "[FBXParser] UV contract source=%s target=top-left flipV=%d\n",
+                 _sourceCoordinates.uvOrigin == ImportUvOrigin::BottomLeft
+                     ? "bottom-left" : "top-left",
+                 _sourceCoordinates.uvOrigin == ImportUvOrigin::BottomLeft
+                     ? 1 : 0);
 
     _result = std::make_unique<IntermediateAsset>();
     _prepareSkeletonMapping(scene);
@@ -356,6 +382,7 @@ void FBXParser::_prepareSkeletonMapping(const aiScene* scene)
 static void copyVertexAttribute(
     const aiMesh* m,
     MeshData& mesh,
+    const SourceCoordinatePolicy& sourceCoordinates,
     UInt8 attribute,
     UInt32 vertexOffset,
     UInt32 vertexCount,
@@ -386,7 +413,8 @@ static void copyVertexAttribute(
         case static_cast<UInt8>(MeshAttribute::UV):
             for (UInt32 v = 0; v < vertexCount; v++) {
                 mesh.uvs[(vertexOffset + v) * 2 + 0] = m->mTextureCoords[0][v].x;
-                mesh.uvs[(vertexOffset + v) * 2 + 1] = m->mTextureCoords[0][v].y;
+                mesh.uvs[(vertexOffset + v) * 2 + 1] = normalizeSourceUvV(
+                    sourceCoordinates, m->mTextureCoords[0][v].y);
             }
             break;
         case static_cast<UInt8>(MeshAttribute::Tangent):
@@ -394,8 +422,12 @@ static void copyVertexAttribute(
                 mesh.tangents[(vertexOffset + v) * 4 + 0] = m->mTangents[v].x;
                 mesh.tangents[(vertexOffset + v) * 4 + 1] = m->mTangents[v].y;
                 mesh.tangents[(vertexOffset + v) * 4 + 2] = m->mTangents[v].z;
-                float handedness = (m->mNormals[v] ^ m->mTangents[v]) * m->mBitangents[v] > 0 ? 1.0f : -1.0f;
-                mesh.tangents[(vertexOffset + v) * 4 + 3] = handedness;
+                const float handedness =
+                    (m->mNormals[v] ^ m->mTangents[v]) * m->mBitangents[v]
+                        > 0 ? 1.0f : -1.0f;
+                mesh.tangents[(vertexOffset + v) * 4 + 3] =
+                    normalizeSourceTangentHandedness(sourceCoordinates,
+                                                     handedness);
             }
             break;
         case static_cast<UInt8>(MeshAttribute::Color):
@@ -510,7 +542,8 @@ void FBXParser::_parseAllMeshesAsOne(const aiScene* scene) {
         if (mesh.attributeMask & (1u << static_cast<UInt8>(MeshAttribute::UV))) {
             for (unsigned int v = 0; v < m->mNumVertices; v++) {
                 mesh.uvs[(vertexOffset + v) * 2 + 0] = m->mTextureCoords[0][v].x;
-                mesh.uvs[(vertexOffset + v) * 2 + 1] = m->mTextureCoords[0][v].y;
+                mesh.uvs[(vertexOffset + v) * 2 + 1] = normalizeSourceUvV(
+                    _sourceCoordinates, m->mTextureCoords[0][v].y);
             }
         }
 
@@ -520,8 +553,12 @@ void FBXParser::_parseAllMeshesAsOne(const aiScene* scene) {
                 mesh.tangents[(vertexOffset + v) * 4 + 0] = m->mTangents[v].x;
                 mesh.tangents[(vertexOffset + v) * 4 + 1] = m->mTangents[v].y;
                 mesh.tangents[(vertexOffset + v) * 4 + 2] = m->mTangents[v].z;
-                float handedness = (m->mNormals[v] ^ m->mTangents[v]) * m->mBitangents[v] > 0 ? 1.0f : -1.0f;
-                mesh.tangents[(vertexOffset + v) * 4 + 3] = handedness;
+                const float handedness =
+                    (m->mNormals[v] ^ m->mTangents[v]) * m->mBitangents[v]
+                        > 0 ? 1.0f : -1.0f;
+                mesh.tangents[(vertexOffset + v) * 4 + 3] =
+                    normalizeSourceTangentHandedness(_sourceCoordinates,
+                                                     handedness);
             }
         }
 
@@ -598,6 +635,7 @@ void FBXParser::_parseAllMeshesAsOne(const aiScene* scene) {
         // runtime index must address that vector, not Assimp's scene-wide
         // material table (which can be sparse after mesh filtering).
         submesh.materialIndex = static_cast<UInt32>(mesh.materialSlots.size());
+        submesh.sourceMaterialIndex = static_cast<UInt32>(m->mMaterialIndex);
         mesh.submeshes.push_back(submesh);
 
         // Material slot — must match MaterialConverter / FBXConverter contract.
@@ -729,7 +767,8 @@ void FBXParser::_collectNodeMeshes(const aiNode* node, const aiScene* scene, con
             if (mesh.attributeMask & (1u << static_cast<UInt8>(MeshAttribute::UV))) {
                 for (unsigned int v = 0; v < m->mNumVertices; v++) {
                     mesh.uvs[(vertexOffset + v) * 2 + 0] = m->mTextureCoords[0][v].x;
-                    mesh.uvs[(vertexOffset + v) * 2 + 1] = m->mTextureCoords[0][v].y;
+                    mesh.uvs[(vertexOffset + v) * 2 + 1] = normalizeSourceUvV(
+                        _sourceCoordinates, m->mTextureCoords[0][v].y);
                 }
             }
 
@@ -739,8 +778,12 @@ void FBXParser::_collectNodeMeshes(const aiNode* node, const aiScene* scene, con
                     mesh.tangents[(vertexOffset + v) * 4 + 0] = m->mTangents[v].x;
                     mesh.tangents[(vertexOffset + v) * 4 + 1] = m->mTangents[v].y;
                     mesh.tangents[(vertexOffset + v) * 4 + 2] = m->mTangents[v].z;
-                    float handedness = (m->mNormals[v] ^ m->mTangents[v]) * m->mBitangents[v] > 0 ? 1.0f : -1.0f;
-                    mesh.tangents[(vertexOffset + v) * 4 + 3] = handedness;
+                    const float handedness =
+                        (m->mNormals[v] ^ m->mTangents[v]) * m->mBitangents[v]
+                            > 0 ? 1.0f : -1.0f;
+                    mesh.tangents[(vertexOffset + v) * 4 + 3] =
+                        normalizeSourceTangentHandedness(_sourceCoordinates,
+                                                         handedness);
                 }
             }
 
@@ -813,6 +856,7 @@ void FBXParser::_collectNodeMeshes(const aiNode* node, const aiScene* scene, con
             // default zero here made every part of a merged character use
             // the first material at runtime.
             submesh.materialIndex = static_cast<UInt32>(mesh.materialSlots.size());
+            submesh.sourceMaterialIndex = static_cast<UInt32>(m->mMaterialIndex);
             mesh.submeshes.push_back(submesh);
 
             // Material slot — must match MaterialConverter / FBXConverter contract.
@@ -843,15 +887,17 @@ void FBXParser::_collectNodeMeshes(const aiNode* node, const aiScene* scene, con
 void FBXParser::_extractMaterialTextures(const aiMaterial* mat, MaterialData& material) {
     // 纹理类型映射到参数名
     static const std::pair<aiTextureType, const char*> textureTypes[] = {
+        // Prefer explicit PBR semantics when both legacy and PBR aliases
+        // exist. The first successful source owns the public material slot.
+        {aiTextureType_BASE_COLOR, "baseColorTexture"},
         {aiTextureType_DIFFUSE, "baseColorTexture"},
+        {aiTextureType_NORMAL_CAMERA, "normalTexture"},
         {aiTextureType_NORMALS, "normalTexture"},
         {aiTextureType_SPECULAR, "specularTexture"},
+        {aiTextureType_EMISSION_COLOR, "emissiveTexture"},
         {aiTextureType_EMISSIVE, "emissiveTexture"},
         {aiTextureType_HEIGHT, "heightTexture"},
         {aiTextureType_OPACITY, "opacityTexture"},
-        {aiTextureType_BASE_COLOR, "baseColorTexture"},  // PBR base color
-        {aiTextureType_NORMAL_CAMERA, "normalCameraTexture"},
-        {aiTextureType_EMISSION_COLOR, "emissionColorTexture"},
         {aiTextureType_METALNESS, "metallicTexture"},
         {aiTextureType_DIFFUSE_ROUGHNESS, "roughnessTexture"},
         {aiTextureType_AMBIENT_OCCLUSION, "aoTexture"},
@@ -860,6 +906,15 @@ void FBXParser::_extractMaterialTextures(const aiMaterial* mat, MaterialData& ma
     };
 
     for (const auto& [texType, paramName] : textureTypes) {
+        const bool slotAlreadyAssigned = std::any_of(
+            material.parameters.begin(), material.parameters.end(),
+            [paramName](const Param& param) {
+                return param.type == MaterialParamType::Texture2D
+                    && param.name == paramName;
+            });
+        if (slotAlreadyAssigned) {
+            continue;
+        }
         // 检查是否有该类型的纹理
         aiTextureType mappedType = texType;
         unsigned int texCount = mat->GetTextureCount(mappedType);
@@ -870,6 +925,23 @@ void FBXParser::_extractMaterialTextures(const aiMaterial* mat, MaterialData& ma
         if (mat->GetTexture(mappedType, 0, &texPath) == AI_SUCCESS) {
             std::string path(texPath.C_Str());
             if (path.empty()) continue;
+
+            // Blender/FBX commonly publishes the same RGBA image as both
+            // Diffuse and TransparencyFactor.  Keep one base-color binding
+            // and consume its alpha exactly once.  This check must use the
+            // original Assimp path; the generated _d/_o virtual paths are
+            // intentionally different and cannot prove source identity.
+            if (std::string_view(paramName) == "opacityTexture") {
+                const bool aliasesBaseColor = std::any_of(
+                    material.textureSources.begin(), material.textureSources.end(),
+                    [&path](const MaterialData::TextureSource& source) {
+                        return source.parameterName == "baseColorTexture"
+                            && sameMaterialTextureSource(source.sourcePath, path);
+                    });
+                if (aliasesBaseColor) {
+                    continue;
+                }
+            }
 
             // Virtual path uses flattened stem + usage + extension.
             // texturePaths keeps the Assimp path so convertFromPath can
@@ -884,14 +956,25 @@ void FBXParser::_extractMaterialTextures(const aiMaterial* mat, MaterialData& ma
             const std::string texExt =
                 _preserveSourceExtension ? textureDevExtensionOf(path) : ".aytex";
 
+            const MaterialTextureContract contract =
+                materialTextureContract(paramName);
+
             Param param;
             param.name = paramName;
             param.type = MaterialParamType::Texture2D;
-            param.texturePath = makeTextureVirtualPath(textureName, _textureUsageSuffix,
+            param.texturePath = makeTextureVirtualPath(textureName, contract.usageSuffix,
                                                        texExt.c_str());
             material.parameters.push_back(param);
 
             material.texturePaths.push_back(path);
+            MaterialData::TextureSource source;
+            source.parameterName = paramName;
+            source.sourcePath = path;
+            source.virtualPath = param.texturePath;
+            source.usageSuffix = contract.usageSuffix;
+            source.colorSpace = contract.colorSpace;
+            source.normalY = contract.normalY;
+            material.textureSources.push_back(std::move(source));
         }
     }
 }
@@ -972,10 +1055,18 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
     metallicParam.floatValue = metallic;
     material.parameters.push_back(metallicParam);
 
-    // roughness (PBR) - 检查常见建模引擎导出的字符串属性
+    // Roughness: prefer an authored PBR value. Legacy FBX/Phong exports
+    // usually carry only shininess, which is converted to perceptual
+    // roughness instead of being silently replaced with 0.5.
     float roughness = 0.5f;
+    float legacyShininess = 0.0f;
+    const bool hasLegacyShininess =
+        mat->Get(AI_MATKEY_SHININESS, legacyShininess) == AI_SUCCESS;
     aiString roughnessStr;
-    if (mat->Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness) != AI_SUCCESS &&
+    const bool hasPbrRoughness =
+        mat->Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness) == AI_SUCCESS;
+    bool parsedStringRoughness = false;
+    if (!hasPbrRoughness &&
         (mat->Get("$mat.pbrRoughnessFactor", 0, 0, roughnessStr) == AI_SUCCESS ||
         mat->Get("roughness", 0, 0, roughnessStr) == AI_SUCCESS ||
         mat->Get("Roughness", 0, 0, roughnessStr) == AI_SUCCESS ||
@@ -984,9 +1075,14 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
             const float parsed = std::stof(roughnessStr.C_Str());
             if (parsed >= 0.0f && parsed <= 1.0f) {
                 roughness = parsed;
+                parsedStringRoughness = true;
             }
         } catch (...) {}
     }
+    if (!hasPbrRoughness && !parsedStringRoughness && hasLegacyShininess) {
+        roughness = std::sqrt(2.0f / (std::max(0.0f, legacyShininess) + 2.0f));
+    }
+    roughness = std::clamp(roughness, 0.045f, 1.0f);
     Param roughnessParam;
     roughnessParam.name = "roughness";
     roughnessParam.type = MaterialParamType::Float;
@@ -1023,8 +1119,40 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
     opacityParam.floatValue = opacity;
     material.parameters.push_back(opacityParam);
 
+    // FBX does not reliably identify either convention. Make the importer
+    // default explicit in .aymat so a project/import preset can override it.
+    Param normalYParam;
+    normalYParam.name = "normalYSign";
+    normalYParam.type = MaterialParamType::Float;
+    normalYParam.floatValue = 1.0f;
+    material.parameters.push_back(normalYParam);
+    Param premultipliedParam;
+    premultipliedParam.name = "premultipliedAlpha";
+    premultipliedParam.type = MaterialParamType::Float;
+    premultipliedParam.floatValue = 0.0f;
+    material.parameters.push_back(premultipliedParam);
+
     // 提取纹理路径
     _extractMaterialTextures(mat, material);
+
+    // Alpha-channel selection is a serialized material property, not a
+    // shader convention.  No dedicated texture means BaseColor.a owns alpha;
+    // a distinct opacity image defaults to the conventional grayscale red
+    // channel.  Import policy may remove a spurious opacity slot later and
+    // will update this property in lockstep.
+    const bool hasDedicatedOpacity = std::any_of(
+        material.parameters.begin(), material.parameters.end(),
+        [](const Param& param) {
+            return param.type == MaterialParamType::Texture2D
+                && param.name == "opacityTexture";
+        });
+    Param opacitySourceParam;
+    opacitySourceParam.name = "opacitySource";
+    opacitySourceParam.type = MaterialParamType::Float;
+    opacitySourceParam.floatValue = materialOpacitySourceValue(
+        hasDedicatedOpacity ? MaterialOpacitySource::TextureRed
+                            : MaterialOpacitySource::BaseColorAlpha);
+    material.parameters.push_back(opacitySourceParam);
 
     // specular
     aiColor4D specular;
@@ -1040,12 +1168,11 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
     }
 
     // shininess (specular power)
-    float shininess = 0.0f;
-    if (mat->Get(AI_MATKEY_SHININESS, shininess) == AI_SUCCESS) {
+    if (hasLegacyShininess) {
         Param param;
         param.name = "shininess";
         param.type = MaterialParamType::Float;
-        param.floatValue = shininess;
+        param.floatValue = legacyShininess;
         material.parameters.push_back(param);
     }
 

@@ -12,6 +12,9 @@
 namespace ayt::resource
 {
 
+const char kFbxImporterContractTag[] =
+    "fbx-mask-cutoff-derived-from-referenced-alpha-coverage-v14";
+
 namespace {
 
 bool parseJsonStringField(const std::string& json, size_t searchFrom, const char* key, std::string& out)
@@ -93,13 +96,17 @@ void forEachJsonObjectInArray(const std::string& json, size_t arrayOpen, Fn&& fn
 std::string sourceCoordinatePolicyCacheTag(const SourceCoordinatePolicy& policy)
 {
     if (!policy.tag.empty()) {
-        return policy.tag;
+        return policy.tag
+            + (policy.uvOrigin == ImportUvOrigin::BottomLeft
+                   ? "|uv-origin=bottom-left"
+                   : "|uv-origin=top-left");
     }
     std::ostringstream oss;
     oss << (policy.mode == SourceCoordinateMode::Auto ? "auto" : "manual")
         << ":up=" << static_cast<unsigned>(policy.up)
         << ":forward=" << static_cast<unsigned>(policy.forward)
         << ":hand=" << static_cast<unsigned>(policy.handedness)
+        << ":uv-origin=" << static_cast<unsigned>(policy.uvOrigin)
         << ":meters=" << std::setprecision(9) << policy.metersPerUnit;
     return oss.str();
 }

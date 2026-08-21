@@ -1,4 +1,5 @@
 #pragma once
+#include "AYResource/MaterialTextureContract.h"
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -48,7 +49,10 @@ enum class MaterialAlphaMode : UInt8 {
 enum class MaterialSurfaceSource : UInt8 {
     Default = 0,
     ExplicitSource = 1,
-    CompatibilityRule = 2,
+    TextureCoverage = 2,
+    // Kept as an alias for source compatibility with older callers.  The
+    // importer no longer applies model/name compatibility rules.
+    CompatibilityRule = TextureCoverage,
     ConfigOverride = 3
 };
 
@@ -76,6 +80,10 @@ struct SubmeshData {
     uint32_t indexCount = 0;
     uint32_t vertexOffset = 0;
     uint32_t materialIndex = 0;
+    // Index into IntermediateAsset::materials before materialSlots are
+    // flattened into runtime virtual paths.  This is importer-only metadata:
+    // MeshConverter intentionally does not serialize it into .aymesh.
+    uint32_t sourceMaterialIndex = UINT32_MAX;
 };
 
 struct MeshData {
@@ -106,6 +114,18 @@ struct MaterialData {
     std::vector<Param> parameters;
     // 原始纹理路径（用于 Converter 查找源文件）
     std::vector<std::string> texturePaths;
+    struct TextureSource {
+        std::string parameterName;
+        std::string sourcePath;
+        std::string virtualPath;
+        std::string usageSuffix;
+        TextureColorSpace colorSpace = TextureColorSpace::Linear;
+        NormalMapY normalY = NormalMapY::Positive;
+    };
+    // Semantic-preserving source bindings.  texturePaths remains for old
+    // producers/tests; FBXConverter prefers this record so different slots
+    // cannot overwrite each other at textures/{stem}_d.*.
+    std::vector<TextureSource> textureSources;
 };
 
 struct TextureData {

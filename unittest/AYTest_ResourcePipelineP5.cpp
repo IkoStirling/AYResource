@@ -288,4 +288,61 @@ TEST_CASE(import_fbx_contract_tag_invalidates_previous_v6_opacity_alias_cache)
     cleanup();
 }
 
+TEST_CASE(import_fbx_contract_tag_invalidates_previous_v9_semantic_texture_cache)
+{
+    cleanup();
+    const std::string assets = kRoot + "/v9/assets";
+    const std::string src = kRoot + "/v9/v9.fbx";
+    CHECK(writeText(src, "not a real fbx - v9 opacity-source assets must rebuild"));
+    CHECK(writeText(assets + "/meshes/v9.aymesh", "m"));
+    CHECK(writeText(assets + "/skeletons/v9.ayskel", "s"));
+    CHECK(writeText(
+        assets + "/v9.aydep.json",
+        R"({"importerContractTag":"fbx-semantic-textures-explicit-source-space-lh-yup-zfwd-ccw-uvtop-m-v9","resources":[{"path":"meshes/v9.aymesh","type":"Mesh","size":1},{"path":"skeletons/v9.ayskel","type":"Skeleton","size":1}],"dependencies":[]})"));
+
+    ImportOptions opts;
+    opts.sourcePath = src;
+    opts.outputDir = assets;
+    ImportResult r = importAsset(opts);
+
+    CHECK(!r.usedCache);
+    cleanup();
+}
+
+TEST_SUITE_END
+
+TEST_SUITE(UvContractCacheTests)
+
+TEST_CASE(import_fbx_contract_tag_invalidates_previous_v10_uv_cache)
+{
+    cleanup();
+    const std::string assets = kRoot + "/v10/assets";
+    const std::string src = kRoot + "/v10/v10.fbx";
+    CHECK(writeText(src, "not a real fbx - v10 unnormalized UV assets must rebuild"));
+    CHECK(writeText(assets + "/meshes/v10.aymesh", "m"));
+    CHECK(writeText(assets + "/skeletons/v10.ayskel", "s"));
+    CHECK(writeText(
+        assets + "/v10.aydep.json",
+        R"({"importerContractTag":"fbx-opacity-source-channel-explicit-source-space-lh-yup-zfwd-ccw-uvtop-m-v10","resources":[{"path":"meshes/v10.aymesh","type":"Mesh","size":1},{"path":"skeletons/v10.ayskel","type":"Skeleton","size":1}],"dependencies":[]})"));
+
+    ImportOptions opts;
+    opts.sourcePath = src;
+    opts.outputDir = assets;
+    ImportCancelToken cancel;
+    ImportResult r = importAsset(
+        opts,
+        [&cancel](const ImportProgress& progress) {
+            // A stale cache must proceed past CheckCache. Cancel immediately
+            // after that decision so this contract test never enters Assimp.
+            if (progress.stage == ImportStage::CheckCache) {
+                cancel.requestCancel();
+            }
+        },
+        &cancel);
+
+    CHECK(!r.usedCache);
+    CHECK(r.cancelled);
+    cleanup();
+}
+
 TEST_SUITE_END

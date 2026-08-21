@@ -359,7 +359,16 @@ static void generateMipmapLevel(const UInt8* src, UInt32 srcWidth, UInt32 srcHei
 ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
                                                const std::string& textureName,
                                                const std::string& baseFbxDir) {
+    return convertFromPath(imagePath, textureName, baseFbxDir, {});
+}
+
+ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
+                                               const std::string& textureName,
+                                               const std::string& baseFbxDir,
+                                               const std::string& usageSuffixOverride) {
     ConversionResult result;
+    const std::string& effectiveUsageSuffix =
+        usageSuffixOverride.empty() ? usageSuffix : usageSuffixOverride;
 
     // 解析完整路径
     std::string fullPath = resolveTexturePath(imagePath, baseFbxDir);
@@ -372,7 +381,7 @@ ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
     // dds/aytex excluded — they flow through passthrough → .aytex below
     // (zero decode, and .dds is not a registered runtime extension).
     if (rawCopy && ext != "dds" && ext != "aytex") {
-        const std::string rawFileName = textureName + usageSuffix + "." + ext;
+        const std::string rawFileName = textureName + effectiveUsageSuffix + "." + ext;
         const std::string rawVirtualPath = "textures/" + rawFileName;
         const std::string rawFullOutputPath =
             outputDir.empty() ? std::string() : outputDir + "/" + rawVirtualPath;
@@ -406,7 +415,7 @@ ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
     }
 
     // 构建输出路径 — 虚拟路径始终为 .aytex（与 aymat 引用契约一致）。
-    std::string outputFileName = textureName + usageSuffix + ".aytex";
+    std::string outputFileName = textureName + effectiveUsageSuffix + ".aytex";
     std::string virtualPath = "textures/" + outputFileName;
     std::string fullOutputPath;
     if (!outputDir.empty()) {

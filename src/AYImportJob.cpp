@@ -127,10 +127,13 @@ bool tryLoadCachedConversion(const ImportOptions& options,
     }
 
     const std::string ext = importExtensionOf(options.sourcePath);
-    // v7 covers explicit submesh material-slot indices, deterministic
-    // same-size cache replacement, surface/opacity-alias semantics and
-    // LH/Y-up/+Z/CCW/top-UV/meters.
+    // The contract symbol has one out-of-line definition so all cache readers
+    // and writers observe the same version even if a stale MSVC object missed
+    // a header-only version bump.
     if (ext == "fbx" && out.importerContractTag != kFbxImporterContractTag) {
+        std::fprintf(stderr,
+                     "[ImportCache] miss: FBX importer contract cached='%s' required='%s'\n",
+                     out.importerContractTag.c_str(), kFbxImporterContractTag);
         return false;
     }
     if (options.requireCharacterAssets && isSceneExtension(ext)) {
