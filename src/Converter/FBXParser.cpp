@@ -643,6 +643,8 @@ void FBXParser::_parseAllMeshesAsOne(const aiScene* scene) {
         mesh.materialSlots.push_back(
             makeMaterialVirtualPath(base, static_cast<std::size_t>(m->mMaterialIndex)));
 
+        _parseMorphTargets(m, vertexOffset, mesh);
+
         vertexOffset += meshVertexCount;
         indexOffset += meshIndexCount;
     }
@@ -863,6 +865,8 @@ void FBXParser::_collectNodeMeshes(const aiNode* node, const aiScene* scene, con
             const std::string base = _assetBaseName.empty() ? "asset" : _assetBaseName;
             mesh.materialSlots.push_back(
                 makeMaterialVirtualPath(base, static_cast<std::size_t>(m->mMaterialIndex)));
+
+            _parseMorphTargets(m, vertexOffset, mesh);
 
             vertexOffset += meshVertexCount;
             indexOffset += meshIndexCount;
@@ -1194,6 +1198,128 @@ void FBXParser::_parseTexture(const void* aiTexPtr, size_t index) {
     }
 
     _result->textures.push_back(std::move(texture));
+}
+
+void FBXParser::_parseMorphTargets(const aiMesh* sourceMesh,
+                                  UInt32 vertexOffset,
+                                  MeshData& mesh) {
+    if (!sourceMesh || sourceMesh->mNumAnimMeshes == 0) {
+        return;
+    }
+
+    const bool hasNormals = sourceMesh->HasNormals() && sourceMesh->mNormals != nullptr;
+    const bool hasTangents = sourceMesh->HasTangentsAndBitangents()
+                            && sourceMesh->mTangents != nullptr
+                            && sourceMesh->mBitangents != nullptr;
+
+    for (unsigned int mi = 0; mi < sourceMesh->mNumAnimMeshes; ++mi) {
+        const aiAnimMesh* animMesh = sourceMesh->mAnimMeshes[mi];
+        if (!animMesh) {
+            continue;
+        }
+
+        if (animMesh->mNumVertices != sourceMesh->mNumVertices) {
+            // Malformed animation mesh (different topology): skip this target.
+            continue;
+        }
+
+        MorphTargetData target;
+        target.defaultWeight = animMesh->mWeight;
+        target.name = animMesh->mName.C_Str();
+        if (target.name.empty()) {
+            target.name = "morph_" + std::to_string(mi);
+        }
+
+        target.deltas.reserve(sourceMesh->mNumVertices);
+        for (UInt32 v = 0; v < sourceMesh->mNumVertices; ++v) {
+            const auto basePos = sourceMesh->mVertices[v];
+            const auto animPos = animMesh->mVertices[v];
+            const float px = animPos.x - basePos.x;
+            const float py = animPos.y - basePos.y;
+            const float pz = animPos.z - basePos.z;
+
+            float nx = 0.0f, ny = 0.0f, nz = 0.0f;
+            bool hasNormalDelta = false;
+            if (hasNormals && animMesh->mNormals) {
+                const auto baseNormal = sourceMesh->mNormals[v];
+                const auto animNormal = animMesh->mNormals[v];
+                nx = animNormal.x - baseNormal.x;
+                ny = animNormal.y - baseNormal.y;
+                nz = animNormal.z - baseNormal.z;
+                hasNormalDelta = (std::abs(nx) > 0.0001f)
+                                 || (std::abs(ny) > 0.0001f)
+                                 || (std::abs(nz) > 0.0001f);
+            }
+
+            float tx = 0.0f, ty = 0.0f, tz = 0.0f, tw = 0.0f;
+            bool hasTangentDelta = false;
+            if (hasTangents && animMesh->mTangents) {
+                const auto baseTangent = sourceMesh->mTangents[v];
+                const auto animTangent = animMesh->mTangents[v];
+                tx = animTangent.x - baseTangent.x;
+                ty = animTangent.y - baseTangent.y;
+                tz = animTangent.z - baseTangent.z;
+                hasTangentDelta = (std::abs(tx) > 0.0001f)
+                                  || (std::abs(ty) > 0.0001f)
+                                  || (std::abs(tz) > 0.0001f);
+
+                if (sourceMesh->mBitangents != nullptr && animMesh->mBitangents != nullptr) {
+                    const float baseHandedness =
+                        (sourceMesh->mNormals[v].x * (baseTangent.y * sourceMesh->mBitangents[v].z
+                                                      - baseTangent.z * sourceMesh->mBitangents[v].y)
+                         + sourceMesh->mNormals[v].y * (baseTangent.z * sourceMesh->mBitangents[v].x
+                                                       - baseTangent.x * sourceMesh->mBitangents[v].z)
+                         + sourceMesh->mNormals[v].z * (baseTangent.x * sourceMesh->mBitangents[v].y
+                                                       - baseTangent.y * sourceMesh->mBitangents[v].x)) > 0.0f
+                        ? 1.0f
+                        : -1.0f;
+                    const float animHandedness =
+                        (animMesh->mNormals != nullptr ? animMesh->mNormals[v].x : sourceMesh->mNormals[v].x)
+                        * (animTangent.y * animMesh->mBitangents[v].z - animTangent.z * animMesh->mBitangents[v].y)
+                        + (animMesh->mNormals != nullptr ? animMesh->mNormals[v].y : sourceMesh->mNormals[v].y)
+                        * (animTangent.z * animMesh->mBitangents[v].x - animTangent.x * animMesh->mBitangents[v].z)
+                        + (animMesh->mNormals != nullptr ? animMesh->mNormals[v].z : sourceMesh->mNormals[v].z)
+                        * (animTangent.x * animMesh->mBitangents[v].y - animTangent.y * animMesh->mBitangents[v].x) > 0.0f
+                        ? 1.0f
+                        : -1.0f;
+                    tw = animHandedness - baseHandedness;
+                    hasTangentDelta = hasTangentDelta || (std::abs(tw) > 0.0001f);
+                }
+            }
+
+            const bool hasDelta = (std::abs(px) > 0.0001f)
+                                || (std::abs(py) > 0.0001f)
+                                || (std::abs(pz) > 0.0001f)
+                                || hasNormalDelta
+                                || hasTangentDelta;
+            if (!hasDelta) {
+                continue;
+            }
+
+            MorphVertexDelta delta;
+            delta.vertexIndex = vertexOffset + v;
+            delta.positionDelta[0] = px;
+            delta.positionDelta[1] = py;
+            delta.positionDelta[2] = pz;
+            if (hasNormalDelta) {
+                delta.normalDelta[0] = nx;
+                delta.normalDelta[1] = ny;
+                delta.normalDelta[2] = nz;
+            }
+            if (hasTangentDelta) {
+                delta.tangentDelta[0] = tx;
+                delta.tangentDelta[1] = ty;
+                delta.tangentDelta[2] = tz;
+                delta.tangentDelta[3] = tw;
+            }
+
+            target.deltas.push_back(std::move(delta));
+        }
+
+        if (!target.deltas.empty()) {
+            mesh.morphTargets.push_back(std::move(target));
+        }
+    }
 }
 
 UInt8 FBXParser::_getMeshAttributeMask(const aiMesh* m) {

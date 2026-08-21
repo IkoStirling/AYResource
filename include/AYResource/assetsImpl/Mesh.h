@@ -47,7 +47,7 @@ struct MeshBinaryHeader {
 // ===== Mesh Chunk 目录项 (12 bytes) =====
 #pragma pack(push, 1)
 struct MeshChunkDirEntry {
-    UInt32 fourCC;     // 'POSN' / 'NORM' / 'UV0 ' / 'TANG' / 'COLR' / 'IDX ' / 'MATL' / 'SUBM' / 'BOUN' / 'SKIN'
+    UInt32 fourCC;     // 'POSN' / 'NORM' / 'UV0 ' / 'TANG' / 'COLR' / 'IDX ' / 'MATL' / 'SUBM' / 'BOUN' / 'SKIN' / 'MORP'
     UInt32 offset;     // 相对文件起始的字节偏移
     UInt32 size;       // chunk 字节数
 };                      // 总 12 bytes
@@ -65,6 +65,7 @@ namespace MeshChunkFourCC {
     constexpr UInt32 SUBM = 0x4D425553; // 'SUBM'
     constexpr UInt32 BOUN = 0x4E554F42; // 'BOUN'
     constexpr UInt32 SKIN = 0x4E494B53; // 'SKIN'
+    constexpr UInt32 MORP = 0x50524F4D; // 'MORP'
 }
 
 // ===== Mesh — IMesh 实现类 =====
@@ -161,6 +162,8 @@ public:
     void _addForTestMaterialSlot(const std::string& slot);
     void _setForTestSkinWeights(const std::vector<VertexSkinWeight>& weights);
     void _setForTestBounds(const ayt::math::FVector3& center, const ayt::math::FVector3& halfExtent);
+    void _setForTestExtension(UInt32 type, const void* data, UInt32 byteSize);
+    void _setForTestExtensionBytes(UInt32 type, const std::vector<UInt8>& data);
 
 private:
     void _computeBounds();
@@ -200,6 +203,7 @@ private:
 
     // ===== Extensions (预留扩展槽) =====
     std::vector<Extension> _extensions;
+    std::vector<std::vector<UInt8>> _extensionStorage;
 
     // ===== 路径 =====
     std::string _path;

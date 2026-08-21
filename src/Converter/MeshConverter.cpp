@@ -5,6 +5,7 @@
 #include "AYIO/File.h"
 #include <AYStorage/Guid.h>
 #include <AYLog.h>
+#include <cstring>
 #include <vector>
 #include <fstream>
 #include <vector>
@@ -143,6 +144,73 @@ bool MeshConverter::saveToBinary(const MeshData& mesh, std::vector<UInt8>& outDa
             (mesh.boundsMax[2] - mesh.boundsMin[2]) * 0.5f
         };
         tmp._setForTestBounds(c, he);
+    }
+
+    // MORP extension (runtime contract, no rendering side effects yet).
+    if (!mesh.morphTargets.empty()) {
+        constexpr UInt32 kHasPos = 1u << 0;
+        constexpr UInt32 kHasNormal = 1u << 1;
+        constexpr UInt32 kHasTangent = 1u << 2;
+
+        const UInt8 hasPos =
+            (mesh.attributeMask & (1u << static_cast<uint8_t>(MeshAttribute::Position))) != 0;
+        const UInt8 hasNormal =
+            (mesh.attributeMask & (1u << static_cast<uint8_t>(MeshAttribute::Normal))) != 0;
+        const UInt8 hasTangent =
+            (mesh.attributeMask & (1u << static_cast<uint8_t>(MeshAttribute::Tangent))) != 0;
+
+        auto writeU32 = [](std::vector<UInt8>& out, UInt32 v) {
+            const size_t pos = out.size();
+            out.resize(pos + sizeof(UInt32));
+            std::memcpy(out.data() + pos, &v, sizeof(UInt32));
+        };
+        auto writeF32 = [](std::vector<UInt8>& out, Float32 v) {
+            const size_t pos = out.size();
+            out.resize(pos + sizeof(Float32));
+            std::memcpy(out.data() + pos, &v, sizeof(Float32));
+        };
+
+        std::vector<UInt8> morphPayload;
+        writeU32(morphPayload, static_cast<UInt32>(mesh.morphTargets.size()));
+        for (const auto& target : mesh.morphTargets) {
+            const std::string& name = target.name;
+            const UInt32 nameLen = static_cast<UInt32>(name.size());
+            UInt32 attributeMask = static_cast<UInt32>(kHasPos);
+            if (hasNormal) attributeMask |= kHasNormal;
+            if (hasTangent) attributeMask |= kHasTangent;
+
+            writeU32(morphPayload, nameLen);
+            if (nameLen > 0) {
+                const size_t pos = morphPayload.size();
+                morphPayload.resize(pos + nameLen);
+                std::memcpy(morphPayload.data() + pos, name.data(), nameLen);
+            }
+            writeF32(morphPayload, target.defaultWeight);
+            writeU32(morphPayload, static_cast<UInt32>(target.deltas.size()));
+            writeU32(morphPayload, attributeMask);
+
+            for (const auto& delta : target.deltas) {
+                writeU32(morphPayload, delta.vertexIndex);
+                if (hasPos) {
+                    writeF32(morphPayload, delta.positionDelta[0]);
+                    writeF32(morphPayload, delta.positionDelta[1]);
+                    writeF32(morphPayload, delta.positionDelta[2]);
+                }
+                if (hasNormal) {
+                    writeF32(morphPayload, delta.normalDelta[0]);
+                    writeF32(morphPayload, delta.normalDelta[1]);
+                    writeF32(morphPayload, delta.normalDelta[2]);
+                }
+                if (hasTangent) {
+                    writeF32(morphPayload, delta.tangentDelta[0]);
+                    writeF32(morphPayload, delta.tangentDelta[1]);
+                    writeF32(morphPayload, delta.tangentDelta[2]);
+                    writeF32(morphPayload, delta.tangentDelta[3]);
+                }
+            }
+        }
+
+        tmp._setForTestExtensionBytes(MeshChunkFourCC::MORP, morphPayload);
     }
 
     // 调 Mesh 自带的 chunked saveToBinary

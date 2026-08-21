@@ -86,6 +86,19 @@ struct SubmeshData {
     uint32_t sourceMaterialIndex = UINT32_MAX;
 };
 
+struct MorphVertexDelta {
+    UInt32 vertexIndex = 0;
+    Float32 positionDelta[3] = {0.0f, 0.0f, 0.0f};
+    Float32 normalDelta[3] = {0.0f, 0.0f, 0.0f};
+    Float32 tangentDelta[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+};
+
+struct MorphTargetData {
+    std::string name;
+    Float32 defaultWeight = 0.0f;
+    std::vector<MorphVertexDelta> deltas;
+};
+
 struct MeshData {
     std::string name;
     std::vector<float> positions;
@@ -96,6 +109,7 @@ struct MeshData {
     std::vector<uint32_t> indices;
     std::vector<SubmeshData> submeshes;
     std::vector<std::string> materialSlots;
+    std::vector<MorphTargetData> morphTargets;
     uint8_t attributeMask = 0;
     float boundsMin[3] = {0};
     float boundsMax[3] = {0};

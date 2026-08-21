@@ -16,6 +16,7 @@ void Mesh::_clear() {
     _submeshes.clear();
     _materialSlots.clear();
     _extensions.clear();
+    _extensionStorage.clear();
     _lodData.clear();
     _lods.clear();
     _hasBounds = false;
@@ -31,7 +32,12 @@ bool Mesh::unload() {
 }
 
 size_t Mesh::sizeInBytes() const {
-    return sizeof(Mesh) + _vertexData.size() + _indices.size() * sizeof(UInt32);
+    size_t extensionBytes = 0;
+    for (const auto& storage : _extensionStorage) {
+        extensionBytes += storage.size();
+    }
+    return sizeof(Mesh) + _vertexData.size() + _indices.size() * sizeof(UInt32)
+         + extensionBytes;
 }
 
 void Mesh::_computeBounds() {
@@ -342,6 +348,14 @@ bool Mesh::loadFromBinary(const void* data, size_t size) {
                 _hasSkinWeights = true;
                 break;
             }
+            case MORP: {
+                _extensionStorage.push_back(std::vector<UInt8>(sz));
+                if (! _extensionStorage.back().empty()) {
+                    std::memcpy(_extensionStorage.back().data(), cdata, sz);
+                }
+                _extensions.push_back({MORP, sz, _extensionStorage.back().data()});
+                break;
+            }
             default:
                 // 未知 four-cc：忽略，记录但不失败（向前兼容）
                 ayt::log::debug("[Mesh] loadFromBinary: ignoring unknown chunk '%c%c%c%c' (size=%u)",
@@ -420,6 +434,26 @@ void Mesh::_setForTestBounds(const ayt::math::FVector3& center, const ayt::math:
 {
     _bounds.setMinMax(center - halfExtent, center + halfExtent);
     _hasBounds = true;
+}
+
+void Mesh::_setForTestExtension(UInt32 type, const void* data, UInt32 byteSize)
+{
+    if (byteSize == 0 || data == nullptr) {
+        return;
+    }
+    _extensionStorage.push_back(std::vector<UInt8>(static_cast<size_t>(byteSize)));
+    std::memcpy(_extensionStorage.back().data(), data, byteSize);
+    _extensions.push_back({type, byteSize, _extensionStorage.back().data()});
+}
+
+void Mesh::_setForTestExtensionBytes(UInt32 type, const std::vector<UInt8>& data)
+{
+    if (data.empty()) {
+        return;
+    }
+    _extensionStorage.push_back(data);
+    _extensions.push_back({type, static_cast<UInt32>(data.size()),
+                           _extensionStorage.back().data()});
 }
 
 // ===== saveToBinary (chunked v1 layout) =====
@@ -539,6 +573,16 @@ bool Mesh::saveToBinary(std::vector<UInt8>& outData) const {
         const UInt32 sz = _vertexCount * sizeof(VertexSkinWeight);
         ChunkSpec ch{SKIN, std::vector<UInt8>(sz)};
         std::memcpy(ch.data.data(), _skinWeights.data(), sz);
+        chunks.push_back(std::move(ch));
+    }
+
+    // Extension chunks (IMesh::Extension[]).  Keep runtime-agnostic at save time.
+    for (const Extension& ext : _extensions) {
+        if (ext.size == 0 || ext.data == nullptr) {
+            continue;
+        }
+        ChunkSpec ch{ext.type, std::vector<UInt8>(ext.size)};
+        std::memcpy(ch.data.data(), ext.data, ext.size);
         chunks.push_back(std::move(ch));
     }
 

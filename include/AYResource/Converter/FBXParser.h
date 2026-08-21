@@ -97,6 +97,9 @@ private:
     void _parseAnimations(const aiScene* scene);
     bool _applySourceCoordinatePolicy();
     UInt8 _getMeshAttributeMask(const aiMesh* m);
+    void _parseMorphTargets(const aiMesh* sourceMesh,
+                           UInt32 vertexOffset,
+                           MeshData& mesh);
 };
 
 } // namespace ayt::resource
