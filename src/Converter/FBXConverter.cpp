@@ -85,6 +85,14 @@ void applyMaterialPolicy(std::vector<MaterialData>& materials,
     const auto blendNames = parseMaterialNames(policy.blendNames);
     const auto doubleSidedNames = parseMaterialNames(policy.doubleSidedNames);
 
+    const auto normalizedTexturePath = [](std::string path) {
+        std::transform(path.begin(), path.end(), path.begin(),
+            [](unsigned char c) {
+                return c == '\\' ? '/' : static_cast<char>(std::tolower(c));
+            });
+        return path;
+    };
+
     for (size_t i = 0; i < materials.size(); ++i) {
         int mode = -1;
         if (opaque.count(i) != 0) mode = 0;
@@ -102,6 +110,35 @@ void applyMaterialPolicy(std::vector<MaterialData>& materials,
             materials[i].doubleSided = true;
             materials[i].surfaceSource = MaterialSurfaceSource::ConfigOverride;
         }
+
+        // Assimp/FBX commonly exposes the diffuse image again through the
+        // TransparencyFactor slot.  It is not an independent opacity map:
+        // multiplying its red channel into the diffuse alpha makes blue/cyan
+        // regions disappear.  Opaque surfaces never consume opacity maps;
+        // Mask/Blend retain one only when it references a genuinely distinct
+        // texture.  Their base texture alpha remains authoritative otherwise.
+        auto& parameters = materials[i].parameters;
+        std::string baseColorTexture;
+        for (const Param& param : parameters) {
+            if (param.type == MaterialParamType::Texture2D
+                && param.name == "baseColorTexture") {
+                baseColorTexture = normalizedTexturePath(param.texturePath);
+                break;
+            }
+        }
+        parameters.erase(
+            std::remove_if(parameters.begin(), parameters.end(),
+                [&](const Param& param) {
+                    if (param.type != MaterialParamType::Texture2D
+                        || param.name != "opacityTexture") {
+                        return false;
+                    }
+                    return materials[i].alphaMode == MaterialAlphaMode::Opaque
+                        || (!baseColorTexture.empty()
+                            && normalizedTexturePath(param.texturePath)
+                                == baseColorTexture);
+                }),
+            parameters.end());
     }
 }
 
@@ -160,6 +197,7 @@ ConversionResult FBXConverter::convert() {
     // Dev raw-reference mode: .aymat points at raw png/jpg/... and the
     // texture converter copies sources verbatim instead of BC7-cooking.
     parser.setPreserveSourceExtension(!_cookTextures);
+    parser.setSourceCoordinatePolicy(_sourceCoordinates);
     textureConverter.setRawCopy(!_cookTextures);
 
     if (!parser.parse(sourcePath)) {
@@ -371,9 +409,11 @@ ConversionResult FBXConverter::convert() {
 
     result.textureMode = _cookTextures ? "cook" : "raw";
     result.materialPolicyTag = _materialPolicy.tag;
-    // Keep this sidecar discriminator coupled to the complete cooked FBX
-    // coordinate, skinning and material-surface contract.
+    // Keep this sidecar discriminator coupled to the complete cooked FBX v7
+    // coordinate, skinning, material-slot and opacity-alias contract.
     result.importerContractTag = kFbxImporterContractTag;
+    result.sourceCoordinateTag =
+        sourceCoordinatePolicyCacheTag(_sourceCoordinates);
 
     // 8. 写入依赖文件
     if (!outputDir.empty()) {

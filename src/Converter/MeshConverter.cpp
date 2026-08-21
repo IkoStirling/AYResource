@@ -170,8 +170,12 @@ bool MeshConverter::convert(const MeshData& mesh) {
     if (!outputDir.empty() && !virtualPath.empty()) {
         std::string fullPath = outputDir + "/" + virtualPath;
         if (ayt::io::File::exists(fullPath)) {
-            lastOutputPath = virtualPath;
-            return true;
+            const std::vector<uint8_t> oldData =
+                ayt::io::File::readAllBytes(fullPath);
+            if (oldData == binaryData) {
+                lastOutputPath = virtualPath;
+                return true;
+            }
         }
         if (!writeFile(fullPath, binaryData.data(), binaryData.size())) {
             return false;
@@ -209,12 +213,16 @@ std::vector<ConversionResult::ConvertedResource> MeshConverter::convertAll(
         if (!outputDir.empty()) {
             std::string fullPath = outputDir + "/" + virtualPath;
             if (ayt::io::File::exists(fullPath)) {
-                // 检查文件大小是否匹配，如果不一致说明格式已更新，需要重新生成
-                ayt::io::File oldFile(fullPath, ayt::io::File::Mode::BinaryRead);
-                if (oldFile.isOpen() && static_cast<size_t>(oldFile.size()) == binaryData.size()) {
-                    ayt::log::debug("[MeshConverter] SKIP %s (size match)", name.c_str());
+                // Equal size does not imply equal content: material indices,
+                // vertex values and GUIDs can all change in-place. Compare the
+                // canonical serialized bytes so a contract-triggered rebuild
+                // cannot silently retain a stale mesh.
+                const std::vector<uint8_t> oldData =
+                    ayt::io::File::readAllBytes(fullPath);
+                if (oldData == binaryData) {
+                    ayt::log::debug("[MeshConverter] SKIP %s (content match)", name.c_str());
                 } else {
-                    ayt::log::info("[MeshConverter] REPLACE %s (size changed or file missing)", name.c_str());
+                    ayt::log::info("[MeshConverter] REPLACE %s (content changed)", name.c_str());
                     writeFile(fullPath, binaryData.data(), binaryData.size());
                 }
             } else {

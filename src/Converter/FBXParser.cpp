@@ -1,6 +1,7 @@
 #include "AYResource/Converter/FBXParser.h"
 #include "AYResource/VirtualAssetPath.h"
 #include "AYResource/assetsDefs/IMesh.h"
+#include <AYMath/MathUtils.h>
 #include <assimp/scene.h>
 #include <assimp/Importer.hpp>
 #include <assimp/config.h>
@@ -11,6 +12,7 @@
 #include <cstdio>
 #include <algorithm>
 #include <functional>
+#include <cmath>
 
 namespace ayt::resource
 {
@@ -32,14 +34,23 @@ bool FBXParser::parse(const std::string& sourcePath) {
     // property is explicitly disabled. Convert source units to meters before
     // post-processing so meshes, node translations, bone offsets and
     // animation translations all share the same scale.
-    importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_IGNORE_UP_DIRECTION, false);
-    importer.SetPropertyBool(AI_CONFIG_FBX_CONVERT_TO_M, true);
+    const bool manualCoordinates =
+        _sourceCoordinates.mode == SourceCoordinateMode::Manual;
+    importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_IGNORE_UP_DIRECTION,
+                             manualCoordinates);
+    importer.SetPropertyBool(AI_CONFIG_FBX_CONVERT_TO_M,
+                             _sourceCoordinates.metersPerUnit <= 0.0f);
 
     unsigned int flags = aiProcess_Triangulate
                        | aiProcess_JoinIdenticalVertices
-                       | aiProcess_MakeLeftHanded
-                       | aiProcess_FlipWindingOrder
                        | aiProcess_LimitBoneWeights;
+    // Auto mode retains Assimp's normalized left-handed output. Manual mode
+    // loads the declared source basis unchanged; _applySourceCoordinatePolicy
+    // then performs one explicit, auditable conversion across every asset
+    // payload (not just mesh vertices).
+    if (!manualCoordinates) {
+        flags |= aiProcess_MakeLeftHanded | aiProcess_FlipWindingOrder;
+    }
     if (_loadOption == IConverter::LoadOption::MeshOnly) {
         // MeshOnly: 最小后处理
     } else {
@@ -93,6 +104,10 @@ bool FBXParser::parse(const std::string& sourcePath) {
         _parseAnimations(scene);
     }
 
+    if (manualCoordinates && !_applySourceCoordinatePolicy()) {
+        return false;
+    }
+
     return !_result->meshes.empty();
 }
 
@@ -101,6 +116,50 @@ std::unique_ptr<IntermediateAsset> FBXParser::getResult() {
 }
 
 namespace {
+
+ayt::math::FVector3 axisVector(ImportAxis axis)
+{
+    switch (axis) {
+    case ImportAxis::PositiveX: return { 1.0f, 0.0f, 0.0f};
+    case ImportAxis::NegativeX: return {-1.0f, 0.0f, 0.0f};
+    case ImportAxis::PositiveY: return { 0.0f, 1.0f, 0.0f};
+    case ImportAxis::NegativeY: return { 0.0f,-1.0f, 0.0f};
+    case ImportAxis::PositiveZ: return { 0.0f, 0.0f, 1.0f};
+    case ImportAxis::NegativeZ: return { 0.0f, 0.0f,-1.0f};
+    }
+    return {0.0f, 0.0f, 0.0f};
+}
+
+float basisDeterminant(const ayt::math::FVector3& right,
+                       const ayt::math::FVector3& up,
+                       const ayt::math::FVector3& forward)
+{
+    return right.dot(up.cross(forward));
+}
+
+ayt::math::Float4x4 basisMatrix(const ayt::math::FVector3& right,
+                                const ayt::math::FVector3& up,
+                                const ayt::math::FVector3& forward,
+                                float scale)
+{
+    return ayt::math::Float4x4(
+        scale * right.x,   scale * right.y,   scale * right.z,   0.0f,
+        scale * up.x,      scale * up.y,      scale * up.z,      0.0f,
+        scale * forward.x, scale * forward.y, scale * forward.z, 0.0f,
+        0.0f,              0.0f,              0.0f,              1.0f);
+}
+
+ayt::math::FVector3 absoluteBasisTransform(
+    const ayt::math::FVector3& right,
+    const ayt::math::FVector3& up,
+    const ayt::math::FVector3& forward,
+    const ayt::math::FVector3& value)
+{
+    const ayt::math::FVector3 ar(std::abs(right.x), std::abs(right.y), std::abs(right.z));
+    const ayt::math::FVector3 au(std::abs(up.x), std::abs(up.y), std::abs(up.z));
+    const ayt::math::FVector3 af(std::abs(forward.x), std::abs(forward.y), std::abs(forward.z));
+    return {ar.dot(value), au.dot(value), af.dot(value)};
+}
 
 ayt::math::Float4x4 toAyMatrix(const aiMatrix4x4& source)
 {
@@ -114,6 +173,130 @@ ayt::math::Float4x4 toAyMatrix(const aiMatrix4x4& source)
 }
 
 } // namespace
+
+bool FBXParser::_applySourceCoordinatePolicy()
+{
+    if (!_result) return false;
+    if (!std::isfinite(_sourceCoordinates.metersPerUnit)
+        || _sourceCoordinates.metersPerUnit < 0.0f) {
+        std::fprintf(stderr, "[FBXParser] invalid metersPerUnit %.9g\n",
+                     _sourceCoordinates.metersPerUnit);
+        return false;
+    }
+
+    const ayt::math::FVector3 up = axisVector(_sourceCoordinates.up);
+    const ayt::math::FVector3 forward = axisVector(_sourceCoordinates.forward);
+    if (std::abs(up.dot(forward)) > 0.5f) {
+        std::fprintf(stderr,
+                     "[FBXParser] manual Up and Forward axes must be orthogonal\n");
+        return false;
+    }
+
+    ayt::math::FVector3 right = up.cross(forward);
+    if (_sourceCoordinates.handedness == ImportHandedness::Right) {
+        right = -right;
+    }
+    const float determinant = basisDeterminant(right, up, forward);
+    const float unitScale = _sourceCoordinates.metersPerUnit > 0.0f
+        ? _sourceCoordinates.metersPerUnit : 1.0f;
+    const ayt::math::Float4x4 basis = basisMatrix(right, up, forward, 1.0f);
+    const ayt::math::Float4x4 sourceToEngine =
+        basisMatrix(right, up, forward, unitScale);
+    const ayt::math::Float4x4 engineToSource = sourceToEngine.inverse();
+
+    for (MeshData& mesh : _result->meshes) {
+        float minBounds[3] = {FLT_MAX, FLT_MAX, FLT_MAX};
+        float maxBounds[3] = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+        for (std::size_t i = 0; i + 2 < mesh.positions.size(); i += 3) {
+            const ayt::math::FVector3 p = sourceToEngine.transformDirection(
+                {mesh.positions[i], mesh.positions[i + 1], mesh.positions[i + 2]});
+            mesh.positions[i] = p.x; mesh.positions[i + 1] = p.y; mesh.positions[i + 2] = p.z;
+            minBounds[0] = std::min(minBounds[0], p.x);
+            minBounds[1] = std::min(minBounds[1], p.y);
+            minBounds[2] = std::min(minBounds[2], p.z);
+            maxBounds[0] = std::max(maxBounds[0], p.x);
+            maxBounds[1] = std::max(maxBounds[1], p.y);
+            maxBounds[2] = std::max(maxBounds[2], p.z);
+        }
+        for (std::size_t i = 0; i + 2 < mesh.normals.size(); i += 3) {
+            const ayt::math::FVector3 n = basis.transformDirection(
+                {mesh.normals[i], mesh.normals[i + 1], mesh.normals[i + 2]}).normalize();
+            mesh.normals[i] = n.x; mesh.normals[i + 1] = n.y; mesh.normals[i + 2] = n.z;
+        }
+        for (std::size_t i = 0; i + 3 < mesh.tangents.size(); i += 4) {
+            const ayt::math::FVector3 t = basis.transformDirection(
+                {mesh.tangents[i], mesh.tangents[i + 1], mesh.tangents[i + 2]}).normalize();
+            mesh.tangents[i] = t.x; mesh.tangents[i + 1] = t.y; mesh.tangents[i + 2] = t.z;
+            if (determinant < 0.0f) mesh.tangents[i + 3] = -mesh.tangents[i + 3];
+        }
+        if (!mesh.positions.empty()) {
+            for (int c = 0; c < 3; ++c) {
+                mesh.boundsMin[c] = minBounds[c];
+                mesh.boundsMax[c] = maxBounds[c];
+            }
+        }
+        if (determinant < 0.0f) {
+            for (std::size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                std::swap(mesh.indices[i + 1], mesh.indices[i + 2]);
+            }
+        }
+    }
+
+    for (SkeletonData& skeleton : _result->skeletons) {
+        for (BoneData& bone : skeleton.bones) {
+            bone.inverseBindMatrix = sourceToEngine * bone.inverseBindMatrix * engineToSource;
+            const ayt::math::Float4x4 local = ayt::math::Float4x4::fromTRS(
+                bone.localPosition, bone.localRotation, bone.localScale);
+            const ayt::math::Float4x4 converted =
+                sourceToEngine * local * engineToSource;
+            if (!converted.decompose(bone.localPosition,
+                                     bone.localRotation,
+                                     bone.localScale)) {
+                std::fprintf(stderr,
+                             "[FBXParser] coordinate conversion produced singular bone '%s'\n",
+                             bone.name.c_str());
+                return false;
+            }
+        }
+    }
+
+    const ayt::math::Float4x4 inverseBasis = basis.inverse();
+    for (AnimationData& animation : _result->animations) {
+        for (KeyframeTrack& track : animation.tracks) {
+            if (track.property == "position") {
+                for (std::size_t i = 0; i + 2 < track.values.size(); i += 3) {
+                    const ayt::math::FVector3 v = sourceToEngine.transformDirection(
+                        {track.values[i], track.values[i + 1], track.values[i + 2]});
+                    track.values[i] = v.x; track.values[i + 1] = v.y; track.values[i + 2] = v.z;
+                }
+            } else if (track.property == "scale") {
+                for (std::size_t i = 0; i + 2 < track.values.size(); i += 3) {
+                    const ayt::math::FVector3 v = absoluteBasisTransform(
+                        right, up, forward,
+                        {track.values[i], track.values[i + 1], track.values[i + 2]});
+                    track.values[i] = v.x; track.values[i + 1] = v.y; track.values[i + 2] = v.z;
+                }
+            } else if (track.property == "rotation") {
+                for (std::size_t i = 0; i + 3 < track.values.size(); i += 4) {
+                    const ayt::math::FQuaternion q(track.values[i], track.values[i + 1],
+                                                   track.values[i + 2], track.values[i + 3]);
+                    const ayt::math::Float4x4 converted =
+                        basis * q.toMatrix() * inverseBasis;
+                    const ayt::math::FQuaternion out =
+                        ayt::math::FQuaternion_cast(converted).normalize();
+                    track.values[i] = out.x; track.values[i + 1] = out.y;
+                    track.values[i + 2] = out.z; track.values[i + 3] = out.w;
+                }
+            }
+        }
+    }
+
+    std::fprintf(stderr,
+                 "[FBXParser] explicit source coordinates applied tag='%s' det=%.0f unit=%.9g\n",
+                 sourceCoordinatePolicyCacheTag(_sourceCoordinates).c_str(),
+                 determinant, unitScale);
+    return true;
+}
 
 void FBXParser::_prepareSkeletonMapping(const aiScene* scene)
 {

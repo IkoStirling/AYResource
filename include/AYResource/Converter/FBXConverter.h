@@ -43,6 +43,9 @@ public:
     void setMaterialImportPolicy(const MaterialImportPolicy& policy) override {
         _materialPolicy = policy;
     }
+    void setSourceCoordinatePolicy(const SourceCoordinatePolicy& policy) override {
+        _sourceCoordinates = policy;
+    }
 
     /// @brief 设置是否按 FBX 节点分离模型
     /// @param separate true=每个节点一个MeshData，false=合并所有到一个MeshData
@@ -56,6 +59,7 @@ private:
     bool separateModels = true;  // 默认分离，每个 aiMesh 一个 MeshData
     bool _cookTextures = true;   // 默认 cook（旧行为）；importAsset dev 模式传 false
     MaterialImportPolicy _materialPolicy;
+    SourceCoordinatePolicy _sourceCoordinates;
 
     // 子转换器
     MeshConverter meshConverter;

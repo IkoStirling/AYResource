@@ -9,7 +9,44 @@ namespace ayt::resource
 {
 
 inline constexpr const char* kFbxImporterContractTag =
-    "fbx-assimp-lh-yup-zfwd-ccw-uvtop-m-surface-v4";
+    "fbx-assimp-explicit-source-space-lh-yup-zfwd-ccw-uvtop-m-v8";
+
+// Signed cardinal directions used by scene importers.  Auto keeps the source
+// format importer's declared axis metadata; explicit directions let an editor
+// expose the same Up/Forward controls as DCC-oriented engine importers.
+enum class ImportAxis : uint8_t {
+    PositiveX = 0,
+    NegativeX,
+    PositiveY,
+    NegativeY,
+    PositiveZ,
+    NegativeZ,
+};
+
+enum class ImportHandedness : uint8_t {
+    Left = 0,
+    Right,
+};
+
+enum class SourceCoordinateMode : uint8_t {
+    Auto = 0,
+    Manual,
+};
+
+struct SourceCoordinatePolicy {
+    SourceCoordinateMode mode = SourceCoordinateMode::Auto;
+    ImportAxis up = ImportAxis::PositiveY;
+    ImportAxis forward = ImportAxis::PositiveZ;
+    ImportHandedness handedness = ImportHandedness::Left;
+    // 0 = use the source file's unit metadata.  Otherwise this is the number
+    // of meters represented by one source unit (for example 0.01 for cm).
+    float metersPerUnit = 0.0f;
+    // Stable caller-provided discriminator.  It is persisted in .aydep and
+    // compared on cache lookup so changing an import preset forces a recook.
+    std::string tag;
+};
+
+std::string sourceCoordinatePolicyCacheTag(const SourceCoordinatePolicy& policy);
 
 // Optional per-source material policy supplied by editor/project config.
 // FBX often exposes a TransparencyFactor texture for every material while
@@ -66,6 +103,8 @@ struct ConversionResult {
     // Importer-owned cache discriminator for coordinate, skeleton palette and
     // binary semantic changes. Old FBX sidecars without it must be rebuilt.
     std::string importerContractTag;
+    // Effective source-coordinate preset. Empty means a legacy sidecar.
+    std::string sourceCoordinateTag;
 
     // JSON 序列化（离线模式用）
     std::string toJson() const;
@@ -93,6 +132,7 @@ class IConverter {
 	    // + TextureConverter rawCopy) override this.
 	    virtual void setCookTextures(bool /*cook*/) {}
 	    virtual void setMaterialImportPolicy(const MaterialImportPolicy& /*policy*/) {}
+	    virtual void setSourceCoordinatePolicy(const SourceCoordinatePolicy& /*policy*/) {}
 
 	    // ===== 转换 =====
 	    virtual ConversionResult convert() = 0;

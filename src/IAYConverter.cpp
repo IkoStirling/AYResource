@@ -6,6 +6,7 @@
 #include "AYResource/Converter/AudioConverter.h"
 #include <cstdlib>
 #include <cstring>
+#include <iomanip>
 #include <sstream>
 
 namespace ayt::resource
@@ -89,6 +90,20 @@ void forEachJsonObjectInArray(const std::string& json, size_t arrayOpen, Fn&& fn
 
 } // namespace
 
+std::string sourceCoordinatePolicyCacheTag(const SourceCoordinatePolicy& policy)
+{
+    if (!policy.tag.empty()) {
+        return policy.tag;
+    }
+    std::ostringstream oss;
+    oss << (policy.mode == SourceCoordinateMode::Auto ? "auto" : "manual")
+        << ":up=" << static_cast<unsigned>(policy.up)
+        << ":forward=" << static_cast<unsigned>(policy.forward)
+        << ":hand=" << static_cast<unsigned>(policy.handedness)
+        << ":meters=" << std::setprecision(9) << policy.metersPerUnit;
+    return oss.str();
+}
+
 std::unique_ptr<IConverter> IConverter::create(const std::string& sourcePath) {
     // CM-2: .aytilemap.json MUST be dispatched before the generic
     // extension check — its last extension is "json" and the check below
@@ -140,6 +155,9 @@ std::string ConversionResult::toJson() const {
     if (!importerContractTag.empty()) {
         oss << "  \"importerContractTag\": \"" << importerContractTag << "\",\n";
     }
+    if (!sourceCoordinateTag.empty()) {
+        oss << "  \"sourceCoordinateTag\": \"" << sourceCoordinateTag << "\",\n";
+    }
     oss << "  \"resources\": [\n";
     for (size_t i = 0; i < resources.size(); i++) {
         const auto& res = resources[i];
@@ -171,6 +189,8 @@ ConversionResult ConversionResult::fromJson(const std::string& json) {
                                result.materialPolicyTag);
     (void)parseJsonStringField(json, 0, "importerContractTag",
                                result.importerContractTag);
+    (void)parseJsonStringField(json, 0, "sourceCoordinateTag",
+                               result.sourceCoordinateTag);
 
     // Resources MUST be parsed — Importer cache reuse checks hasMesh/hasSkel
     // on this array. A previous implementation only read dependencies, so

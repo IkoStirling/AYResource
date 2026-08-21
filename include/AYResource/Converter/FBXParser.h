@@ -55,6 +55,13 @@ public:
     void setPreserveSourceExtension(bool preserve) { _preserveSourceExtension = preserve; }
     bool getPreserveSourceExtension() const { return _preserveSourceExtension; }
 
+    void setSourceCoordinatePolicy(const SourceCoordinatePolicy& policy) {
+        _sourceCoordinates = policy;
+    }
+    const SourceCoordinatePolicy& getSourceCoordinatePolicy() const {
+        return _sourceCoordinates;
+    }
+
 private:
     std::string _sourcePath;
     std::string _assetBaseName;
@@ -62,6 +69,7 @@ private:
     bool _preserveSourceExtension = false;
     IConverter::LoadOption _loadOption = IConverter::LoadOption::Full;  // 默认 Full 模式
     bool _separateModels = true;  // 默认分离，每个 aiMesh 一个 MeshData
+    SourceCoordinatePolicy _sourceCoordinates;
     std::unique_ptr<IntermediateAsset> _result;
     // One scene-wide palette order shared by every mesh and SkeletonData.
     // aiMesh::mBones is mesh-local and cannot be written directly as the
@@ -87,6 +95,7 @@ private:
     // R-02: 把 aiNodeAnim 的 channel 转换为 3 条 KeyframeTrack (position/rotation/scale)
     // valueType 由 property 推断 (rotation → Quaternion, 其它 → Vector3)
     void _parseAnimations(const aiScene* scene);
+    bool _applySourceCoordinatePolicy();
     UInt8 _getMeshAttributeMask(const aiMesh* m);
 };
 

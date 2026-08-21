@@ -267,4 +267,25 @@ TEST_CASE(import_fbx_contract_tag_invalidates_legacy_cache)
     cleanup();
 }
 
+TEST_CASE(import_fbx_contract_tag_invalidates_previous_v6_opacity_alias_cache)
+{
+    cleanup();
+    const std::string assets = kRoot + "/v4/assets";
+    const std::string src = kRoot + "/v4/v4.fbx";
+    CHECK(writeText(src, "not a real fbx - v4 submesh slots must rebuild"));
+    CHECK(writeText(assets + "/meshes/v4.aymesh", "m"));
+    CHECK(writeText(assets + "/skeletons/v4.ayskel", "s"));
+    CHECK(writeText(
+        assets + "/v4.aydep.json",
+        R"({"importerContractTag":"fbx-assimp-lh-yup-zfwd-ccw-uvtop-m-surface-slots-opacity-v6","resources":[{"path":"meshes/v6.aymesh","type":"Mesh","size":1},{"path":"skeletons/v6.ayskel","type":"Skeleton","size":1}],"dependencies":[]})"));
+
+    ImportOptions opts;
+    opts.sourcePath = src;
+    opts.outputDir = assets;
+    ImportResult r = importAsset(opts);
+
+    CHECK(!r.usedCache);
+    cleanup();
+}
+
 TEST_SUITE_END

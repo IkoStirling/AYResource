@@ -60,6 +60,7 @@ struct ImportOptions {
     /// cached .aydep.json (deterministic cache miss).
     bool cookTextures = false;
     MaterialImportPolicy materialPolicy;
+    SourceCoordinatePolicy sourceCoordinates;
 };
 
 struct ImportResult {
@@ -89,6 +90,7 @@ struct ImportBatchOptions {
     bool stopOnError = false;
     bool cookTextures = false;              ///< see ImportOptions::cookTextures
     MaterialImportPolicy materialPolicy;
+    SourceCoordinatePolicy sourceCoordinates;
 };
 
 struct ImportBatchResult {

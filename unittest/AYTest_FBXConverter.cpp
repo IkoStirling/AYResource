@@ -1,5 +1,6 @@
 #include "AYResource.h"
 #include "AYResource/Converter/FBXConverter.h"
+#include "AYResource/Converter/MeshConverter.h"
 #include "AYResource/Loader/MeshLoader.h"
 #include "AYResource/Loader/MaterialLoader.h"
 #include "AYResource/Loader/TextureLoader.h"
@@ -32,18 +33,149 @@ static std::string fbxTestOutputStaticDir() {
 
 TEST_SUITE(FBXConverterTests)
 
+    TEST_CASE(MeshConverterReplacesSameSizeStaleMaterialIndices) {
+        namespace fs = std::filesystem;
+        const fs::path root = ayt::test::testTmpPath("mesh_same_size_replace");
+        fs::create_directories(root);
+
+        MeshData data;
+        data.name = "semantic";
+        data.attributeMask =
+            1u << static_cast<UInt8>(MeshAttribute::Position);
+        data.positions = {
+            0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f};
+        data.indices = {0, 1, 2, 1, 3, 2};
+        data.submeshes = {{0, 3, 0, 0}, {3, 3, 0, 0}};
+        data.materialSlots = {"materials/a.aymat", "materials/b.aymat"};
+
+        MeshConverter converter;
+        converter.setOutputDir(root.string());
+        auto first = converter.convertAll({data}, "semantic");
+        CHECK(first.size() == 1u);
+
+        data.submeshes[1].materialIndex = 1;
+        auto second = converter.convertAll({data}, "semantic");
+        CHECK(second.size() == 1u);
+        CHECK(first[0].size == second[0].size);
+
+        Mesh loaded;
+        CHECK(loaded.load((root / second[0].path).string()));
+        CHECK(loaded.getSubmeshCount() == 2u);
+        CHECK(loaded.getSubmeshes()[0].materialIndex == 0u);
+        CHECK(loaded.getSubmeshes()[1].materialIndex == 1u);
+    }
+
+    TEST_CASE(ImportedMeshPreservesExplicitSubmeshMaterialSlots) {
+        namespace fs = std::filesystem;
+        const fs::path root = ayt::test::testTmpPath("fbx_submesh_slots");
+        fs::create_directories(root);
+        const fs::path objPath = root / "two_materials.obj";
+        const fs::path mtlPath = root / "two_materials.mtl";
+        {
+            std::ofstream mtl(mtlPath);
+            mtl << "newmtl Left\nKd 1 0 0\n"
+                   "newmtl Right\nKd 0 1 0\n";
+        }
+        {
+            std::ofstream obj(objPath);
+            obj << "mtllib two_materials.mtl\n"
+                   "o TwoMaterials\n"
+                   "v -1 0 0\nv 0 0 0\nv -1 1 0\n"
+                   "v 1 0 0\nv 1 1 0\n"
+                   "vn 0 0 1\n"
+                   "usemtl Left\nf 1//1 2//1 3//1\n"
+                   "usemtl Right\nf 2//1 4//1 5//1\n";
+        }
+
+        FBXConverter converter(objPath.string());
+        converter.setOutputDir(root.string());
+        const ConversionResult result = converter.convert();
+
+        bool checkedMesh = false;
+        for (const auto& resource : result.resources) {
+            if (resource.type != "Mesh") continue;
+            Mesh mesh;
+            CHECK(mesh.load((root / resource.path).string()));
+            CHECK(mesh.getSubmeshCount() == 2u);
+            CHECK(mesh.getMaterialSlotCount() == 2u);
+            const IMesh::Submesh* submeshes = mesh.getSubmeshes();
+            CHECK(submeshes != nullptr);
+            CHECK(submeshes[0].materialIndex == 0u);
+            CHECK(submeshes[1].materialIndex == 1u);
+            CHECK(std::string(mesh.getMaterialSlot(0))
+                  != std::string(mesh.getMaterialSlot(1)));
+            checkedMesh = true;
+        }
+        CHECK(checkedMesh);
+    }
+
+    TEST_CASE(ManualSourceCoordinatesBakeZUpRightHandedMeshIntoEngineSpace) {
+        namespace fs = std::filesystem;
+        const fs::path root = ayt::test::testTmpPath("fbx_manual_coordinates");
+        fs::create_directories(root);
+        const fs::path objPath = root / "z_up.obj";
+        {
+            std::ofstream obj(objPath);
+            obj << "o ZUp\n"
+                   "v 0 0 0\n"
+                   "v 0 0 2\n"
+                   "v 1 0 0\n"
+                   "f 1 2 3\n";
+        }
+
+        SourceCoordinatePolicy coordinates;
+        coordinates.mode = SourceCoordinateMode::Manual;
+        coordinates.up = ImportAxis::PositiveZ;
+        coordinates.forward = ImportAxis::NegativeY;
+        coordinates.handedness = ImportHandedness::Right;
+        coordinates.tag = "test-zup-rh-v1";
+
+        FBXConverter converter(objPath.string());
+        converter.setOutputDir(root.string());
+        converter.setSourceCoordinatePolicy(coordinates);
+        const ConversionResult result = converter.convert();
+        CHECK(result.sourceCoordinateTag == coordinates.tag);
+
+        bool checkedMesh = false;
+        for (const auto& resource : result.resources) {
+            if (resource.type != "Mesh") continue;
+            Mesh mesh;
+            CHECK(mesh.load((root / resource.path).string()));
+            FVector3 minBounds;
+            FVector3 maxBounds;
+            mesh.getBounds(minBounds, maxBounds);
+            CHECK(std::abs(minBounds.y - 0.0f) < 0.0001f);
+            CHECK(std::abs(maxBounds.y - 2.0f) < 0.0001f);
+            CHECK(std::abs(maxBounds.z - minBounds.z) < 0.0001f);
+            checkedMesh = true;
+        }
+        CHECK(checkedMesh);
+    }
+
     TEST_CASE(ImportedMaterialUsesRuntimePbrShader) {
         namespace fs = std::filesystem;
         const fs::path root = ayt::test::testTmpPath("fbx_pbr_contract");
         fs::create_directories(root);
         const fs::path objPath = root / "triangle.obj";
         const fs::path mtlPath = root / "triangle.mtl";
+        const fs::path texturePath = root / "shared.ppm";
+        {
+            std::ofstream texture(texturePath, std::ios::binary);
+            texture << "P6\n1 1\n255\n";
+            const char pixel[3] = {static_cast<char>(64),
+                                   static_cast<char>(128),
+                                   static_cast<char>(255)};
+            texture.write(pixel, sizeof(pixel));
+        }
         {
             std::ofstream mtl(mtlPath);
             mtl << "newmtl ImportedMaterial\n"
                    "Kd 0.8 0.4 0.2\n"
                    "Pm 0.7\n"
-                   "Pr 0.3\n";
+                   "Pr 0.3\n"
+                   "map_Kd shared.ppm\n"
+                   "map_d shared.ppm\n";
         }
         {
             std::ofstream obj(objPath);
@@ -62,6 +194,7 @@ TEST_SUITE(FBXConverterTests)
 
         FBXConverter converter(objPath.string());
         converter.setOutputDir(root.string());
+        converter.setCookTextures(false);
         MaterialImportPolicy policy;
         policy.tag = "unit-material-policy-v1";
         // Name-based rules survive source material reordering.
@@ -77,6 +210,8 @@ TEST_SUITE(FBXConverterTests)
         const ConversionResult cached =
             ConversionResult::fromJson(result.toJson());
         CHECK(cached.importerContractTag == kFbxImporterContractTag);
+        CHECK(cached.sourceCoordinateTag
+              == sourceCoordinatePolicyCacheTag(SourceCoordinatePolicy{}));
 
         bool checkedMaterial = false;
         for (const auto& resource : result.resources) {
@@ -93,6 +228,11 @@ TEST_SUITE(FBXConverterTests)
             CHECK(material.getAlphaCutoff() == 0.5f);
             CHECK(material.isDoubleSided());
             CHECK_FALSE(material.hasParameter("__ayAlphaMode"));
+            CHECK(material.hasParameter("baseColorTexture"));
+            // Assimp reports map_Kd again as the opacity slot for this
+            // source.  The runtime must consume the image alpha once, not
+            // multiply its red channel into alpha a second time.
+            CHECK_FALSE(material.hasParameter("opacityTexture"));
             checkedMaterial = true;
         }
         CHECK(checkedMaterial);

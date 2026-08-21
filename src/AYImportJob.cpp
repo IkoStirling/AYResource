@@ -117,9 +117,19 @@ bool tryLoadCachedConversion(const ImportOptions& options,
         && out.materialPolicyTag != options.materialPolicy.tag) {
         return false;
     }
+    const bool explicitCoordinatePolicy =
+        options.sourceCoordinates.mode == SourceCoordinateMode::Manual
+        || !options.sourceCoordinates.tag.empty();
+    if (explicitCoordinatePolicy
+        && out.sourceCoordinateTag
+            != sourceCoordinatePolicyCacheTag(options.sourceCoordinates)) {
+        return false;
+    }
 
     const std::string ext = importExtensionOf(options.sourcePath);
-    // v4 contract covers surface semantics plus LH/Y-up/+Z/CCW/top-UV/meters.
+    // v7 covers explicit submesh material-slot indices, deterministic
+    // same-size cache replacement, surface/opacity-alias semantics and
+    // LH/Y-up/+Z/CCW/top-UV/meters.
     if (ext == "fbx" && out.importerContractTag != kFbxImporterContractTag) {
         return false;
     }
@@ -264,6 +274,7 @@ ImportResult importAsset(const ImportOptions& options,
         converter->setLoadOption(options.loadOption);
         converter->setCookTextures(options.cookTextures);
         converter->setMaterialImportPolicy(options.materialPolicy);
+        converter->setSourceCoordinatePolicy(options.sourceCoordinates);
         r.conversion = converter->convert();
     } catch (const std::exception& e) {
         r.error = std::string("converter threw: ") + e.what();
@@ -321,6 +332,7 @@ ImportBatchResult importAssetBatch(const ImportBatchOptions& options,
         one.requireCharacterAssets = options.requireCharacterAssets;
         one.cookTextures = options.cookTextures;
         one.materialPolicy = options.materialPolicy;
+        one.sourceCoordinates = options.sourceCoordinates;
 
         ImportProgressFn wrapped;
         if (progress) {
