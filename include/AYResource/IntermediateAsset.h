@@ -95,6 +95,8 @@ struct MorphVertexDelta {
 
 struct MorphTargetData {
     std::string name;
+    // Neutral/base-mesh weight. Source-format "full weight" thresholds must
+    // not be stored here; runtime starts from this value before animation.
     Float32 defaultWeight = 0.0f;
     std::vector<MorphVertexDelta> deltas;
 };
@@ -153,7 +155,7 @@ struct TextureData {
 
 struct KeyframeTrack {
     std::string targetNode; // bone/node name
-    std::string property;  // "position", "rotation", "scale"
+    std::string property;  // "position", "rotation", "scale", "morph:<target>"
     AnimTrackType valueType = AnimTrackType::Vector3; // R-02: 透传到 IAnimation::AnimTrack
     // Phase 1.2 (P1.2): per-track blend mode passthrough. Default = Override;
     // an FBX take authored as additive marks this in the converter.

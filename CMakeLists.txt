@@ -6,7 +6,7 @@ project(AYResource
 
 set(MODULE_NAME AYResource)
 
-file(GLOB_RECURSE SRC_FILES
+file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
     src/*.cpp
 )
 

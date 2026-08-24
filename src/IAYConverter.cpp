@@ -13,7 +13,7 @@ namespace ayt::resource
 {
 
 const char kFbxImporterContractTag[] =
-    "fbx-mask-cutoff-derived-from-referenced-alpha-coverage-v14";
+        "fbx-morph-contract-v2-neutral-default-coordinate-and-animation-safe-v16";
 
 namespace {
 

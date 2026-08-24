@@ -10,6 +10,8 @@ namespace ayt::resource
 
 // Shape-key payload type emitted into IMesh extension chunk type.
 inline constexpr UInt32 kMeshMorphChunkType = 0x50524F4D; // 'MORP'
+inline constexpr UInt32 kMeshMorphPayloadMagic = 0x4850524D; // 'MRPH'
+inline constexpr UInt32 kMeshMorphCurrentVersion = 2;
 
 // Bit mask for optional payload channels stored in each delta entry.
 enum MeshMorphPayloadChannel : UInt8 {
@@ -17,6 +19,9 @@ enum MeshMorphPayloadChannel : UInt8 {
     kMeshMorphPayloadNormal   = 1u << 1,
     kMeshMorphPayloadTangent  = 1u << 2,
 };
+
+inline constexpr UInt8 kMeshMorphKnownPayloadChannels =
+    kMeshMorphPayloadPosition | kMeshMorphPayloadNormal | kMeshMorphPayloadTangent;
 
 struct MeshMorphVertexDelta {
     UInt32 vertexIndex = 0;
@@ -34,7 +39,8 @@ struct MeshMorphTarget {
 };
 
 struct MeshMorphContract {
-    UInt32 version = 1;
+    UInt32 version = kMeshMorphCurrentVersion;
+    UInt32 flags = 0;
     std::vector<MeshMorphTarget> targets;
 };
 

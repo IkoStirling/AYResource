@@ -15,6 +15,7 @@
 #include "AYResource/Converter/FBXParser.h"
 #include "AYTest.h"
 
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,8 @@ const char* kHuesitosFbx =
     "D:/Projects/vcpkg/buildtrees/assimp/src/v6.0.4-12c3574bf8.clean/test/models/FBX/huesitos.fbx";
 const char* kCubeFbx =
     "D:/Projects/AliyatRenderer/assets/core/models/cube.fbx";
+const char* kSourFbx =
+    "D:/Aliyat/AliyatRenderer/assets/core/models/sour-miku-Creamy/Sour.fbx";
 
 bool fileExists(const std::string& p) {
     FILE* f = std::fopen(p.c_str(), "rb");
@@ -41,6 +44,27 @@ bool fileExists(const std::string& p) {
 } // namespace
 
 TEST_SUITE(FBXParserAnimationTests)
+
+    TEST_CASE(SourMorphImportSmoke) {
+        const char* runSmoke = std::getenv("AY_RUN_SOUR_IMPORT_SMOKE");
+        if (runSmoke == nullptr || std::string(runSmoke) != "1") {
+            printf("    [SKIP] set AY_RUN_SOUR_IMPORT_SMOKE=1 to run the Sour FBX regression\n");
+            return;
+        }
+        if (!fileExists(kSourFbx)) {
+            printf("    [SKIP] %s not found\n", kSourFbx);
+            return;
+        }
+        FBXParser parser;
+        parser.setLoadOption(IConverter::LoadOption::Full);
+        parser.setSeparateModels(true);
+        CHECK(parser.parse(kSourFbx));
+        auto asset = parser.getResult();
+        CHECK(asset != nullptr);
+        CHECK(!asset->meshes.empty());
+        CHECK(!asset->meshes[0].morphTargets.empty());
+        CHECK(asset->meshes[0].morphTargets[0].defaultWeight == 0.0f);
+    }
 
     TEST_CASE(StaticCubeFbxHasNoAnimations) {
         if (!fileExists(kCubeFbx)) {

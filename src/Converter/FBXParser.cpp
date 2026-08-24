@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <functional>
 #include <cmath>
+#include <iterator>
 
 namespace ayt::resource
 {
@@ -254,6 +255,30 @@ bool FBXParser::_applySourceCoordinatePolicy()
                 {mesh.tangents[i], mesh.tangents[i + 1], mesh.tangents[i + 2]}).normalize();
             mesh.tangents[i] = t.x; mesh.tangents[i + 1] = t.y; mesh.tangents[i + 2] = t.z;
             if (determinant < 0.0f) mesh.tangents[i + 3] = -mesh.tangents[i + 3];
+        }
+        for (MorphTargetData& target : mesh.morphTargets) {
+            for (MorphVertexDelta& delta : target.deltas) {
+                const ayt::math::FVector3 p = sourceToEngine.transformDirection(
+                    {delta.positionDelta[0], delta.positionDelta[1], delta.positionDelta[2]});
+                delta.positionDelta[0] = p.x;
+                delta.positionDelta[1] = p.y;
+                delta.positionDelta[2] = p.z;
+
+                const ayt::math::FVector3 n = basis.transformDirection(
+                    {delta.normalDelta[0], delta.normalDelta[1], delta.normalDelta[2]});
+                delta.normalDelta[0] = n.x;
+                delta.normalDelta[1] = n.y;
+                delta.normalDelta[2] = n.z;
+
+                const ayt::math::FVector3 t = basis.transformDirection(
+                    {delta.tangentDelta[0], delta.tangentDelta[1], delta.tangentDelta[2]});
+                delta.tangentDelta[0] = t.x;
+                delta.tangentDelta[1] = t.y;
+                delta.tangentDelta[2] = t.z;
+                if (determinant < 0.0f) {
+                    delta.tangentDelta[3] = -delta.tangentDelta[3];
+                }
+            }
         }
         if (!mesh.positions.empty()) {
             for (int c = 0; c < 3; ++c) {
@@ -1223,17 +1248,36 @@ void FBXParser::_parseMorphTargets(const aiMesh* sourceMesh,
             continue;
         }
 
-        MorphTargetData target;
-        target.defaultWeight = animMesh->mWeight;
-        target.name = animMesh->mName.C_Str();
-        if (target.name.empty()) {
-            target.name = "morph_" + std::to_string(mi);
+        std::string targetName = animMesh->mName.C_Str();
+        if (targetName.empty()) {
+            targetName = "morph_" + std::to_string(mi);
         }
 
-        target.deltas.reserve(sourceMesh->mNumVertices);
+        auto existing = std::find_if(mesh.morphTargets.begin(), mesh.morphTargets.end(),
+            [&](const MorphTargetData& candidate) { return candidate.name == targetName; });
+        const bool createdTarget = existing == mesh.morphTargets.end();
+        if (existing == mesh.morphTargets.end()) {
+            MorphTargetData created;
+            created.name = targetName;
+            // aiAnimMesh::mWeight is not a portable bind/default weight for
+            // FBX. In particular, Assimp maps FBX BlendShapeChannel
+            // FullWeights (normally 100%) to 1.0, so using it here would
+            // activate every shape key at load time. The neutral FBX mesh is
+            // the base mesh; animation channels or an explicit runtime API
+            // opt individual targets in from zero.
+            created.defaultWeight = 0.0f;
+            mesh.morphTargets.push_back(std::move(created));
+            existing = std::prev(mesh.morphTargets.end());
+        }
+        MorphTargetData& target = *existing;
+        const std::size_t deltaCountBefore = target.deltas.size();
+
+        target.deltas.reserve(target.deltas.size() + sourceMesh->mNumVertices);
         for (UInt32 v = 0; v < sourceMesh->mNumVertices; ++v) {
             const auto basePos = sourceMesh->mVertices[v];
-            const auto animPos = animMesh->mVertices[v];
+            const auto animPos = animMesh->mVertices != nullptr
+                ? animMesh->mVertices[v]
+                : basePos;
             const float px = animPos.x - basePos.x;
             const float py = animPos.y - basePos.y;
             const float pz = animPos.z - basePos.z;
@@ -1316,8 +1360,8 @@ void FBXParser::_parseMorphTargets(const aiMesh* sourceMesh,
             target.deltas.push_back(std::move(delta));
         }
 
-        if (!target.deltas.empty()) {
-            mesh.morphTargets.push_back(std::move(target));
+        if (createdTarget && target.deltas.size() == deltaCountBefore) {
+            mesh.morphTargets.erase(existing);
         }
     }
 }
@@ -1573,6 +1617,90 @@ void FBXParser::_parseAnimations(const aiScene* scene) {
                     tr.values.push_back(chan->mScalingKeys[k].mValue.z);
                 }
                 data.tracks.push_back(std::move(tr));
+            }
+        }
+
+        // Shape-key animation is independent from skeletal TRS animation.
+        // Preserve it as ordinary Float tracks so AnimationPlayer's existing
+        // orphan-float sink can route weights to a mesh runtime. The property
+        // carries the stable target name; targetNode identifies the Assimp
+        // morph channel / source mesh.
+        for (unsigned int ci = 0; ci < anim->mNumMorphMeshChannels; ++ci) {
+            const aiMeshMorphAnim* channel = anim->mMorphMeshChannels[ci];
+            if (channel == nullptr || channel->mKeys == nullptr || channel->mNumKeys == 0) {
+                continue;
+            }
+
+            const std::string channelName = channel->mName.C_Str();
+            std::unordered_set<unsigned int> targetIndices;
+            for (unsigned int keyIndex = 0; keyIndex < channel->mNumKeys; ++keyIndex) {
+                const aiMeshMorphKey& key = channel->mKeys[keyIndex];
+                if (key.mValues == nullptr || key.mWeights == nullptr) {
+                    continue;
+                }
+                for (unsigned int valueIndex = 0;
+                     valueIndex < key.mNumValuesAndWeights;
+                     ++valueIndex) {
+                    targetIndices.insert(key.mValues[valueIndex]);
+                }
+            }
+
+            auto targetNameForIndex = [&](unsigned int targetIndex) {
+                std::string fallback = "morph_" + std::to_string(targetIndex);
+                std::string uniqueCandidate;
+                bool candidateAmbiguous = false;
+                for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; ++meshIndex) {
+                    const aiMesh* sourceMesh = scene->mMeshes[meshIndex];
+                    if (sourceMesh == nullptr || targetIndex >= sourceMesh->mNumAnimMeshes
+                        || sourceMesh->mAnimMeshes[targetIndex] == nullptr) {
+                        continue;
+                    }
+                    std::string candidate = sourceMesh->mAnimMeshes[targetIndex]->mName.C_Str();
+                    if (candidate.empty()) {
+                        candidate = fallback;
+                    }
+                    if (channelName == sourceMesh->mName.C_Str()) {
+                        return candidate;
+                    }
+                    if (uniqueCandidate.empty()) {
+                        uniqueCandidate = candidate;
+                    } else if (uniqueCandidate != candidate) {
+                        candidateAmbiguous = true;
+                    }
+                }
+                return !uniqueCandidate.empty() && !candidateAmbiguous
+                    ? uniqueCandidate : fallback;
+            };
+
+            std::vector<unsigned int> orderedTargetIndices(targetIndices.begin(),
+                                                           targetIndices.end());
+            std::sort(orderedTargetIndices.begin(), orderedTargetIndices.end());
+            for (const unsigned int targetIndex : orderedTargetIndices) {
+                KeyframeTrack track;
+                track.targetNode = channelName;
+                track.property = "morph:" + targetNameForIndex(targetIndex);
+                track.valueType = AnimTrackType::Float;
+                track.times.reserve(channel->mNumKeys);
+                track.values.reserve(channel->mNumKeys);
+
+                for (unsigned int keyIndex = 0; keyIndex < channel->mNumKeys; ++keyIndex) {
+                    const aiMeshMorphKey& key = channel->mKeys[keyIndex];
+                    Float32 weight = 0.0f;
+                    if (key.mValues != nullptr && key.mWeights != nullptr) {
+                        for (unsigned int valueIndex = 0;
+                             valueIndex < key.mNumValuesAndWeights;
+                             ++valueIndex) {
+                            if (key.mValues[valueIndex] == targetIndex) {
+                                weight = static_cast<Float32>(key.mWeights[valueIndex]);
+                                break;
+                            }
+                        }
+                    }
+                    track.times.push_back(static_cast<Float32>(key.mTime / ticks));
+                    track.values.push_back(weight);
+                }
+
+                data.tracks.push_back(std::move(track));
             }
         }
 

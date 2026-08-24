@@ -1,6 +1,7 @@
 #include "AYResource/Converter/MeshConverter.h"
 #include "AYResource/Loader/MeshLoader.h"
 #include "AYResource/assetsImpl/Mesh.h"
+#include "AYResource/MeshMorphContract.h"
 #include "AYResource/assetsDefs/IMesh.h"
 #include "AYIO/File.h"
 #include <AYStorage/Guid.h>
@@ -148,10 +149,6 @@ bool MeshConverter::saveToBinary(const MeshData& mesh, std::vector<UInt8>& outDa
 
     // MORP extension (runtime contract, no rendering side effects yet).
     if (!mesh.morphTargets.empty()) {
-        constexpr UInt32 kHasPos = 1u << 0;
-        constexpr UInt32 kHasNormal = 1u << 1;
-        constexpr UInt32 kHasTangent = 1u << 2;
-
         const UInt8 hasPos =
             (mesh.attributeMask & (1u << static_cast<uint8_t>(MeshAttribute::Position))) != 0;
         const UInt8 hasNormal =
@@ -171,13 +168,17 @@ bool MeshConverter::saveToBinary(const MeshData& mesh, std::vector<UInt8>& outDa
         };
 
         std::vector<UInt8> morphPayload;
+        writeU32(morphPayload, kMeshMorphPayloadMagic);
+        writeU32(morphPayload, kMeshMorphCurrentVersion);
+        writeU32(morphPayload, 0u); // flags
         writeU32(morphPayload, static_cast<UInt32>(mesh.morphTargets.size()));
         for (const auto& target : mesh.morphTargets) {
             const std::string& name = target.name;
             const UInt32 nameLen = static_cast<UInt32>(name.size());
-            UInt32 attributeMask = static_cast<UInt32>(kHasPos);
-            if (hasNormal) attributeMask |= kHasNormal;
-            if (hasTangent) attributeMask |= kHasTangent;
+            UInt32 attributeMask = 0u;
+            if (hasPos) attributeMask |= kMeshMorphPayloadPosition;
+            if (hasNormal) attributeMask |= kMeshMorphPayloadNormal;
+            if (hasTangent) attributeMask |= kMeshMorphPayloadTangent;
 
             writeU32(morphPayload, nameLen);
             if (nameLen > 0) {
