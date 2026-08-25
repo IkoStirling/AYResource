@@ -7,6 +7,18 @@
 #include <AYMath/MathTypes.h>
 #include "AYResource/assetsDefs/IAnimation.h"  // for AnimTrackType
 
+#define AYT_RESOURCE_STRINGIZE_IMPL(value) #value
+#define AYT_RESOURCE_STRINGIZE(value) AYT_RESOURCE_STRINGIZE_IMPL(value)
+#define AYT_RESOURCE_INTERMEDIATE_ASSET_ABI_VERSION 17
+
+// IntermediateAsset crosses converter/module boundaries by value. Detect
+// consumers built against an older field layout before they can corrupt
+// memory. Keep this in sync with the importer contract revision when layout
+// or enum representation changes.
+#if defined(_MSC_VER)
+#pragma detect_mismatch("AYResource.IntermediateAsset.ABI", AYT_RESOURCE_STRINGIZE(AYT_RESOURCE_INTERMEDIATE_ASSET_ABI_VERSION))
+#endif
+
 namespace ayt::resource
 {
 using namespace ayt::math;
@@ -34,7 +46,8 @@ enum class MaterialParamType : UInt8 {
     Texture3D = 6,
     TextureCube = 7,
     Int = 8,
-    Bool = 9
+    Bool = 9,
+    String = 10
 };
 
 // Surface routing is material metadata, not a shader parameter.  Keeping it
@@ -44,6 +57,64 @@ enum class MaterialAlphaMode : UInt8 {
     Opaque = 0,
     Mask = 1,
     Blend = 2
+};
+
+// Importer-neutral material state. Source adapters (Assimp today, FBX SDK in
+// the future) translate their native enums into this contract before cooking.
+// AlphaMode answers which render route is used; BlendFunction answers how a
+// transparent draw is composited. Keeping them separate avoids collapsing an
+// authored additive material into ordinary alpha blending.
+enum class MaterialBlendFunction : UInt8 {
+    StandardAlpha = 0,
+    Additive = 1
+};
+
+enum class MaterialShadingModel : UInt8 {
+    Unknown = 0,
+    Flat,
+    Gouraud,
+    Phong,
+    Blinn,
+    Toon,
+    OrenNayar,
+    Minnaert,
+    CookTorrance,
+    Unlit,
+    Fresnel,
+    Pbr
+};
+
+enum class MaterialTextureMapping : UInt8 {
+    Uv = 0,
+    Sphere,
+    Cylinder,
+    Box,
+    Plane,
+    Other
+};
+
+enum class MaterialTextureOperation : UInt8 {
+    Multiply = 0,
+    Add,
+    Subtract,
+    Divide,
+    SmoothAdd,
+    SignedAdd
+};
+
+enum class MaterialTextureWrap : UInt8 {
+    Wrap = 0,
+    Clamp,
+    Mirror,
+    Decal
+};
+
+enum class MaterialSourcePropertyType : UInt8 {
+    Float = 0,
+    Double,
+    String,
+    Integer,
+    Buffer
 };
 
 enum class MaterialSurfaceSource : UInt8 {
@@ -73,6 +144,7 @@ struct Param {
     int intValue = 0;
     bool boolValue = false;
     std::string texturePath; // for Texture2D/3D/Cube
+    std::string stringValue;
 };
 
 struct SubmeshData {
@@ -121,13 +193,28 @@ struct MeshData {
 };
 
 struct MaterialData {
+    struct SourceProperty {
+        std::string key;
+        UInt32 semantic = 0;
+        UInt32 index = 0;
+        MaterialSourcePropertyType type = MaterialSourcePropertyType::Buffer;
+        std::string value;
+    };
+
+    std::string sourceAdapter;
     std::string name;
     std::string shader;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     float alphaCutoff = 0.5f;
     bool doubleSided = false;
+    MaterialBlendFunction blendFunction = MaterialBlendFunction::StandardAlpha;
+    MaterialShadingModel shadingModel = MaterialShadingModel::Unknown;
     MaterialSurfaceSource surfaceSource = MaterialSurfaceSource::Default;
     std::vector<Param> parameters;
+    // Lossless textual projection of every source-adapter property, including
+    // vendor-specific entries not represented by the canonical PBR contract.
+    // MaterialConverter stores this as one reserved string parameter.
+    std::vector<SourceProperty> sourceProperties;
     // 原始纹理路径（用于 Converter 查找源文件）
     std::vector<std::string> texturePaths;
     struct TextureSource {
@@ -137,6 +224,24 @@ struct MaterialData {
         std::string usageSuffix;
         TextureColorSpace colorSpace = TextureColorSpace::Linear;
         NormalMapY normalY = NormalMapY::Positive;
+        // Complete source binding metadata. The first layer for a semantic
+        // uses the canonical shader parameter name; additional layers remain
+        // available under deterministic LayerN names for tools/custom shaders.
+        UInt32 layerIndex = 0;
+        UInt32 sourceSemantic = 0;
+        UInt32 sourceLayer = 0;
+        UInt32 uvChannel = 0;
+        MaterialTextureMapping mapping = MaterialTextureMapping::Uv;
+        MaterialTextureOperation operation = MaterialTextureOperation::Multiply;
+        MaterialTextureWrap wrapU = MaterialTextureWrap::Wrap;
+        MaterialTextureWrap wrapV = MaterialTextureWrap::Wrap;
+        MaterialTextureWrap wrapW = MaterialTextureWrap::Wrap;
+        Float32 blendFactor = 1.0f;
+        Float32 uvTranslation[2] = {0.0f, 0.0f};
+        Float32 uvScale[2] = {1.0f, 1.0f};
+        Float32 uvRotation = 0.0f;
+        UInt32 flags = 0;
+        bool hasUvTransform = false;
     };
     // Semantic-preserving source bindings.  texturePaths remains for old
     // producers/tests; FBXConverter prefers this record so different slots
@@ -267,3 +372,7 @@ public:
 };
 
 } // namespace ayt::resource
+
+#undef AYT_RESOURCE_INTERMEDIATE_ASSET_ABI_VERSION
+#undef AYT_RESOURCE_STRINGIZE
+#undef AYT_RESOURCE_STRINGIZE_IMPL

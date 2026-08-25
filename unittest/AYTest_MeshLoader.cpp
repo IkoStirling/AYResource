@@ -2,9 +2,33 @@
 #include "AYResource/Loader/MeshLoader.h"
 #include "AYResource/assetsImpl/Mesh.h"
 #include "AYTest.h"
+#include <cstring>
 #include <vector>
 
 using namespace ayt::resource;
+
+namespace {
+
+MeshWindingAudit auditMeshWinding(const Mesh& mesh)
+{
+    std::vector<float> positions(mesh.getVertexCount() * 3u);
+    std::vector<float> normals(mesh.getVertexCount() * 3u);
+    const auto position = mesh.getAttributeInfo(MeshAttribute::Position);
+    const auto normal = mesh.getAttributeInfo(MeshAttribute::Normal);
+    for (UInt32 vertex = 0; vertex < mesh.getVertexCount(); ++vertex) {
+        const UInt8* source = mesh.getVertexData()
+                            + static_cast<size_t>(vertex) * mesh.getVertexStride();
+        std::memcpy(positions.data() + static_cast<size_t>(vertex) * 3u,
+                    source + position.offset, sizeof(float) * 3u);
+        std::memcpy(normals.data() + static_cast<size_t>(vertex) * 3u,
+                    source + normal.offset, sizeof(float) * 3u);
+    }
+    const std::vector<UInt32> indices(
+        mesh.getIndexData(), mesh.getIndexData() + mesh.getIndexCount());
+    return auditCanonicalMeshWinding(positions, normals, indices);
+}
+
+} // namespace
 
 TEST_SUITE(MeshLoaderTests)
 
@@ -22,6 +46,11 @@ TEST_SUITE(MeshLoaderTests)
         mesh->getBounds(min, max);
         CHECK(min.x == -1.0f);
         CHECK(max.x == 1.0f);
+
+        const MeshWindingAudit winding = auditMeshWinding(*mesh);
+        CHECK(winding.comparedTriangleCount == 12u);
+        CHECK(winding.mismatchedTriangleCount == 0u);
+        CHECK(winding.invalidIndexTriangleCount == 0u);
     }
 
     TEST_CASE(CreateSphere) {
@@ -32,6 +61,11 @@ TEST_SUITE(MeshLoaderTests)
         CHECK(mesh->getVertexCount() == 81);
         CHECK(mesh->getIndexCount() == 384);
         CHECK(mesh->hasBounds() == true);
+
+        const MeshWindingAudit winding = auditMeshWinding(*mesh);
+        CHECK(winding.comparedTriangleCount > 0u);
+        CHECK(winding.mismatchedTriangleCount == 0u);
+        CHECK(winding.invalidIndexTriangleCount == 0u);
     }
 
     TEST_CASE(SaveAndLoadBinary_Cube) {

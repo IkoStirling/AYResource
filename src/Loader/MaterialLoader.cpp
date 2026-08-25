@@ -75,8 +75,9 @@ size_t Material::sizeInBytes() const {
     size_t size = sizeof(Material);
     for (const auto& pair : _params) {
         size += pair.first.capacity();
-        if (pair.second.type >= MaterialParamType::Texture2D &&
-            pair.second.type <= MaterialParamType::TextureCube) {
+        if ((pair.second.type >= MaterialParamType::Texture2D &&
+             pair.second.type <= MaterialParamType::TextureCube)
+            || pair.second.type == MaterialParamType::String) {
             size += pair.second.stringValue.capacity();
         }
     }
@@ -163,6 +164,14 @@ bool Material::getBool(const char* name) const {
         return false;
     }
     return it->second.boolValue;
+}
+
+const char* Material::getString(const char* name) const {
+    auto it = _params.find(name);
+    if (it == _params.end() || it->second.type != MaterialParamType::String) {
+        return "";
+    }
+    return it->second.stringValue.c_str();
 }
 
 ayt::math::FVector2 Material::getVector2(const char* name) const {
@@ -257,6 +266,13 @@ void Material::setBool(const char* name, Bool value) {
     _params[name] = pv;
 }
 
+void Material::setString(const char* name, const char* value) {
+    ParameterValue pv;
+    pv.type = MaterialParamType::String;
+    pv.stringValue = value ? value : "";
+    _params[name ? name : ""] = std::move(pv);
+}
+
 void Material::setVector2(const char* name, const ayt::math::FVector2& value) {
     ParameterValue pv;
     pv.type = MaterialParamType::Float2;
@@ -332,7 +348,7 @@ bool Material::loadFromBinary(const void* data, size_t size) {
 
     // 验证 magic 和 version
     if (header->magic != IMaterial::MAGIC
-        || (header->version != 1 && header->version != IMaterial::VERSION)) {
+        || header->version < 1 || header->version > IMaterial::VERSION) {
         return false;
     }
 
@@ -432,6 +448,7 @@ bool Material::loadFromBinary(const void* data, size_t size) {
                 case MaterialParamType::Texture2D:
                 case MaterialParamType::Texture3D:
                 case MaterialParamType::TextureCube:
+                case MaterialParamType::String:
                     if (offset + sizeof(UInt32) > dataEnd) break;
                     UInt32 strLen = *reinterpret_cast<const UInt32*>(ptr + offset);
                     offset += sizeof(UInt32);
@@ -499,6 +516,7 @@ bool Material::saveToBinary(std::vector<UInt8>& outData) const {
             case MaterialParamType::Texture2D:
             case MaterialParamType::Texture3D:
             case MaterialParamType::TextureCube:
+            case MaterialParamType::String:
                 paramsDataSize += sizeof(UInt32) + pair.second.stringValue.size();
                 break;
         }
@@ -587,6 +605,7 @@ bool Material::saveToBinary(std::vector<UInt8>& outData) const {
             case MaterialParamType::Texture2D:
             case MaterialParamType::Texture3D:
             case MaterialParamType::TextureCube:
+            case MaterialParamType::String:
                 {
                     UInt32 strLen = static_cast<UInt32>(pair.second.stringValue.size());
                     std::memcpy(ptr + offset, &strLen, sizeof(UInt32));
@@ -621,6 +640,7 @@ bool Material::saveToMaterialData(std::vector<UInt8>& outData) const {
             case MaterialParamType::Texture2D:
             case MaterialParamType::Texture3D:
             case MaterialParamType::TextureCube:
+            case MaterialParamType::String:
                 paramsDataSize += sizeof(UInt32) + pair.second.stringValue.size(); break;
         }
     }
@@ -712,6 +732,7 @@ bool Material::saveToMaterialData(std::vector<UInt8>& outData) const {
             case MaterialParamType::Texture2D:
             case MaterialParamType::Texture3D:
             case MaterialParamType::TextureCube:
+            case MaterialParamType::String:
                 {
                     UInt32 strLen = static_cast<UInt32>(pair.second.stringValue.size());
                     std::memcpy(ptr, &strLen, sizeof(UInt32));
@@ -840,6 +861,7 @@ bool Material::loadFromMaterialData(const void* data, size_t size) {
             case MaterialParamType::Texture2D:
             case MaterialParamType::Texture3D:
             case MaterialParamType::TextureCube:
+            case MaterialParamType::String:
                 {
                     UInt32 strLen = 0;
                     if (offset + sizeof(UInt32) <= size) {
@@ -885,6 +907,7 @@ size_t Material::getMaterialDataSize() const {
             case MaterialParamType::Texture2D:
             case MaterialParamType::Texture3D:
             case MaterialParamType::TextureCube:
+            case MaterialParamType::String:
                 paramsSize += sizeof(UInt32) + pair.second.stringValue.size(); break;
         }
     }

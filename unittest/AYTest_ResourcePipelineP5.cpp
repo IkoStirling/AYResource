@@ -128,6 +128,35 @@ TEST_CASE(import_reuses_aydep_cache_without_converter)
     cleanup();
 }
 
+TEST_CASE(animation_requirement_reuses_animation_only_cache)
+{
+    cleanup();
+    const std::string assets = kRoot + "/assets";
+    const std::string src = kRoot + "/walk.fbx";
+    CHECK(writeText(src, "not a real fbx - animation cache must win"));
+    CHECK(writeText(assets + "/animations/walk.ayanm", "animation-bytes"));
+    CHECK(writeText(
+        assets + "/walk.aydep.json",
+        std::string("{\"importerContractTag\":\"")
+            + kFbxImporterContractTag
+            + "\",\"resources\":[{\"path\":\"animations/walk.ayanm\","
+              "\"type\":\"Animation\",\"size\":15}],\"dependencies\":[]}"));
+
+    ImportOptions opts;
+    opts.sourcePath = src;
+    opts.outputDir = assets;
+    opts.requireCharacterAssets = false;
+    opts.requireAnimationAssets = true;
+    opts.loadOption = IConverter::LoadOption::AnimationOnly;
+
+    const ImportResult result = importAsset(opts);
+    CHECK(result.ok);
+    CHECK(result.usedCache);
+    CHECK(result.conversion.resources.size() == 1u);
+    CHECK(result.conversion.resources[0].type == "Animation");
+    cleanup();
+}
+
 TEST_CASE(import_cancel_before_convert)
 {
     cleanup();

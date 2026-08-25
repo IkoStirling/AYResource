@@ -52,6 +52,8 @@ struct ImportOptions {
     bool force = false;                     ///< Skip .aydep.json cache reuse
     /// For .fbx/.gltf/.glb cache hits: require Mesh + Skeleton entries (Editor character path).
     bool requireCharacterAssets = true;
+    /// For animation-source cache hits: require at least one Animation entry.
+    bool requireAnimationAssets = false;
     /// false (default, dev): textures are referenced raw — the source
     /// png/jpg/… is copied into textures/ with its original extension and
     /// .aymat points at it (TextureLoader decodes with stb at runtime).
@@ -87,6 +89,7 @@ struct ImportBatchOptions {
     IConverter::LoadOption loadOption = IConverter::LoadOption::Full;
     bool force = false;
     bool requireCharacterAssets = true;
+    bool requireAnimationAssets = false;
     bool stopOnError = false;
     bool cookTextures = false;              ///< see ImportOptions::cookTextures
     MaterialImportPolicy materialPolicy;

@@ -15,6 +15,10 @@
 #include <functional>
 #include <cmath>
 #include <iterator>
+#include <string_view>
+#include <iomanip>
+#include <limits>
+#include <sstream>
 
 namespace ayt::resource
 {
@@ -33,6 +37,176 @@ float normalizeSourceTangentHandedness(const SourceCoordinatePolicy& policy,
     // tangent-space basis by flipping its serialized handedness exactly once.
     return policy.uvOrigin == ImportUvOrigin::BottomLeft
         ? -handedness : handedness;
+}
+
+void auditImportedMeshWinding(const IntermediateAsset& asset)
+{
+    for (const MeshData& mesh : asset.meshes) {
+        const MeshWindingAudit audit = auditCanonicalMeshWinding(
+            mesh.positions, mesh.normals, mesh.indices);
+        if (audit.invalidIndexTriangleCount == 0u
+            && audit.mismatchedTriangleCount == 0u) {
+            continue;
+        }
+        std::fprintf(stderr,
+                     "[FBXParser] winding audit mesh='%s' triangles=%zu "
+                     "compared=%zu mismatched=%zu degenerate=%zu invalid=%zu; "
+                     "expected LH/CW-front canonical indices\n",
+                     mesh.name.c_str(), audit.triangleCount,
+                     audit.comparedTriangleCount,
+                     audit.mismatchedTriangleCount,
+                     audit.degenerateTriangleCount,
+                     audit.invalidIndexTriangleCount);
+    }
+}
+
+void setFloatParam(MaterialData& material, const char* name, float value)
+{
+    Param param;
+    param.name = name;
+    param.type = MaterialParamType::Float;
+    param.floatValue = value;
+    material.parameters.push_back(std::move(param));
+}
+
+void setFloat3Param(MaterialData& material, const char* name,
+                    float x, float y, float z)
+{
+    Param param;
+    param.name = name;
+    param.type = MaterialParamType::Float3;
+    param.float3Value[0] = x;
+    param.float3Value[1] = y;
+    param.float3Value[2] = z;
+    material.parameters.push_back(std::move(param));
+}
+
+MaterialShadingModel translateShadingModel(aiShadingMode mode)
+{
+    switch (mode) {
+    case aiShadingMode_Flat: return MaterialShadingModel::Flat;
+    case aiShadingMode_Gouraud: return MaterialShadingModel::Gouraud;
+    case aiShadingMode_Phong: return MaterialShadingModel::Phong;
+    case aiShadingMode_Blinn: return MaterialShadingModel::Blinn;
+    case aiShadingMode_Toon: return MaterialShadingModel::Toon;
+    case aiShadingMode_OrenNayar: return MaterialShadingModel::OrenNayar;
+    case aiShadingMode_Minnaert: return MaterialShadingModel::Minnaert;
+    case aiShadingMode_CookTorrance: return MaterialShadingModel::CookTorrance;
+    case aiShadingMode_NoShading: return MaterialShadingModel::Unlit;
+    case aiShadingMode_Fresnel: return MaterialShadingModel::Fresnel;
+    case aiShadingMode_PBR_BRDF: return MaterialShadingModel::Pbr;
+    default: return MaterialShadingModel::Unknown;
+    }
+}
+
+template<typename T>
+bool getMaterialValue(const aiMaterial* material,
+                      const char* key, unsigned int semantic,
+                      unsigned int index, T& value)
+{
+    return material->Get(key, semantic, index, value) == AI_SUCCESS;
+}
+
+void appendOptionalFloat(const aiMaterial* source, MaterialData& material,
+                         const char* parameterName, const char* key,
+                         unsigned int semantic = 0, unsigned int index = 0)
+{
+    float value = 0.0f;
+    if (getMaterialValue(source, key, semantic, index, value)) {
+        setFloatParam(material, parameterName, value);
+    }
+}
+
+void appendOptionalColor3(const aiMaterial* source, MaterialData& material,
+                          const char* parameterName, const char* key,
+                          unsigned int semantic = 0, unsigned int index = 0)
+{
+    aiColor3D value;
+    if (getMaterialValue(source, key, semantic, index, value)) {
+        setFloat3Param(material, parameterName, value.r, value.g, value.b);
+    }
+}
+
+std::string sourcePropertyValue(const aiMaterial* material,
+                                const aiMaterialProperty& property)
+{
+    std::ostringstream out;
+    out << std::setprecision(std::numeric_limits<double>::max_digits10);
+    const auto appendArray = [&out](const auto* bytes, size_t byteCount,
+                                    auto valueTag) {
+        using Value = decltype(valueTag);
+        const size_t count = byteCount / sizeof(Value);
+        for (size_t i = 0; i < count; ++i) {
+            Value value{};
+            std::memcpy(&value, bytes + i * sizeof(Value), sizeof(Value));
+            if (i != 0) out << ',';
+            out << value;
+        }
+    };
+
+    switch (property.mType) {
+    case aiPTI_Float:
+        appendArray(property.mData, property.mDataLength, float{});
+        break;
+    case aiPTI_Double:
+        appendArray(property.mData, property.mDataLength, double{});
+        break;
+    case aiPTI_Integer:
+        appendArray(property.mData, property.mDataLength, int{});
+        break;
+    case aiPTI_String: {
+        aiString value;
+        if (material->Get(property.mKey.C_Str(), property.mSemantic,
+                          property.mIndex, value) == AI_SUCCESS) {
+            out << value.C_Str();
+        }
+        break;
+    }
+    case aiPTI_Buffer:
+    default:
+        out << std::hex << std::setfill('0');
+        for (unsigned int i = 0; i < property.mDataLength; ++i) {
+            out << std::setw(2)
+                << static_cast<unsigned int>(
+                       static_cast<unsigned char>(property.mData[i]));
+        }
+        break;
+    }
+    return out.str();
+}
+
+void captureSourceProperties(const aiMaterial* source, MaterialData& material)
+{
+    material.sourceAdapter = "assimp";
+    material.sourceProperties.reserve(source->mNumProperties);
+    for (unsigned int i = 0; i < source->mNumProperties; ++i) {
+        const aiMaterialProperty* property = source->mProperties[i];
+        if (!property) continue;
+        MaterialData::SourceProperty captured;
+        captured.key = property->mKey.C_Str();
+        captured.semantic = property->mSemantic;
+        captured.index = property->mIndex;
+        switch (property->mType) {
+        case aiPTI_Float:
+            captured.type = MaterialSourcePropertyType::Float;
+            break;
+        case aiPTI_Double:
+            captured.type = MaterialSourcePropertyType::Double;
+            break;
+        case aiPTI_String:
+            captured.type = MaterialSourcePropertyType::String;
+            break;
+        case aiPTI_Integer:
+            captured.type = MaterialSourcePropertyType::Integer;
+            break;
+        case aiPTI_Buffer:
+        default:
+            captured.type = MaterialSourcePropertyType::Buffer;
+            break;
+        }
+        captured.value = sourcePropertyValue(source, *property);
+        material.sourceProperties.push_back(std::move(captured));
+    }
 }
 
 } // namespace
@@ -97,6 +271,19 @@ bool FBXParser::parse(const std::string& sourcePath) {
                      ? 1 : 0);
 
     _result = std::make_unique<IntermediateAsset>();
+
+    // Animation source files are a separate asset role. Do not cook their
+    // render geometry/materials (Blender and MMD exporters commonly include
+    // helper colliders and mmd_edge shells in animation FBX files). Animation
+    // channels are name-bound to the model skeleton imported separately.
+    if (_loadOption == IConverter::LoadOption::AnimationOnly) {
+        _parseAnimations(scene);
+        if (manualCoordinates && !_applySourceCoordinatePolicy()) {
+            return false;
+        }
+        return !_result->animations.empty();
+    }
+
     _prepareSkeletonMapping(scene);
 
     // 解析所有 Mesh - Submesh 永不分离，按顶级节点分组
@@ -134,6 +321,12 @@ bool FBXParser::parse(const std::string& sourcePath) {
     if (manualCoordinates && !_applySourceCoordinatePolicy()) {
         return false;
     }
+
+    // Assimp auto conversion and the explicit manual basis path must both
+    // produce the same persisted LH/CW-front contract. This diagnostic is
+    // deliberately non-mutating: basis determinant is authoritative, while
+    // normals may be authored inconsistently or intentionally discontinuous.
+    auditImportedMeshWinding(*_result);
 
     return !_result->meshes.empty();
 }
@@ -287,9 +480,7 @@ bool FBXParser::_applySourceCoordinatePolicy()
             }
         }
         if (determinant < 0.0f) {
-            for (std::size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-                std::swap(mesh.indices[i + 1], mesh.indices[i + 2]);
-            }
+            reverseTriangleWinding(mesh.indices);
         }
     }
 
@@ -914,10 +1105,10 @@ void FBXParser::_collectNodeMeshes(const aiNode* node, const aiScene* scene, con
 
 // 提取材质纹理路径
 void FBXParser::_extractMaterialTextures(const aiMaterial* mat, MaterialData& material) {
-    // 纹理类型映射到参数名
+    // Keep every Assimp texture semantic and layer. The first binding for a
+    // semantic owns the canonical shader slot; further bindings are retained
+    // under LayerN names together with their source composition metadata.
     static const std::pair<aiTextureType, const char*> textureTypes[] = {
-        // Prefer explicit PBR semantics when both legacy and PBR aliases
-        // exist. The first successful source owns the public material slot.
         {aiTextureType_BASE_COLOR, "baseColorTexture"},
         {aiTextureType_DIFFUSE, "baseColorTexture"},
         {aiTextureType_NORMAL_CAMERA, "normalTexture"},
@@ -926,32 +1117,46 @@ void FBXParser::_extractMaterialTextures(const aiMaterial* mat, MaterialData& ma
         {aiTextureType_EMISSION_COLOR, "emissiveTexture"},
         {aiTextureType_EMISSIVE, "emissiveTexture"},
         {aiTextureType_HEIGHT, "heightTexture"},
+        {aiTextureType_SHININESS, "shininessTexture"},
         {aiTextureType_OPACITY, "opacityTexture"},
+        {aiTextureType_DISPLACEMENT, "displacementTexture"},
+        {aiTextureType_LIGHTMAP, "lightmapTexture"},
         {aiTextureType_METALNESS, "metallicTexture"},
         {aiTextureType_DIFFUSE_ROUGHNESS, "roughnessTexture"},
         {aiTextureType_AMBIENT_OCCLUSION, "aoTexture"},
         {aiTextureType_REFLECTION, "reflectionTexture"},
+        {aiTextureType_SHEEN, "sheenTexture"},
+        {aiTextureType_CLEARCOAT, "clearcoatTexture"},
+        {aiTextureType_TRANSMISSION, "transmissionTexture"},
+        {aiTextureType_MAYA_BASE, "mayaBaseTexture"},
+        {aiTextureType_MAYA_SPECULAR, "mayaSpecularTexture"},
+        {aiTextureType_MAYA_SPECULAR_COLOR, "mayaSpecularColorTexture"},
+        {aiTextureType_MAYA_SPECULAR_ROUGHNESS, "mayaSpecularRoughnessTexture"},
+        {aiTextureType_ANISOTROPY, "anisotropyTexture"},
+        {aiTextureType_GLTF_METALLIC_ROUGHNESS, "metallicRoughnessTexture"},
+        {aiTextureType_AMBIENT, "ambientTexture"},
         {aiTextureType_UNKNOWN, "unknownTexture"},
     };
 
+    std::unordered_map<std::string, UInt32> semanticLayerCounts;
     for (const auto& [texType, paramName] : textureTypes) {
-        const bool slotAlreadyAssigned = std::any_of(
-            material.parameters.begin(), material.parameters.end(),
-            [paramName](const Param& param) {
-                return param.type == MaterialParamType::Texture2D
-                    && param.name == paramName;
-            });
-        if (slotAlreadyAssigned) {
-            continue;
-        }
-        // 检查是否有该类型的纹理
-        aiTextureType mappedType = texType;
-        unsigned int texCount = mat->GetTextureCount(mappedType);
-        if (texCount == 0) continue;
-
-        // 获取第一个纹理路径
-        aiString texPath;
-        if (mat->GetTexture(mappedType, 0, &texPath) == AI_SUCCESS) {
+        const unsigned int texCount = mat->GetTextureCount(texType);
+        for (unsigned int textureIndex = 0; textureIndex < texCount;
+             ++textureIndex) {
+            aiString texPath;
+            aiTextureMapping mapping = aiTextureMapping_UV;
+            unsigned int uvIndex = 0;
+            ai_real blend = 1.0f;
+            aiTextureOp operation = aiTextureOp_Multiply;
+            aiTextureMapMode mapModes[3] = {
+                aiTextureMapMode_Wrap,
+                aiTextureMapMode_Wrap,
+                aiTextureMapMode_Wrap};
+            if (mat->GetTexture(texType, textureIndex, &texPath, &mapping,
+                                &uvIndex, &blend, &operation,
+                                mapModes) != AI_SUCCESS) {
+                continue;
+            }
             std::string path(texPath.C_Str());
             if (path.empty()) continue;
 
@@ -972,6 +1177,25 @@ void FBXParser::_extractMaterialTextures(const aiMaterial* mat, MaterialData& ma
                 }
             }
 
+            // PBR and legacy aliases often repeat the exact same binding.
+            // Preserve genuinely distinct layers while suppressing aliases
+            // that would sample and combine the same source twice.
+            const bool duplicateBinding = std::any_of(
+                material.textureSources.begin(), material.textureSources.end(),
+                [&path, paramName](const MaterialData::TextureSource& source) {
+                    const std::string_view existing = source.parameterName;
+                    return existing.starts_with(paramName)
+                        && sameMaterialTextureSource(source.sourcePath, path);
+                });
+            if (duplicateBinding) {
+                continue;
+            }
+
+            const UInt32 semanticLayer = semanticLayerCounts[paramName]++;
+            const std::string bindingName = semanticLayer == 0
+                ? std::string(paramName)
+                : std::string(paramName) + "Layer" + std::to_string(semanticLayer);
+
             // Virtual path uses flattened stem + usage + extension.
             // texturePaths keeps the Assimp path so convertFromPath can
             // open absolute or FBX-relative sources.
@@ -989,7 +1213,7 @@ void FBXParser::_extractMaterialTextures(const aiMaterial* mat, MaterialData& ma
                 materialTextureContract(paramName);
 
             Param param;
-            param.name = paramName;
+            param.name = bindingName;
             param.type = MaterialParamType::Texture2D;
             param.texturePath = makeTextureVirtualPath(textureName, contract.usageSuffix,
                                                        texExt.c_str());
@@ -997,13 +1221,40 @@ void FBXParser::_extractMaterialTextures(const aiMaterial* mat, MaterialData& ma
 
             material.texturePaths.push_back(path);
             MaterialData::TextureSource source;
-            source.parameterName = paramName;
+            source.parameterName = bindingName;
             source.sourcePath = path;
             source.virtualPath = param.texturePath;
             source.usageSuffix = contract.usageSuffix;
             source.colorSpace = contract.colorSpace;
             source.normalY = contract.normalY;
+            source.layerIndex = semanticLayer;
+            source.sourceSemantic = static_cast<UInt32>(texType);
+            source.sourceLayer = textureIndex;
+            source.uvChannel = uvIndex;
+            source.mapping = static_cast<MaterialTextureMapping>(mapping);
+            source.operation = static_cast<MaterialTextureOperation>(operation);
+            source.wrapU = static_cast<MaterialTextureWrap>(mapModes[0]);
+            source.wrapV = static_cast<MaterialTextureWrap>(mapModes[1]);
+            source.wrapW = static_cast<MaterialTextureWrap>(mapModes[2]);
+            source.blendFactor = blend;
+
+            aiUVTransform transform;
+            if (mat->Get(AI_MATKEY_UVTRANSFORM(texType, textureIndex),
+                         transform) == AI_SUCCESS) {
+                source.hasUvTransform = true;
+                source.uvTranslation[0] = transform.mTranslation.x;
+                source.uvTranslation[1] = transform.mTranslation.y;
+                source.uvScale[0] = transform.mScaling.x;
+                source.uvScale[1] = transform.mScaling.y;
+                source.uvRotation = transform.mRotation;
+            }
+            unsigned int textureFlags = 0;
+            if (mat->Get(AI_MATKEY_TEXFLAGS(texType, textureIndex),
+                         textureFlags) == AI_SUCCESS) {
+                source.flags = textureFlags;
+            }
             material.textureSources.push_back(std::move(source));
+
         }
     }
 }
@@ -1012,6 +1263,7 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
     const aiMaterial* mat = static_cast<const aiMaterial*>(aiMatPtr);
 
     MaterialData material;
+    captureSourceProperties(mat, material);
     aiString sourceMaterialName;
     if (mat->Get(AI_MATKEY_NAME, sourceMaterialName) == AI_SUCCESS
         && sourceMaterialName.length > 0) {
@@ -1024,21 +1276,35 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
     // RenderAssetBridge's root-relative shader resolution.
     material.shader = "pbr.phoskia";
 
-    // Import surface metadata into the typed material contract. FBX files
-    // that expose a real scalar opacity or blend state get Blend; otherwise
-    // stay conservatively Opaque. An opacity texture alone is deliberately
-    // not enough: many FBX exporters connect the base-color texture to the
-    // TransparencyFactor slot for every material.
+    // Import surface metadata into the source-neutral material contract.
+    // Assimp's blend property describes the composition formula, not whether
+    // the surface is transparent. In particular aiBlendMode_Default means
+    // standard alpha compositing and must not by itself force the Blend route.
     float importedOpacity = 1.0f;
     const bool hasOpacity =
         mat->Get(AI_MATKEY_OPACITY, importedOpacity) == AI_SUCCESS;
+    float importedTransparency = 0.0f;
+    const bool hasTransparency =
+        mat->Get(AI_MATKEY_TRANSPARENCYFACTOR,
+                 importedTransparency) == AI_SUCCESS;
     aiBlendMode importedBlend = aiBlendMode_Default;
     const bool hasBlend =
         mat->Get(AI_MATKEY_BLEND_FUNC, importedBlend) == AI_SUCCESS;
     int importedTwoSided = 0;
     (void)mat->Get(AI_MATKEY_TWOSIDED, importedTwoSided);
 
-    const bool explicitBlend = (hasOpacity && importedOpacity < 0.999f) || hasBlend;
+    importedOpacity = std::clamp(importedOpacity, 0.0f, 1.0f);
+    importedTransparency = std::clamp(importedTransparency, 0.0f, 1.0f);
+    if (!hasOpacity && hasTransparency) {
+        importedOpacity = 1.0f - importedTransparency;
+    }
+    material.blendFunction = hasBlend
+        && importedBlend == aiBlendMode_Additive
+        ? MaterialBlendFunction::Additive
+        : MaterialBlendFunction::StandardAlpha;
+    const bool explicitBlend = importedOpacity < 0.999f
+        || (hasTransparency && importedTransparency > 0.001f)
+        || material.blendFunction == MaterialBlendFunction::Additive;
     material.alphaMode = explicitBlend
         ? MaterialAlphaMode::Blend : MaterialAlphaMode::Opaque;
     material.alphaCutoff = 0.5f;
@@ -1047,13 +1313,30 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
         ? MaterialSurfaceSource::ExplicitSource
         : MaterialSurfaceSource::Default;
 
-    // baseColor (albedo)
+    aiShadingMode importedShading = aiShadingMode_Phong;
+    if (mat->Get(AI_MATKEY_SHADING_MODEL, importedShading) == AI_SUCCESS) {
+        material.shadingModel = translateShadingModel(importedShading);
+    }
+
+    // baseColor (albedo). PBR base color is authoritative; diffuse remains a
+    // compatibility fallback for legacy FBX/Phong exporters.
     aiColor4D baseColor;
     baseColor.r = 1.0f;
     baseColor.g = 1.0f;
     baseColor.b = 1.0f;
     baseColor.a = 1.0f;
-    mat->Get(AI_MATKEY_COLOR_DIFFUSE, baseColor);
+    bool hasBaseColor = false;
+#ifdef AI_MATKEY_BASE_COLOR
+    hasBaseColor = mat->Get(AI_MATKEY_BASE_COLOR, baseColor) == AI_SUCCESS;
+#endif
+    if (!hasBaseColor) {
+        (void)mat->Get(AI_MATKEY_COLOR_DIFFUSE, baseColor);
+    }
+    if (!hasOpacity && !hasTransparency && baseColor.a < 0.999f) {
+        importedOpacity = std::clamp(baseColor.a, 0.0f, 1.0f);
+        material.alphaMode = MaterialAlphaMode::Blend;
+        material.surfaceSource = MaterialSurfaceSource::ExplicitSource;
+    }
     Param baseColorParam;
     baseColorParam.name = "baseColor";
     baseColorParam.type = MaterialParamType::Float4;
@@ -1062,6 +1345,10 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
     baseColorParam.float4Value[2] = baseColor.b;
     baseColorParam.float4Value[3] = baseColor.a;
     material.parameters.push_back(baseColorParam);
+
+    if (hasTransparency) {
+        setFloatParam(material, "transparencyFactor", importedTransparency);
+    }
 
     // metallic (PBR) - 检查常见建模引擎导出的字符串属性
     float metallic = 0.0f;
@@ -1078,6 +1365,7 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
             }
         } catch (...) {}
     }
+    metallic = std::clamp(metallic, 0.0f, 1.0f);
     Param metallicParam;
     metallicParam.name = "metallic";
     metallicParam.type = MaterialParamType::Float;
@@ -1094,6 +1382,9 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
     aiString roughnessStr;
     const bool hasPbrRoughness =
         mat->Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness) == AI_SUCCESS;
+    float glossiness = 0.0f;
+    const bool hasGlossiness =
+        mat->Get(AI_MATKEY_GLOSSINESS_FACTOR, glossiness) == AI_SUCCESS;
     bool parsedStringRoughness = false;
     if (!hasPbrRoughness &&
         (mat->Get("$mat.pbrRoughnessFactor", 0, 0, roughnessStr) == AI_SUCCESS ||
@@ -1108,8 +1399,13 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
             }
         } catch (...) {}
     }
-    if (!hasPbrRoughness && !parsedStringRoughness && hasLegacyShininess) {
-        roughness = std::sqrt(2.0f / (std::max(0.0f, legacyShininess) + 2.0f));
+    if (!hasPbrRoughness && !parsedStringRoughness) {
+        if (hasGlossiness) {
+            roughness = 1.0f - std::clamp(glossiness, 0.0f, 1.0f);
+        } else if (hasLegacyShininess) {
+            roughness = std::sqrt(
+                2.0f / (std::max(0.0f, legacyShininess) + 2.0f));
+        }
     }
     roughness = std::clamp(roughness, 0.045f, 1.0f);
     Param roughnessParam;
@@ -1118,11 +1414,22 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
     roughnessParam.floatValue = roughness;
     material.parameters.push_back(roughnessParam);
 
+    if (hasGlossiness) {
+        setFloatParam(material, "glossiness",
+                      std::clamp(glossiness, 0.0f, 1.0f));
+    }
+
     Param aoParam;
     aoParam.name = "ao";
     aoParam.type = MaterialParamType::Float;
     aoParam.floatValue = 1.0f;
     material.parameters.push_back(aoParam);
+
+    aiColor3D ambientColor;
+    if (mat->Get(AI_MATKEY_COLOR_AMBIENT, ambientColor) == AI_SUCCESS) {
+        setFloat3Param(material, "ambientColor",
+                       ambientColor.r, ambientColor.g, ambientColor.b);
+    }
 
     // emissive
     aiColor4D emissive;
@@ -1140,8 +1447,7 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
     material.parameters.push_back(emissiveParam);
 
     // opacity (transparency)
-    float opacity = 1.0f;
-    mat->Get(AI_MATKEY_OPACITY, opacity);
+    const float opacity = importedOpacity;
     Param opacityParam;
     opacityParam.name = "opacity";
     opacityParam.type = MaterialParamType::Float;
@@ -1160,6 +1466,51 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
     premultipliedParam.type = MaterialParamType::Float;
     premultipliedParam.floatValue = 0.0f;
     material.parameters.push_back(premultipliedParam);
+
+    // Preserve the rest of Assimp's canonical material model. The bundled
+    // PBR shader may not consume every value yet, but .aymat retains them for
+    // custom shaders, tooling, and a future FBX-SDK source adapter.
+    appendOptionalFloat(mat, material, "bumpScaling", AI_MATKEY_BUMPSCALING);
+    appendOptionalFloat(mat, material, "reflectivity", AI_MATKEY_REFLECTIVITY);
+    appendOptionalFloat(mat, material, "shininessStrength",
+                        AI_MATKEY_SHININESS_STRENGTH);
+    appendOptionalFloat(mat, material, "ior", AI_MATKEY_REFRACTI);
+    appendOptionalFloat(mat, material, "specularFactor",
+                        AI_MATKEY_SPECULAR_FACTOR);
+    appendOptionalFloat(mat, material, "anisotropy",
+                        AI_MATKEY_ANISOTROPY_FACTOR);
+    appendOptionalFloat(mat, material, "anisotropyRotation",
+                        AI_MATKEY_ANISOTROPY_ROTATION);
+    appendOptionalFloat(mat, material, "sheenRoughness",
+                        AI_MATKEY_SHEEN_ROUGHNESS_FACTOR);
+    appendOptionalFloat(mat, material, "clearcoat",
+                        AI_MATKEY_CLEARCOAT_FACTOR);
+    appendOptionalFloat(mat, material, "clearcoatRoughness",
+                        AI_MATKEY_CLEARCOAT_ROUGHNESS_FACTOR);
+    appendOptionalFloat(mat, material, "volumeThickness",
+                        AI_MATKEY_VOLUME_THICKNESS_FACTOR);
+    appendOptionalFloat(mat, material, "attenuationDistance",
+                        AI_MATKEY_VOLUME_ATTENUATION_DISTANCE);
+    appendOptionalFloat(mat, material, "emissiveIntensity",
+                        AI_MATKEY_EMISSIVE_INTENSITY);
+    appendOptionalColor3(mat, material, "transparentColor",
+                         AI_MATKEY_COLOR_TRANSPARENT);
+    appendOptionalColor3(mat, material, "reflectiveColor",
+                         AI_MATKEY_COLOR_REFLECTIVE);
+    appendOptionalColor3(mat, material, "sheenColor",
+                         AI_MATKEY_SHEEN_COLOR_FACTOR);
+    appendOptionalColor3(mat, material, "attenuationColor",
+                         AI_MATKEY_VOLUME_ATTENUATION_COLOR);
+
+    float transmission = 0.0f;
+    if (mat->Get(AI_MATKEY_TRANSMISSION_FACTOR, transmission) == AI_SUCCESS) {
+        transmission = std::clamp(transmission, 0.0f, 1.0f);
+        setFloatParam(material, "transmission", transmission);
+        if (transmission > 0.001f) {
+            material.alphaMode = MaterialAlphaMode::Blend;
+            material.surfaceSource = MaterialSurfaceSource::ExplicitSource;
+        }
+    }
 
     // 提取纹理路径
     _extractMaterialTextures(mat, material);

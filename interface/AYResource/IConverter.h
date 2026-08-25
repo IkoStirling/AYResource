@@ -90,6 +90,11 @@ struct ConversionResult {
         ayt::math::FGuid guid;  // 资源唯一标识
         std::string path;
         std::string type;
+        // Optional semantic role within `type`. Mesh conversion currently
+        // emits "SkinnedMesh" or "StaticMesh" so character consumers can
+        // ignore collider/physics helper geometry without filename guesses.
+        // Empty keeps legacy sidecars backward-compatible.
+        std::string role;
         // F2.3: was int64_t mismatched with IResource::sizeInBytes() (size_t).
         // Coerce to size_t's underlying unsigned counterpart here so the
         // shared payload (toJson/fromJson, cache stats, cook log) has
@@ -134,7 +139,11 @@ class IConverter {
 	    // ===== 加载选项 =====
 	    enum class LoadOption {
 	        MeshOnly = 0,  // 最小处理
-	        Full = 1       // 完整处理
+	        Full = 1,      // 完整处理
+	        // Extract animation clips only. Scene meshes, materials, textures
+	        // and source skeleton assets are deliberately not cooked; clips are
+	        // expected to target a separately imported model skeleton by name.
+	        AnimationOnly = 2
 	    };
 
 	    // ===== 配置 =====

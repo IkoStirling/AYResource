@@ -6,6 +6,7 @@
 #include <AYLog.h>
 #include <algorithm>
 #include <cstring>
+#include <sstream>
 
 namespace ayt::resource
 {
@@ -41,6 +42,50 @@ static std::string replaceExt(const std::string& path, const std::string& newExt
         return path + newExt;
     }
     return path.substr(0, pos) + newExt;
+}
+
+static void appendJsonEscaped(std::ostringstream& out, const std::string& value) {
+    for (unsigned char c : value) {
+        switch (c) {
+        case '\\': out << "\\\\"; break;
+        case '"': out << "\\\""; break;
+        case '\n': out << "\\n"; break;
+        case '\r': out << "\\r"; break;
+        case '\t': out << "\\t"; break;
+        default:
+            if (c < 0x20u) {
+                static constexpr char hex[] = "0123456789abcdef";
+                out << "\\u00" << hex[(c >> 4u) & 0x0fu] << hex[c & 0x0fu];
+            } else {
+                out << static_cast<char>(c);
+            }
+            break;
+        }
+    }
+}
+
+static std::string serializeSourceProperties(
+    const std::string& adapter,
+    const std::vector<MaterialData::SourceProperty>& properties) {
+    std::ostringstream out;
+    out << "{\"adapter\":\"";
+    appendJsonEscaped(out, adapter);
+    out << "\",\"properties\":[";
+    for (size_t i = 0; i < properties.size(); ++i) {
+        if (i != 0) out << ',';
+        const auto& property = properties[i];
+        out << "{\"key\":\"";
+        appendJsonEscaped(out, property.key);
+        out << "\",\"semantic\":" << property.semantic
+            << ",\"index\":" << property.index
+            << ",\"type\":"
+            << static_cast<unsigned int>(property.type)
+            << ",\"value\":\"";
+        appendJsonEscaped(out, property.value);
+        out << "\"}";
+    }
+    out << "]}";
+    return out.str();
 }
 
 // Helper: read a float parameter that may be either a scalar (single value)
@@ -225,6 +270,46 @@ std::vector<ConversionResult::ConvertedResource> MaterialConverter::convertAll(
             matData.shader.c_str());
         material->setSurfaceProperties(matData.alphaMode, matData.alphaCutoff,
                                        matData.doubleSided);
+        material->setInt("__ayBlendFunction",
+                         static_cast<Int32>(matData.blendFunction));
+        material->setInt("__aySourceShadingModel",
+                         static_cast<Int32>(matData.shadingModel));
+        if (!matData.sourceProperties.empty()) {
+            const std::string sourceProperties =
+                serializeSourceProperties(matData.sourceAdapter,
+                                          matData.sourceProperties);
+            material->setString("__aySourceProperties",
+                                sourceProperties.c_str());
+        }
+
+        for (const auto& source : matData.textureSources) {
+            const std::string prefix =
+                "__ayTexture." + source.parameterName + ".";
+            const Float32 binding[4] = {
+                static_cast<Float32>(source.sourceSemantic),
+                static_cast<Float32>(source.sourceLayer),
+                static_cast<Float32>(source.uvChannel),
+                source.blendFactor};
+            material->setFloat4((prefix + "binding").c_str(), binding);
+            const Float32 state[4] = {
+                static_cast<Float32>(source.mapping),
+                static_cast<Float32>(source.operation),
+                static_cast<Float32>(source.wrapU),
+                static_cast<Float32>(source.wrapV)};
+            material->setFloat4((prefix + "state").c_str(), state);
+            const Float32 extra[2] = {
+                static_cast<Float32>(source.wrapW),
+                static_cast<Float32>(source.flags)};
+            material->setFloat2((prefix + "stateExtra").c_str(), extra);
+            if (source.hasUvTransform) {
+                const Float32 transform[4] = {
+                    source.uvTranslation[0], source.uvTranslation[1],
+                    source.uvScale[0], source.uvScale[1]};
+                material->setFloat4((prefix + "uvTransform").c_str(), transform);
+                material->setFloat((prefix + "uvRotation").c_str(),
+                                   source.uvRotation);
+            }
+        }
 
         for (const auto& param : matData.parameters) {
             switch (param.type) {
@@ -248,6 +333,10 @@ std::vector<ConversionResult::ConvertedResource> MaterialConverter::convertAll(
                 break;
             case MaterialParamType::Bool:
                 material->setBool(param.name.c_str(), param.boolValue);
+                break;
+            case MaterialParamType::String:
+                material->setString(param.name.c_str(),
+                                    param.stringValue.c_str());
                 break;
             default:
                 break;

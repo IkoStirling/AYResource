@@ -13,7 +13,7 @@ namespace ayt::resource
 {
 
 const char kFbxImporterContractTag[] =
-        "fbx-morph-contract-v2-neutral-default-coordinate-and-animation-safe-v16";
+        "fbx-material-complete-assimp-source-contract-v17";
 
 namespace {
 
@@ -168,7 +168,11 @@ std::string ConversionResult::toJson() const {
     oss << "  \"resources\": [\n";
     for (size_t i = 0; i < resources.size(); i++) {
         const auto& res = resources[i];
-        oss << "    {\"path\": \"" << res.path << "\", \"type\": \"" << res.type << "\", \"size\": " << res.size << "}";
+        oss << "    {\"path\": \"" << res.path << "\", \"type\": \"" << res.type << "\"";
+        if (!res.role.empty()) {
+            oss << ", \"role\": \"" << res.role << "\"";
+        }
+        oss << ", \"size\": " << res.size << "}";
         if (i + 1 < resources.size()) oss << ",";
         oss << "\n";
     }
@@ -212,6 +216,7 @@ ConversionResult ConversionResult::fromJson(const std::string& json) {
                     || !parseJsonStringField(json, objStart, "type", res.type)) {
                     return;
                 }
+                (void)parseJsonStringField(json, objStart, "role", res.role);
                 (void)parseJsonUInt64Field(json, objStart, "size", res.size);
                 result.resources.push_back(std::move(res));
             });

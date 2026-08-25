@@ -1,5 +1,6 @@
 #pragma once
 #include "AYResource/IResource.h"
+#include "AYResource/GeometryConvention.h"
 #include "AYMath/MathTypes.h"
 #include <memory>
 #include <vector>
@@ -42,6 +43,9 @@ struct VertexSkinWeight {
 };
 
 // ===== IMesh — 网格资源接口 =====
+// All indexed triangle meshes obey GeometryConvention.h: left-handed engine
+// space, clockwise front faces. Mirrored world transforms are handled by the
+// renderer and must not be baked into otherwise canonical asset indices.
 class IMesh : public IResource {
 public:
     virtual ~IMesh() = default;

@@ -9,7 +9,7 @@ namespace ayt::resource
 #pragma pack(push, 1)
 struct MaterialFileHeader {
     UInt32 magic;              // 'AYMT'
-    UInt16 version;            // 版本 = 1
+    UInt16 version;            // v2 permits String material parameters
     UInt8  flags;              // 标志
     UInt8  materialCount;       // 材质数量
     UInt32 totalSize;         // 后续所有材质数据的总大小
@@ -40,7 +40,7 @@ bool MaterialFile::saveToBinary(std::vector<UInt8>& outData) const {
     MaterialFileHeader header;
     std::memset(&header, 0, sizeof(header));
     header.magic = 0x544D5941;  // 'AYMT'
-    header.version = 1;
+    header.version = 2;
     header.flags = 0;
     header.materialCount = static_cast<UInt8>(_materials.size());
     header.totalSize = static_cast<UInt32>(totalMaterialsSize);
@@ -67,7 +67,8 @@ bool MaterialFile::loadFromBinary(const void* data, size_t size) {
     const UInt8* ptr = static_cast<const UInt8*>(data);
     const MaterialFileHeader* header = reinterpret_cast<const MaterialFileHeader*>(ptr);
 
-    if (header->magic != 0x544D5941) {
+    if (header->magic != 0x544D5941
+        || header->version < 1 || header->version > 2) {
         return false;
     }
 

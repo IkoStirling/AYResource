@@ -719,14 +719,15 @@ void Mesh::createCube(Float32 size) {
         { h,  h, -h,  0, 0,-1,  0, 0},
     };
 
-    // CCW front faces for bgfx BGFX_STATE_CULL_CW (matches renderer unit cube winding).
+    // Canonical engine winding: CW front faces, rendered with CULL_CCW.
+    // The geometric normal of every triangle matches the stored outward normal.
     UInt32 indices[36] = {
-            0,  2,  1,   0,  3,  2,  // +X
-            4,  6,  5,   4,  7,  6,  // -X
-            8, 10,  9,   8, 11, 10,  // +Y
-        12, 14, 13,  12, 15, 14,  // -Y
-        16, 18, 17,  16, 19, 18,  // +Z
-        20, 22, 21,  20, 23, 22   // -Z
+         0,  1,  2,   0,  2,  3,  // +X
+         4,  5,  6,   4,  6,  7,  // -X
+         8,  9, 10,   8, 10, 11,  // +Y
+        12, 13, 14,  12, 14, 15,  // -Y
+        16, 17, 18,  16, 18, 19,  // +Z
+        20, 21, 22,  20, 22, 23   // -Z
     };
 
     std::memcpy(_vertexData.data(), vertices, sizeof(vertices));
@@ -796,13 +797,14 @@ void Mesh::createSphere(Float32 radius, UInt32 segments) {
             UInt32 current = lat * (segments + 1) + lon;
             UInt32 next = current + segments + 1;
 
+            // Canonical CW front faces: geometric normals point outward.
             _indices[indexIdx++] = current;
-            _indices[indexIdx++] = next;
             _indices[indexIdx++] = current + 1;
+            _indices[indexIdx++] = next;
 
             _indices[indexIdx++] = current + 1;
-            _indices[indexIdx++] = next;
             _indices[indexIdx++] = next + 1;
+            _indices[indexIdx++] = next;
         }
     }
 

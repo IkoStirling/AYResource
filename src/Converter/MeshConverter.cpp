@@ -304,6 +304,7 @@ std::vector<ConversionResult::ConvertedResource> MeshConverter::convertAll(
         res.guid = lastGuid;
         res.path = virtualPath;
         res.type = "Mesh";
+        res.role = mesh.skinWeights.empty() ? "StaticMesh" : "SkinnedMesh";
         res.size = static_cast<uint64_t>(binaryData.size());
         results.push_back(res);
         lastOutputPath = virtualPath;

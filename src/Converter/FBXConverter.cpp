@@ -131,19 +131,59 @@ const MaterialData::TextureSource* findTextureSource(
     return found == material.textureSources.end() ? nullptr : &*found;
 }
 
-float wrapUv(float value)
+bool addressUv(float value, MaterialTextureWrap mode, float& addressed)
 {
-    value -= std::floor(value);
-    return value < 0.0f ? value + 1.0f : value;
+    switch (mode) {
+    case MaterialTextureWrap::Clamp:
+        addressed = std::clamp(value, 0.0f, 1.0f);
+        return true;
+    case MaterialTextureWrap::Mirror: {
+        float period = std::fmod(value, 2.0f);
+        if (period < 0.0f) period += 2.0f;
+        addressed = period <= 1.0f ? period : 2.0f - period;
+        return true;
+    }
+    case MaterialTextureWrap::Decal:
+        if (value < 0.0f || value > 1.0f) return false;
+        addressed = value;
+        return true;
+    case MaterialTextureWrap::Wrap:
+    default:
+        addressed = value - std::floor(value);
+        return true;
+    }
 }
 
 void sampleAlpha(MaterialAlphaCoverage& coverage, const DecodedImage& image,
-                 float u, float v, bool useRedChannel)
+                 float u, float v, bool useRedChannel,
+                 const MaterialData::TextureSource& binding)
 {
+    if (binding.hasUvTransform) {
+        u *= binding.uvScale[0];
+        v *= binding.uvScale[1];
+        const float centeredU = u - 0.5f;
+        const float centeredV = v - 0.5f;
+        const float cosine = std::cos(binding.uvRotation);
+        const float sine = std::sin(binding.uvRotation);
+        u = centeredU * cosine - centeredV * sine + 0.5f
+            + binding.uvTranslation[0];
+        v = centeredU * sine + centeredV * cosine + 0.5f
+            + binding.uvTranslation[1];
+    }
+    float addressedU = 0.0f;
+    float addressedV = 0.0f;
+    if (!addressUv(u, binding.wrapU, addressedU)
+        || !addressUv(v, binding.wrapV, addressedV)) {
+        // Decal means the texture contributes nothing outside its domain;
+        // scalar/base opacity therefore remains fully present there.
+        ++coverage.sampleCount;
+        ++coverage.opaqueCount;
+        return;
+    }
     const int x = std::min(
-        image.width - 1, static_cast<int>(wrapUv(u) * image.width));
+        image.width - 1, static_cast<int>(addressedU * image.width));
     const int y = std::min(
-        image.height - 1, static_cast<int>(wrapUv(v) * image.height));
+        image.height - 1, static_cast<int>(addressedV * image.height));
     const std::size_t offset =
         (static_cast<std::size_t>(y) * image.width + x) * 4;
     const unsigned char alpha = image.rgba[offset + (useRedChannel ? 0 : 3)];
@@ -159,7 +199,8 @@ void sampleAlpha(MaterialAlphaCoverage& coverage, const DecodedImage& image,
 
 void sampleSubmeshAlpha(MaterialAlphaCoverage& coverage,
                         const MeshData& mesh, const SubmeshData& submesh,
-                        const DecodedImage& image, bool useRedChannel)
+                        const DecodedImage& image, bool useRedChannel,
+                        const MaterialData::TextureSource& binding)
 {
     if (mesh.uvs.size() < 2 || submesh.startIndex >= mesh.indices.size()) {
         return;
@@ -191,7 +232,8 @@ void sampleSubmeshAlpha(MaterialAlphaCoverage& coverage,
         for (const auto& b : barycentric) {
             sampleAlpha(coverage, image,
                 u0 * b[0] + u1 * b[1] + u2 * b[2],
-                v0 * b[0] + v1 * b[1] + v2 * b[2], useRedChannel);
+                v0 * b[0] + v1 * b[1] + v2 * b[2], useRedChannel,
+                binding);
         }
     }
 }
@@ -223,6 +265,20 @@ void inferMaterialSurfaceModes(IntermediateAsset& asset,
             continue;
         }
 
+        // Intermediate meshes currently retain UV0 only. Preserve an
+        // authored dedicated opacity map conservatively when the source asks
+        // for another channel or generated mapping; guessing with UV0 would
+        // be less accurate than deferring the exact sampling to runtime.
+        if (evidence->uvChannel != 0
+            || evidence->mapping != MaterialTextureMapping::Uv) {
+            if (hasDedicatedOpacity) {
+                material.alphaMode = MaterialAlphaMode::Blend;
+                material.surfaceSource =
+                    MaterialSurfaceSource::TextureCoverage;
+            }
+            continue;
+        }
+
         const std::string imagePath = resolveTextureSourcePath(
             evidence->sourcePath, sourceDirectory);
         const auto image = decodeImageCached(imagePath, cache);
@@ -231,6 +287,14 @@ void inferMaterialSurfaceModes(IntermediateAsset& asset,
                 "[FBXConverter] alpha coverage skipped material[%zu] '%s': "
                 "cannot decode '%s'",
                 materialIndex, material.name.c_str(), imagePath.c_str());
+            // A distinct authored opacity binding is stronger evidence than
+            // an unavailable decoder/source file. Preserve transparency
+            // rather than classifying Opaque and deleting the binding later.
+            if (hasDedicatedOpacity) {
+                material.alphaMode = MaterialAlphaMode::Blend;
+                material.surfaceSource =
+                    MaterialSurfaceSource::TextureCoverage;
+            }
             continue;
         }
 
@@ -239,10 +303,15 @@ void inferMaterialSurfaceModes(IntermediateAsset& asset,
             for (const SubmeshData& submesh : mesh.submeshes) {
                 if (submesh.sourceMaterialIndex != materialIndex) continue;
                 sampleSubmeshAlpha(coverage, mesh, submesh, *image,
-                                   hasDedicatedOpacity);
+                                   hasDedicatedOpacity, *evidence);
             }
         }
         if (coverage.sampleCount == 0) {
+            if (hasDedicatedOpacity) {
+                material.alphaMode = MaterialAlphaMode::Blend;
+                material.surfaceSource =
+                    MaterialSurfaceSource::TextureCoverage;
+            }
             continue;
         }
 

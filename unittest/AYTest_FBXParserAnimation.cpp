@@ -172,6 +172,23 @@ TEST_SUITE(FBXParserAnimationTests)
         CHECK(asset->animations.empty());
     }
 
+    TEST_CASE(AnimationOnlySkipsRenderAssets) {
+        if (!fileExists(kSpiderFbx)) {
+            printf("    [SKIP] %s not found\n", kSpiderFbx);
+            return;
+        }
+        FBXParser parser;
+        parser.setLoadOption(IConverter::LoadOption::AnimationOnly);
+        CHECK(parser.parse(kSpiderFbx));
+        auto asset = parser.getResult();
+        CHECK(asset != nullptr);
+        CHECK(!asset->animations.empty());
+        CHECK(asset->meshes.empty());
+        CHECK(asset->materials.empty());
+        CHECK(asset->textures.empty());
+        CHECK(asset->skeletons.empty());
+    }
+
     // 验证 skeleton 本地 rest pose 被分解 (T+R+S) — 至少 root bone 的 localRotation 不全 0
     TEST_CASE(SkeletonLocalPoseDecomposed) {
         if (!fileExists(kSpiderFbx)) {

@@ -14,6 +14,8 @@
 #include "AYResource/assetsImpl/Texture.h"
 #include "AYResource/assetsImpl/Skeleton.h"
 #include <vector>
+#include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <cstring>
 #include <filesystem>
@@ -98,6 +100,13 @@ TEST_SUITE(FBXConverterTests)
         auto intermediate = parser.getResult();
         CHECK(intermediate != nullptr);
         CHECK(intermediate->meshes.size() == 1u);
+        const MeshWindingAudit winding = auditCanonicalMeshWinding(
+            intermediate->meshes[0].positions,
+            intermediate->meshes[0].normals,
+            intermediate->meshes[0].indices);
+        CHECK(winding.comparedTriangleCount == 2u);
+        CHECK(winding.mismatchedTriangleCount == 0u);
+        CHECK(winding.invalidIndexTriangleCount == 0u);
         CHECK(intermediate->meshes[0].submeshes.size() == 2u);
         CHECK(intermediate->meshes[0].submeshes[0].sourceMaterialIndex
               < intermediate->materials.size());
@@ -192,6 +201,21 @@ TEST_SUITE(FBXConverterTests)
         coordinates.handedness = ImportHandedness::Right;
         coordinates.tag = "test-zup-rh-v1";
 
+        FBXParser parser(objPath.string());
+        parser.setSourceCoordinatePolicy(coordinates);
+        CHECK(parser.parse(objPath.string()));
+        const std::unique_ptr<IntermediateAsset> parsed = parser.getResult();
+        CHECK(parsed != nullptr);
+        CHECK(parsed && parsed->meshes.size() == 1u);
+        if (parsed && parsed->meshes.size() == 1u) {
+            const MeshData& parsedMesh = parsed->meshes.front();
+            const MeshWindingAudit winding = auditCanonicalMeshWinding(
+                parsedMesh.positions, parsedMesh.normals, parsedMesh.indices);
+            CHECK(winding.comparedTriangleCount == 1u);
+            CHECK(winding.mismatchedTriangleCount == 0u);
+            CHECK(winding.invalidIndexTriangleCount == 0u);
+        }
+
         FBXConverter converter(objPath.string());
         converter.setOutputDir(root.string());
         converter.setSourceCoordinatePolicy(coordinates);
@@ -213,6 +237,125 @@ TEST_SUITE(FBXConverterTests)
             checkedMesh = true;
         }
         CHECK(checkedMesh);
+    }
+
+    TEST_CASE(AssimpMaterialSurfaceStateDoesNotTreatDefaultBlendAsTransparency) {
+        namespace fs = std::filesystem;
+        const fs::path root =
+            ayt::test::testTmpPath("assimp_material_surface_contract");
+        fs::create_directories(root);
+        const fs::path objPath = root / "surface.obj";
+        const fs::path mtlPath = root / "surface.mtl";
+        {
+            std::ofstream mtl(mtlPath);
+            mtl << "newmtl Opaque\nKd 0.8 0.7 0.6\n"
+                   "newmtl Faded\nKd 0.2 0.4 0.8\nd 0.35\n";
+        }
+        {
+            std::ofstream obj(objPath);
+            obj << "mtllib surface.mtl\n"
+                   "o Surface\n"
+                   "v 0 0 0\nv 1 0 0\nv 0 1 0\n"
+                   "v 2 0 0\nv 3 0 0\nv 2 1 0\n"
+                   "usemtl Opaque\nf 1 2 3\n"
+                   "usemtl Faded\nf 4 5 6\n";
+        }
+
+        FBXParser parser(objPath.string());
+        CHECK(parser.parse(objPath.string()));
+        const auto asset = parser.getResult();
+        CHECK(asset != nullptr);
+        if (!asset) return;
+
+        const auto findMaterial = [&](const char* name) -> const MaterialData* {
+            for (const auto& material : asset->materials) {
+                if (material.name == name) return &material;
+            }
+            return nullptr;
+        };
+        const MaterialData* opaque = findMaterial("Opaque");
+        const MaterialData* faded = findMaterial("Faded");
+        CHECK(opaque != nullptr);
+        CHECK(faded != nullptr);
+        if (!opaque || !faded) return;
+        CHECK(opaque->alphaMode == MaterialAlphaMode::Opaque);
+        CHECK(faded->alphaMode == MaterialAlphaMode::Blend);
+        CHECK(faded->blendFunction == MaterialBlendFunction::StandardAlpha);
+        CHECK_FALSE(faded->sourceProperties.empty());
+        const auto opacity = std::find_if(
+            faded->parameters.begin(), faded->parameters.end(),
+            [](const Param& parameter) { return parameter.name == "opacity"; });
+        CHECK(opacity != faded->parameters.end());
+        if (opacity != faded->parameters.end()) {
+            CHECK(std::abs(opacity->floatValue - 0.35f) < 0.001f);
+        }
+    }
+
+    TEST_CASE(MaterialConverterPersistsImporterNeutralSourceMetadata) {
+        namespace fs = std::filesystem;
+        const fs::path root =
+            ayt::test::testTmpPath("material_source_metadata");
+        fs::create_directories(root);
+
+        MaterialData data;
+        data.name = "AdditiveMaterial";
+        data.shader = "pbr.phoskia";
+        data.alphaMode = MaterialAlphaMode::Blend;
+        data.blendFunction = MaterialBlendFunction::Additive;
+        data.shadingModel = MaterialShadingModel::Pbr;
+        data.sourceAdapter = "fbxsdk-test-double";
+        MaterialData::SourceProperty property;
+        property.key = "Maya|vendor property";
+        property.type = MaterialSourcePropertyType::Float;
+        property.value = "0.25,0.5";
+        data.sourceProperties.push_back(property);
+
+        MaterialData::TextureSource texture;
+        texture.parameterName = "baseColorTexture";
+        texture.sourcePath = "source.png";
+        texture.virtualPath = "textures/source_d.aytex";
+        texture.usageSuffix = "_d";
+        texture.sourceSemantic = 12;
+        texture.sourceLayer = 2;
+        texture.uvChannel = 1;
+        texture.mapping = MaterialTextureMapping::Uv;
+        texture.operation = MaterialTextureOperation::Add;
+        texture.wrapU = MaterialTextureWrap::Clamp;
+        texture.wrapV = MaterialTextureWrap::Mirror;
+        texture.blendFactor = 0.75f;
+        texture.hasUvTransform = true;
+        texture.uvTranslation[0] = 0.1f;
+        texture.uvTranslation[1] = 0.2f;
+        texture.uvScale[0] = 2.0f;
+        texture.uvScale[1] = 3.0f;
+        texture.uvRotation = 0.4f;
+        data.textureSources.push_back(texture);
+
+        MaterialConverter converter;
+        converter.setOutputDir(root.string());
+        const auto converted = converter.convertAll({data}, "metadata");
+        CHECK(converted.size() == 1u);
+        if (converted.empty()) return;
+
+        Material loaded;
+        CHECK(loaded.load((root / converted.front().path).string()));
+        CHECK(loaded.getInt("__ayBlendFunction") == 1);
+        CHECK(loaded.getInt("__aySourceShadingModel")
+              == static_cast<int>(MaterialShadingModel::Pbr));
+        CHECK(std::string(loaded.getString("__aySourceProperties"))
+              .find("Maya|vendor property") != std::string::npos);
+        CHECK(std::string(loaded.getString("__aySourceProperties"))
+              .find("fbxsdk-test-double") != std::string::npos);
+        const FVector4 binding =
+            loaded.getVector4("__ayTexture.baseColorTexture.binding");
+        CHECK(binding.x == 12.0f);
+        CHECK(binding.y == 2.0f);
+        CHECK(binding.z == 1.0f);
+        CHECK(std::abs(binding.w - 0.75f) < 0.001f);
+        const FVector4 transform =
+            loaded.getVector4("__ayTexture.baseColorTexture.uvTransform");
+        CHECK(std::abs(transform.x - 0.1f) < 0.001f);
+        CHECK(std::abs(transform.w - 3.0f) < 0.001f);
     }
 
 TEST_SUITE_END

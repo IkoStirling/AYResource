@@ -152,6 +152,18 @@ bool tryLoadCachedConversion(const ImportOptions& options,
             return false;
         }
     }
+    if (options.requireAnimationAssets && isSceneExtension(ext)) {
+        bool hasAnimation = false;
+        for (const auto& res : out.resources) {
+            if (toLowerCopy(res.type) == "animation" && !res.path.empty()) {
+                hasAnimation = true;
+                break;
+            }
+        }
+        if (!hasAnimation) {
+            return false;
+        }
+    }
 
     // Ensure every listed resource file still exists on disk.
     for (const auto& res : out.resources) {
@@ -294,6 +306,23 @@ ImportResult importAsset(const ImportOptions& options,
         return r;
     }
 
+    if (options.requireAnimationAssets && isSceneExtension(
+            importExtensionOf(options.sourcePath))) {
+        bool hasAnimation = false;
+        for (const auto& resource : r.conversion.resources) {
+            if (toLowerCopy(resource.type) == "animation"
+                && !resource.path.empty()) {
+                hasAnimation = true;
+                break;
+            }
+        }
+        if (!hasAnimation) {
+            r.error = "animation source produced no Animation resource";
+            report(progress, ImportStage::Failed, 1.0f, r.error);
+            return r;
+        }
+    }
+
     r.ok = true;
     r.usedCache = false;
     r.depSidecarPath = joinDirFile(options.outputDir, stemOf(options.sourcePath) + ".aydep.json");
@@ -333,6 +362,7 @@ ImportBatchResult importAssetBatch(const ImportBatchOptions& options,
         one.loadOption = options.loadOption;
         one.force = options.force;
         one.requireCharacterAssets = options.requireCharacterAssets;
+        one.requireAnimationAssets = options.requireAnimationAssets;
         one.cookTextures = options.cookTextures;
         one.materialPolicy = options.materialPolicy;
         one.sourceCoordinates = options.sourceCoordinates;

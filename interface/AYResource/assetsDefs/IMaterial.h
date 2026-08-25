@@ -4,6 +4,18 @@
 #include "AYMath/MathTypes.h"
 #include <cstdint>
 
+#define AYT_RESOURCE_STRINGIZE_IMPL(value) #value
+#define AYT_RESOURCE_STRINGIZE(value) AYT_RESOURCE_STRINGIZE_IMPL(value)
+#define AYT_RESOURCE_IMATERIAL_ABI_VERSION 3
+
+// A stale consumer of this polymorphic interface is memory-unsafe. Make MSVC
+// reject mixed object files at link time instead of allowing a vtable mismatch
+// to surface later as an access violation. Bump this whenever the class ABI
+// changes (virtual functions, bases, data layout, or calling convention).
+#if defined(_MSC_VER)
+#pragma detect_mismatch("AYResource.IMaterial.ABI", AYT_RESOURCE_STRINGIZE(AYT_RESOURCE_IMATERIAL_ABI_VERSION))
+#endif
+
 namespace ayt::resource
 {
 
@@ -28,6 +40,7 @@ public:
     virtual Float32 getFloat(const char* name) const = 0;
     virtual Int32 getInt(const char* name) const = 0;
     virtual Bool getBool(const char* name) const = 0;
+    virtual const char* getString(const char* name) const = 0;
 
     // ===== Vector types (AYMath) =====
     virtual ayt::math::FVector2 getVector2(const char* name) const = 0;
@@ -49,10 +62,16 @@ public:
     virtual const char* getTexture(const char* name) const = 0;
 
     // ===== Constants =====
-    // v2 promotes surface routing out of magic shader parameters. The loader
-    // still accepts v1 and migrates __ay* parameters into these typed fields.
-    static constexpr UInt32 VERSION = 2;
+    // v2 promotes surface routing out of magic shader parameters. v3 adds a
+    // String parameter payload for lossless source-import metadata. The
+    // loader remains backward compatible with v1/v2 assets.
+    static constexpr UInt32 ABI_VERSION = AYT_RESOURCE_IMATERIAL_ABI_VERSION;
+    static constexpr UInt32 VERSION = 3;
     static constexpr UInt32 MAGIC = 0x544D5941; // 'AYMT'
 };
 
 } // namespace ayt::resource
+
+#undef AYT_RESOURCE_IMATERIAL_ABI_VERSION
+#undef AYT_RESOURCE_STRINGIZE
+#undef AYT_RESOURCE_STRINGIZE_IMPL

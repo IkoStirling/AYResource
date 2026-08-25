@@ -46,6 +46,7 @@ public:
     Float32 getFloat(const char* name) const override;
     Int32 getInt(const char* name) const override;
     Bool getBool(const char* name) const override;
+    const char* getString(const char* name) const override;
 
     // ===== Vector types (AYMath) =====
     ayt::math::FVector2 getVector2(const char* name) const override;
@@ -79,6 +80,7 @@ public:
     void setFloat(const char* name, Float32 value);
     void setInt(const char* name, Int32 value);
     void setBool(const char* name, Bool value);
+    void setString(const char* name, const char* value);
 
     void setVector2(const char* name, const ayt::math::FVector2& value);
     void setVector3(const char* name, const ayt::math::FVector3& value);
@@ -177,6 +179,7 @@ public:
             case MaterialParamType::Texture2D:
             case MaterialParamType::Texture3D:
             case MaterialParamType::TextureCube:
+            case MaterialParamType::String:
                 fn(name, pv.type,
                    reinterpret_cast<const UInt8*>(pv.stringValue.data()),
                    pv.stringValue.size());
@@ -205,7 +208,7 @@ private:
         Int32 intValue = 0;
         Bool boolValue = false;
         Float32 matrixValue[16] = {}; // 4x4 matrix
-        std::string stringValue; // for texture paths
+        std::string stringValue; // texture paths and metadata strings
 
         // Keep the string member's lifetime independent from the numeric
         // union.  Material values are copied by unordered_map when a
