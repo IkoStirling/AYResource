@@ -65,8 +65,18 @@ namespace MeshChunkFourCC {
     constexpr UInt32 SUBM = 0x4D425553; // 'SUBM'
     constexpr UInt32 BOUN = 0x4E554F42; // 'BOUN'
     constexpr UInt32 SKIN = 0x4E494B53; // 'SKIN'
+    constexpr UInt32 JPAL = 0x4C41504A; // 'JPAL'
     constexpr UInt32 MORP = 0x50524F4D; // 'MORP'
 }
+
+#pragma pack(push, 1)
+struct MeshJointPaletteHeader {
+    UInt32 version;
+    UInt32 paletteCount;
+    UInt32 jointCount;
+};
+#pragma pack(pop)
+static constexpr UInt32 kMeshJointPaletteVersion = 1u;
 
 // ===== Mesh — IMesh 实现类 =====
 class Mesh : public IMesh {
@@ -110,6 +120,18 @@ public:
     Bool hasSkinWeights() const override { return _hasSkinWeights; }
     const VertexSkinWeight* getSkinWeights() const override {
         return _skinWeights.empty() ? nullptr : _skinWeights.data();
+    }
+    UInt32 getSkinPaletteCount() const override {
+        return static_cast<UInt32>(_skinPalettes.size());
+    }
+    const SkinPalette* getSkinPalettes() const override {
+        return _skinPalettes.empty() ? nullptr : _skinPalettes.data();
+    }
+    UInt32 getSkinPaletteJointCount() const override {
+        return static_cast<UInt32>(_skinPaletteJoints.size());
+    }
+    const UInt32* getSkinPaletteJoints() const override {
+        return _skinPaletteJoints.empty() ? nullptr : _skinPaletteJoints.data();
     }
 
     // ===== LOD =====
@@ -161,6 +183,8 @@ public:
     void _setForTestSubmeshes(const Submesh* submeshes, UInt32 count);
     void _addForTestMaterialSlot(const std::string& slot);
     void _setForTestSkinWeights(const std::vector<VertexSkinWeight>& weights);
+    void _setForTestSkinPalettes(const std::vector<SkinPalette>& palettes,
+                                 const std::vector<UInt32>& joints);
     void _setForTestBounds(const ayt::math::FVector3& center, const ayt::math::FVector3& halfExtent);
     void _setForTestExtension(UInt32 type, const void* data, UInt32 byteSize);
     void _setForTestExtensionBytes(UInt32 type, const std::vector<UInt8>& data);
@@ -196,6 +220,8 @@ private:
     // ===== Skin weights =====
     Bool _hasSkinWeights = false;
     std::vector<VertexSkinWeight> _skinWeights;
+    std::vector<SkinPalette> _skinPalettes;
+    std::vector<UInt32> _skinPaletteJoints;
 
     // ===== LOD (预留扩展) =====
     std::vector<LODData> _lodData;

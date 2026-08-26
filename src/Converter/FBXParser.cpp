@@ -277,6 +277,11 @@ bool FBXParser::parse(const std::string& sourcePath) {
     // helper colliders and mmd_edge shells in animation FBX files). Animation
     // channels are name-bound to the model skeleton imported separately.
     if (_loadOption == IConverter::LoadOption::AnimationOnly) {
+        // Animation hierarchy baking needs the source deform-bone set even
+        // though AnimationOnly deliberately does not emit a Skeleton asset.
+        // This lets non-bone FBX container transforms be folded into the
+        // nearest runtime bone tracks instead of being silently discarded.
+        _prepareSkeletonMapping(scene);
         _parseAnimations(scene);
         if (manualCoordinates && !_applySourceCoordinatePolicy()) {
             return false;
@@ -702,20 +707,8 @@ void FBXParser::_parseAllMeshesAsOne(const aiScene* scene) {
         mesh.colors.resize(totalVertexCount * 4);
     }
     if (mergedAttributeMask & (1u << static_cast<UInt8>(MeshAttribute::SkinWeight))) {
-        mesh.skinWeights.resize(totalVertexCount * 8, 0.0f);  // 4 indices + 4 weights per vertex
-        // Start empty. A fallback to bone 0 is installed only after all real
-        // influences have been collected; pre-seeding weight0=1 blended every
-        // skinned vertex with bone 0 and visibly distorted multi-part models.
-        for (UInt32 v = 0; v < totalVertexCount; v++) {
-            mesh.skinWeights[v * 8 + 0] = 0.0f;  // bone index 0
-            mesh.skinWeights[v * 8 + 1] = 0.0f;  // bone index 1
-            mesh.skinWeights[v * 8 + 2] = 0.0f;  // bone index 2
-            mesh.skinWeights[v * 8 + 3] = 0.0f;  // bone index 3
-            mesh.skinWeights[v * 8 + 4] = 0.0f;
-            mesh.skinWeights[v * 8 + 5] = 0.0f;  // weight 1
-            mesh.skinWeights[v * 8 + 6] = 0.0f;  // weight 2
-            mesh.skinWeights[v * 8 + 7] = 0.0f;  // weight 3
-        }
+        mesh.skinVertices.resize(totalVertexCount);
+        mesh.skinIndexSpace = SkinIndexSpace::GlobalSkeleton;
     }
 
     float boundsMin[3] = {FLT_MAX, FLT_MAX, FLT_MAX};
@@ -803,7 +796,7 @@ void FBXParser::_parseAllMeshesAsOne(const aiScene* scene) {
 
                     // 找到第一个空的权重槽
                     for (UInt32 s = 0; s < 4; s++) {
-                        if (mesh.skinWeights[vertexIndex * 8 + 4 + s] < 0.001f) {
+                        if (mesh.skinVertices[vertexIndex].weight[s] < 0.001f) {
                             slot = s;
                             break;
                         }
@@ -811,9 +804,8 @@ void FBXParser::_parseAllMeshesAsOne(const aiScene* scene) {
 
                     if (slot == 4) continue;
                     // Store the scene-wide SkeletonData palette index.
-                    mesh.skinWeights[vertexIndex * 8 + slot] =
-                        static_cast<float>(globalBone->second);
-                    mesh.skinWeights[vertexIndex * 8 + 4 + slot] = vw.mWeight;           // weight
+                    mesh.skinVertices[vertexIndex].joint[slot] = globalBone->second;
+                    mesh.skinVertices[vertexIndex].weight[slot] = vw.mWeight;
                 }
             }
 
@@ -821,15 +813,15 @@ void FBXParser::_parseAllMeshesAsOne(const aiScene* scene) {
             for (UInt32 v = 0; v < meshVertexCount; v++) {
                 float totalWeight = 0.0f;
                 for (UInt32 s = 0; s < 4; s++) {
-                    totalWeight += mesh.skinWeights[(vertexOffset + v) * 8 + 4 + s];
+                    totalWeight += mesh.skinVertices[vertexOffset + v].weight[s];
                 }
                 if (totalWeight > 0.001f) {
                     for (UInt32 s = 0; s < 4; s++) {
-                        mesh.skinWeights[(vertexOffset + v) * 8 + 4 + s] /= totalWeight;
+                        mesh.skinVertices[vertexOffset + v].weight[s] /= totalWeight;
                     }
                 } else {
-                    mesh.skinWeights[(vertexOffset + v) * 8 + 0] = 0.0f;
-                    mesh.skinWeights[(vertexOffset + v) * 8 + 4] = 1.0f;
+                    mesh.skinVertices[vertexOffset + v].joint[0] = 0u;
+                    mesh.skinVertices[vertexOffset + v].weight[0] = 1.0f;
                 }
             }
         }
@@ -932,17 +924,8 @@ void FBXParser::_collectNodeMeshes(const aiNode* node, const aiScene* scene, con
             mesh.colors.resize(totalVertexCount * 4);
         }
         if (mergedAttributeMask & (1u << static_cast<UInt8>(MeshAttribute::SkinWeight))) {
-            mesh.skinWeights.resize(totalVertexCount * 8, 0.0f);
-            for (UInt32 v = 0; v < totalVertexCount; v++) {
-                mesh.skinWeights[v * 8 + 0] = 0.0f;
-                mesh.skinWeights[v * 8 + 1] = 0.0f;
-                mesh.skinWeights[v * 8 + 2] = 0.0f;
-                mesh.skinWeights[v * 8 + 3] = 0.0f;
-                mesh.skinWeights[v * 8 + 4] = 0.0f;
-                mesh.skinWeights[v * 8 + 5] = 0.0f;
-                mesh.skinWeights[v * 8 + 6] = 0.0f;
-                mesh.skinWeights[v * 8 + 7] = 0.0f;
-            }
+            mesh.skinVertices.resize(totalVertexCount);
+            mesh.skinIndexSpace = SkinIndexSpace::GlobalSkeleton;
         }
 
         float boundsMin[3] = {FLT_MAX, FLT_MAX, FLT_MAX};
@@ -1028,15 +1011,14 @@ void FBXParser::_collectNodeMeshes(const aiNode* node, const aiScene* scene, con
                         UInt32 vertexIndex = vertexOffset + vw.mVertexId;
                         UInt32 slot = 4;
                         for (UInt32 s = 0; s < 4; s++) {
-                            if (mesh.skinWeights[vertexIndex * 8 + 4 + s] < 0.001f) {
+                            if (mesh.skinVertices[vertexIndex].weight[s] < 0.001f) {
                                 slot = s;
                                 break;
                             }
                         }
                         if (slot == 4) continue;
-                        mesh.skinWeights[vertexIndex * 8 + slot] =
-                            static_cast<float>(globalBone->second);
-                        mesh.skinWeights[vertexIndex * 8 + 4 + slot] = vw.mWeight;
+                        mesh.skinVertices[vertexIndex].joint[slot] = globalBone->second;
+                        mesh.skinVertices[vertexIndex].weight[slot] = vw.mWeight;
                     }
                 }
 
@@ -1044,15 +1026,15 @@ void FBXParser::_collectNodeMeshes(const aiNode* node, const aiScene* scene, con
                 for (UInt32 v = 0; v < meshVertexCount; v++) {
                     float totalWeight = 0.0f;
                     for (UInt32 s = 0; s < 4; s++) {
-                        totalWeight += mesh.skinWeights[(vertexOffset + v) * 8 + 4 + s];
+                        totalWeight += mesh.skinVertices[vertexOffset + v].weight[s];
                     }
                     if (totalWeight > 0.001f) {
                         for (UInt32 s = 0; s < 4; s++) {
-                            mesh.skinWeights[(vertexOffset + v) * 8 + 4 + s] /= totalWeight;
+                            mesh.skinVertices[vertexOffset + v].weight[s] /= totalWeight;
                         }
                     } else {
-                        mesh.skinWeights[(vertexOffset + v) * 8 + 0] = 0.0f;
-                        mesh.skinWeights[(vertexOffset + v) * 8 + 4] = 1.0f;
+                        mesh.skinVertices[vertexOffset + v].joint[0] = 0u;
+                        mesh.skinVertices[vertexOffset + v].weight[0] = 1.0f;
                     }
                 }
             }
@@ -1737,8 +1719,7 @@ void FBXParser::_parseSkeletons(const aiScene* scene) {
     SkeletonData skeleton;
     skeleton.name = "Skeleton";
     skeleton.bones.resize(_boneNameToIndex.size());
-    _collectSkeletonBones(scene->mRootNode, -1, _boneNodeNames, skeleton,
-                          ayt::math::Float4x4::identity());
+    _collectSkeletonBones(scene->mRootNode, -1, _boneNodeNames, skeleton);
 
     // A referenced aiBone without a matching node is malformed but can still
     // be represented deterministically. Keep its authoritative offset and an
@@ -1781,29 +1762,27 @@ bool FBXParser::_validateSkinningContract() const
     }
 
     for (const MeshData& mesh : _result->meshes) {
-        if (mesh.skinWeights.empty()) continue;
+        if (mesh.skinVertices.empty()) continue;
         const std::size_t vertexCount = mesh.positions.size() / 3u;
-        if (boneCount == 0 || mesh.skinWeights.size() != vertexCount * 8u) {
+        if (boneCount == 0 || mesh.skinVertices.size() != vertexCount
+            || mesh.skinIndexSpace != SkinIndexSpace::GlobalSkeleton) {
             std::fprintf(stderr,
-                         "[FBXParser] mesh '%s' has invalid skin payload "
-                         "(vertices=%zu floats=%zu bones=%zu)\n",
+                         "[FBXParser] mesh '%s' has invalid global skin payload "
+                         "(vertices=%zu skinVertices=%zu bones=%zu)\n",
                          mesh.name.c_str(), vertexCount,
-                         mesh.skinWeights.size(), boneCount);
+                         mesh.skinVertices.size(), boneCount);
             return false;
         }
         for (std::size_t v = 0; v < vertexCount; ++v) {
             float sum = 0.0f;
             for (std::size_t slot = 0; slot < 4; ++slot) {
-                const float indexValue = mesh.skinWeights[v * 8u + slot];
-                const float weight = mesh.skinWeights[v * 8u + 4u + slot];
-                const UInt32 index = static_cast<UInt32>(indexValue + 0.5f);
-                if (weight > 0.0f
-                    && (index >= boneCount
-                        || std::abs(indexValue - static_cast<float>(index)) > 0.001f)) {
+                const UInt32 index = mesh.skinVertices[v].joint[slot];
+                const float weight = mesh.skinVertices[v].weight[slot];
+                if (weight > 0.0f && index >= boneCount) {
                     std::fprintf(stderr,
                                  "[FBXParser] mesh '%s' vertex %zu references "
-                                 "invalid bone %.3f/%zu\n",
-                                 mesh.name.c_str(), v, indexValue, boneCount);
+                                 "invalid bone %u/%zu\n",
+                                 mesh.name.c_str(), v, index, boneCount);
                     return false;
                 }
                 sum += weight;
@@ -1821,16 +1800,11 @@ bool FBXParser::_validateSkinningContract() const
 
 void FBXParser::_collectSkeletonBones(const aiNode* node, int parentIndex,
                                       const std::unordered_set<std::string>& boneNodeNames,
-                                      SkeletonData& skeleton,
-                                      const ayt::math::Float4x4& fromParentBone) {
+                                      SkeletonData& skeleton) {
     if (!node) return;
 
     std::string nodeName = node->mName.C_Str();
-    const ayt::math::Float4x4 local =
-        fromParentBone * toAyMatrix(node->mTransformation);
-
-    // 检查是否是骨骼节点
-    bool isBone = boneNodeNames.find(nodeName) != boneNodeNames.end();
+    const bool isBone = boneNodeNames.find(nodeName) != boneNodeNames.end();
 
     int thisIndex = -1;
     if (isBone) {
@@ -1838,16 +1812,35 @@ void FBXParser::_collectSkeletonBones(const aiNode* node, int parentIndex,
         bone.name = nodeName;
         bone.parentIndex = parentIndex;
 
-        // The offset is defined by the skin cluster, not by inverse(local).
-        // Using inverse(node local) only worked accidentally for one-bone
-        // hierarchies and broke bind pose as soon as parents were present.
+        // aiBone::mOffsetMatrix is mesh-bind -> bone-bind.  It is the only
+        // authoritative bind-space value shared by all skinned submeshes.
+        // FBX node hierarchies may additionally contain Blender unit/object
+        // wrappers (for example a 100x armature and mesh node) even when the
+        // vertices and offsets are already expressed in metres.  Folding such
+        // wrappers into the skeleton scales skin matrices a second time.
         const auto offset = _boneOffsets.find(nodeName);
-        bone.inverseBindMatrix = offset != _boneOffsets.end()
-            ? offset->second : local.inverse();
+        if (offset != _boneOffsets.end()) {
+            bone.inverseBindMatrix = offset->second;
+        } else {
+            bone.inverseBindMatrix = ayt::math::Float4x4::identity();
+            std::fprintf(stderr,
+                         "[FBXParser] bone '%s' has no skin-cluster offset; "
+                         "using identity bind transform\n",
+                         nodeName.c_str());
+        }
 
-        // Fold non-bone ancestors between this bone and its nearest runtime
-        // bone parent into one local transform. This preserves FBX armature/
-        // pivot nodes without adding palette slots that meshes never index.
+        // Reconstruct a canonical local rest pose from bind worlds.  For a
+        // child C of parent P: local(C) = inverse(bindWorld(P))*bindWorld(C).
+        // Runtime accumulation therefore guarantees
+        // bindWorld(C)*inverseBind(C) == identity for every palette entry,
+        // independent of DCC helper nodes and object-level scale.
+        const ayt::math::Float4x4 bindWorld = bone.inverseBindMatrix.inverse();
+        ayt::math::Float4x4 local = bindWorld;
+        if (parentIndex >= 0
+            && static_cast<size_t>(parentIndex) < skeleton.bones.size()) {
+            local = skeleton.bones[static_cast<size_t>(parentIndex)].inverseBindMatrix
+                  * bindWorld;
+        }
         if (!local.decompose(bone.localPosition,
                              bone.localRotation,
                              bone.localScale)) {
@@ -1864,15 +1857,356 @@ void FBXParser::_collectSkeletonBones(const aiNode* node, int parentIndex,
         }
     }
 
-    // 递归处理子节点
-    const ayt::math::Float4x4 childAccumulator = isBone
-        ? ayt::math::Float4x4::identity() : local;
+    // aiNode only supplies topology here.  Bind matrices supply transforms.
     for (unsigned int i = 0; i < node->mNumChildren; i++) {
         _collectSkeletonBones(node->mChildren[i],
                               isBone ? thisIndex : parentIndex,
-                              boneNodeNames, skeleton, childAccumulator);
+                              boneNodeNames, skeleton);
     }
 }
+
+namespace {
+
+aiVector3D sampleVectorKeys(const aiVectorKey* keys, unsigned int count,
+                            double tick, const aiVector3D& fallback)
+{
+    if (keys == nullptr || count == 0u) return fallback;
+    if (tick <= keys[0].mTime) return keys[0].mValue;
+    if (tick >= keys[count - 1u].mTime) return keys[count - 1u].mValue;
+    unsigned int high = 1u;
+    while (high < count && keys[high].mTime < tick) ++high;
+    const unsigned int low = high - 1u;
+    const double span = keys[high].mTime - keys[low].mTime;
+    const float alpha = span > 0.0
+        ? static_cast<float>((tick - keys[low].mTime) / span) : 0.0f;
+    return keys[low].mValue + (keys[high].mValue - keys[low].mValue) * alpha;
+}
+
+aiQuaternion sampleQuaternionKeys(const aiQuatKey* keys, unsigned int count,
+                                  double tick, const aiQuaternion& fallback)
+{
+    if (keys == nullptr || count == 0u) return fallback;
+    if (tick <= keys[0].mTime) return keys[0].mValue;
+    if (tick >= keys[count - 1u].mTime) return keys[count - 1u].mValue;
+    unsigned int high = 1u;
+    while (high < count && keys[high].mTime < tick) ++high;
+    const unsigned int low = high - 1u;
+    const double span = keys[high].mTime - keys[low].mTime;
+    const float alpha = span > 0.0
+        ? static_cast<float>((tick - keys[low].mTime) / span) : 0.0f;
+    aiQuaternion result;
+    aiQuaternion::Interpolate(result, keys[low].mValue, keys[high].mValue, alpha);
+    result.Normalize();
+    return result;
+}
+
+ayt::math::Float4x4 sampleNodeLocal(const aiNode* node,
+                                    const aiNodeAnim* channel,
+                                    double tick)
+{
+    if (channel == nullptr) return toAyMatrix(node->mTransformation);
+    aiVector3D restScale;
+    aiVector3D restPosition;
+    aiQuaternion restRotation;
+    node->mTransformation.Decompose(restScale, restRotation, restPosition);
+    const aiVector3D scale = sampleVectorKeys(
+        channel->mScalingKeys, channel->mNumScalingKeys, tick, restScale);
+    const aiVector3D position = sampleVectorKeys(
+        channel->mPositionKeys, channel->mNumPositionKeys, tick, restPosition);
+    const aiQuaternion rotation = sampleQuaternionKeys(
+        channel->mRotationKeys, channel->mNumRotationKeys, tick, restRotation);
+    return toAyMatrix(aiMatrix4x4(scale, rotation, position));
+}
+
+void collectNodesByName(const aiNode* node,
+                        std::unordered_map<std::string, const aiNode*>& nodes)
+{
+    if (node == nullptr) return;
+    nodes.emplace(node->mName.C_Str(), node);
+    for (unsigned int i = 0; i < node->mNumChildren; ++i) {
+        collectNodesByName(node->mChildren[i], nodes);
+    }
+}
+
+const aiNode* findSkinnedMeshNode(const aiNode* node, const aiScene* scene)
+{
+    if (node == nullptr || scene == nullptr) return nullptr;
+    for (unsigned int i = 0; i < node->mNumMeshes; ++i) {
+        const unsigned int meshIndex = node->mMeshes[i];
+        if (meshIndex < scene->mNumMeshes
+            && scene->mMeshes[meshIndex] != nullptr
+            && scene->mMeshes[meshIndex]->HasBones()) {
+            return node;
+        }
+    }
+    for (unsigned int i = 0; i < node->mNumChildren; ++i) {
+        if (const aiNode* found = findSkinnedMeshNode(node->mChildren[i], scene)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+std::vector<const aiNode*> pathFromSceneRoot(const aiNode* node)
+{
+    std::vector<const aiNode*> path;
+    for (const aiNode* current = node; current != nullptr; current = current->mParent) {
+        path.push_back(current);
+    }
+    std::reverse(path.begin(), path.end());
+    return path;
+}
+
+ayt::math::Float4x4 sampleNodePathWorld(
+    const std::vector<const aiNode*>& path,
+    const std::unordered_map<std::string, const aiNodeAnim*>& channels,
+    double tick)
+{
+    ayt::math::Float4x4 world = ayt::math::Float4x4::identity();
+    for (const aiNode* pathNode : path) {
+        const auto channel = channels.find(pathNode->mName.C_Str());
+        world = world * sampleNodeLocal(
+            pathNode, channel == channels.end() ? nullptr : channel->second, tick);
+    }
+    return world;
+}
+
+void appendNodeKeyTimes(
+    const aiNode* node,
+    const std::unordered_map<std::string, const aiNodeAnim*>& channels,
+    std::vector<double>& keyTimes,
+    bool& animatedPath)
+{
+    if (node == nullptr) return;
+    const auto channel = channels.find(node->mName.C_Str());
+    if (channel == channels.end()) return;
+    animatedPath = true;
+    const aiNodeAnim* animation = channel->second;
+    for (unsigned int k = 0; k < animation->mNumPositionKeys; ++k)
+        keyTimes.push_back(animation->mPositionKeys[k].mTime);
+    for (unsigned int k = 0; k < animation->mNumRotationKeys; ++k)
+        keyTimes.push_back(animation->mRotationKeys[k].mTime);
+    for (unsigned int k = 0; k < animation->mNumScalingKeys; ++k)
+        keyTimes.push_back(animation->mScalingKeys[k].mTime);
+}
+
+void appendDirectNodeTracks(const aiAnimation* anim, AnimationData& data)
+{
+    for (unsigned int ci = 0; ci < anim->mNumChannels; ++ci) {
+        const aiNodeAnim* channel = anim->mChannels[ci];
+        if (channel == nullptr) continue;
+        const std::string nodeName = channel->mNodeName.C_Str();
+
+        auto appendVectorTrack = [&](const char* property,
+                                     const aiVectorKey* keys,
+                                     unsigned int count) {
+            if (keys == nullptr || count == 0u) return;
+            KeyframeTrack track;
+            track.targetNode = nodeName;
+            track.property = property;
+            track.valueType = AnimTrackType::Vector3;
+            track.times.reserve(count);
+            track.values.reserve(static_cast<size_t>(count) * 3u);
+            for (unsigned int k = 0; k < count; ++k) {
+                track.times.push_back(static_cast<Float32>(keys[k].mTime));
+                track.values.push_back(keys[k].mValue.x);
+                track.values.push_back(keys[k].mValue.y);
+                track.values.push_back(keys[k].mValue.z);
+            }
+            data.tracks.push_back(std::move(track));
+        };
+        appendVectorTrack("position", channel->mPositionKeys,
+                          channel->mNumPositionKeys);
+
+        if (channel->mRotationKeys != nullptr && channel->mNumRotationKeys > 0u) {
+            KeyframeTrack track;
+            track.targetNode = nodeName;
+            track.property = "rotation";
+            track.valueType = AnimTrackType::Quaternion;
+            track.times.reserve(channel->mNumRotationKeys);
+            track.values.reserve(static_cast<size_t>(channel->mNumRotationKeys) * 4u);
+            for (unsigned int k = 0; k < channel->mNumRotationKeys; ++k) {
+                track.times.push_back(static_cast<Float32>(channel->mRotationKeys[k].mTime));
+                track.values.push_back(channel->mRotationKeys[k].mValue.x);
+                track.values.push_back(channel->mRotationKeys[k].mValue.y);
+                track.values.push_back(channel->mRotationKeys[k].mValue.z);
+                track.values.push_back(channel->mRotationKeys[k].mValue.w);
+            }
+            data.tracks.push_back(std::move(track));
+        }
+
+        appendVectorTrack("scale", channel->mScalingKeys,
+                          channel->mNumScalingKeys);
+    }
+}
+
+void appendHierarchyBakedBoneTracks(
+    const aiScene* scene,
+    const aiAnimation* anim,
+    const std::unordered_set<std::string>& boneNames,
+    const std::unordered_map<std::string, UInt32>& boneNameToIndex,
+    AnimationData& data)
+{
+    std::unordered_map<std::string, const aiNode*> nodes;
+    collectNodesByName(scene->mRootNode, nodes);
+    std::unordered_map<std::string, const aiNodeAnim*> channels;
+    channels.reserve(anim->mNumChannels);
+    for (unsigned int ci = 0; ci < anim->mNumChannels; ++ci) {
+        if (anim->mChannels[ci] != nullptr) {
+            channels.emplace(anim->mChannels[ci]->mNodeName.C_Str(),
+                             anim->mChannels[ci]);
+        }
+    }
+
+    std::vector<std::string> orderedBones(boneNameToIndex.size());
+    for (const auto& [name, index] : boneNameToIndex) {
+        if (index < orderedBones.size()) orderedBones[index] = name;
+    }
+
+    // aiBone offsets and mesh vertices live in mesh bind space.  Root bone
+    // tracks must use that same space.  Using scene-root space would retain
+    // Blender/FBX armature wrappers (commonly a 90-degree axis rotation and a
+    // 100x unit node) and then coordinate conversion would rotate them again.
+    const aiNode* skinnedMeshNode = findSkinnedMeshNode(scene->mRootNode, scene);
+    if (skinnedMeshNode == nullptr) {
+        std::fprintf(stderr,
+                     "[FBXParser] animation source has deform bones but no "
+                     "skinned mesh node; root tracks use scene space\n");
+    }
+
+    UInt32 bakedBoneCount = 0u;
+    UInt32 meshSpaceRootCount = 0u;
+    for (const std::string& boneName : orderedBones) {
+        if (boneName.empty()) continue;
+        const auto nodeIt = nodes.find(boneName);
+        if (nodeIt == nodes.end()) continue;
+
+        const aiNode* boneNode = nodeIt->second;
+        const aiNode* parentBoneNode = boneNode->mParent;
+        while (parentBoneNode != nullptr
+               && boneNames.find(parentBoneNode->mName.C_Str()) == boneNames.end()) {
+            parentBoneNode = parentBoneNode->mParent;
+        }
+        const std::vector<const aiNode*> boneWorldPath =
+            pathFromSceneRoot(boneNode);
+        const std::vector<const aiNode*> parentWorldPath =
+            pathFromSceneRoot(parentBoneNode);
+        const std::vector<const aiNode*> meshWorldPath =
+            pathFromSceneRoot(skinnedMeshNode);
+
+        std::vector<double> keyTimes;
+        bool animatedPath = false;
+        // Child-local motion depends only on the path below its nearest deform
+        // parent.  Root-local motion is relative to the skinned mesh node, so
+        // include both scene paths in case either wrapper is animated.
+        for (const aiNode* current = boneNode;
+             current != nullptr && current != parentBoneNode;
+             current = current->mParent) {
+            appendNodeKeyTimes(current, channels, keyTimes, animatedPath);
+        }
+        if (parentBoneNode == nullptr) {
+            for (const aiNode* current = boneNode->mParent;
+                 current != nullptr; current = current->mParent) {
+                appendNodeKeyTimes(current, channels, keyTimes, animatedPath);
+            }
+            for (const aiNode* current = skinnedMeshNode;
+                 current != nullptr; current = current->mParent) {
+                appendNodeKeyTimes(current, channels, keyTimes, animatedPath);
+            }
+        }
+        if (!animatedPath || keyTimes.empty()) continue;
+        std::sort(keyTimes.begin(), keyTimes.end());
+        keyTimes.erase(std::unique(keyTimes.begin(), keyTimes.end(),
+            [](double a, double b) { return std::abs(a - b) <= 1.0e-9; }),
+            keyTimes.end());
+
+        KeyframeTrack positionTrack;
+        positionTrack.targetNode = boneName;
+        positionTrack.property = "position";
+        positionTrack.valueType = AnimTrackType::Vector3;
+        KeyframeTrack rotationTrack;
+        rotationTrack.targetNode = boneName;
+        rotationTrack.property = "rotation";
+        rotationTrack.valueType = AnimTrackType::Quaternion;
+        KeyframeTrack scaleTrack;
+        scaleTrack.targetNode = boneName;
+        scaleTrack.property = "scale";
+        scaleTrack.valueType = AnimTrackType::Vector3;
+        for (KeyframeTrack* track : {&positionTrack, &rotationTrack, &scaleTrack}) {
+            track->times.reserve(keyTimes.size());
+        }
+        positionTrack.values.reserve(keyTimes.size() * 3u);
+        rotationTrack.values.reserve(keyTimes.size() * 4u);
+        scaleTrack.values.reserve(keyTimes.size() * 3u);
+
+        ayt::math::FQuaternion previousRotation =
+            ayt::math::FQuaternion::identity();
+        bool hasPreviousRotation = false;
+        bool boneValid = true;
+        for (double keyTime : keyTimes) {
+            const ayt::math::Float4x4 boneWorld =
+                sampleNodePathWorld(boneWorldPath, channels, keyTime);
+            ayt::math::Float4x4 collapsed = boneWorld;
+            if (parentBoneNode != nullptr) {
+                collapsed = sampleNodePathWorld(parentWorldPath, channels, keyTime).inverse()
+                          * boneWorld;
+            } else if (skinnedMeshNode != nullptr) {
+                collapsed = sampleNodePathWorld(meshWorldPath, channels, keyTime).inverse()
+                          * boneWorld;
+            }
+
+            ayt::math::FVector3 position;
+            ayt::math::FQuaternion rotation;
+            ayt::math::FVector3 scale;
+            if (!collapsed.decompose(position, rotation, scale)) {
+                std::fprintf(stderr,
+                             "[FBXParser] cannot bake animation hierarchy for bone '%s'\n",
+                             boneName.c_str());
+                boneValid = false;
+                break;
+            }
+            rotation = rotation.normalize();
+            if (hasPreviousRotation
+                && previousRotation.x * rotation.x
+                 + previousRotation.y * rotation.y
+                 + previousRotation.z * rotation.z
+                 + previousRotation.w * rotation.w < 0.0f) {
+                rotation.x = -rotation.x;
+                rotation.y = -rotation.y;
+                rotation.z = -rotation.z;
+                rotation.w = -rotation.w;
+            }
+            previousRotation = rotation;
+            hasPreviousRotation = true;
+
+            const Float32 time = static_cast<Float32>(keyTime);
+            positionTrack.times.push_back(time);
+            rotationTrack.times.push_back(time);
+            scaleTrack.times.push_back(time);
+            positionTrack.values.insert(positionTrack.values.end(),
+                {position.x, position.y, position.z});
+            rotationTrack.values.insert(rotationTrack.values.end(),
+                {rotation.x, rotation.y, rotation.z, rotation.w});
+            scaleTrack.values.insert(scaleTrack.values.end(),
+                {scale.x, scale.y, scale.z});
+        }
+        if (!boneValid) continue;
+        data.tracks.push_back(std::move(positionTrack));
+        data.tracks.push_back(std::move(rotationTrack));
+        data.tracks.push_back(std::move(scaleTrack));
+        if (parentBoneNode == nullptr && skinnedMeshNode != nullptr) {
+            ++meshSpaceRootCount;
+        }
+        ++bakedBoneCount;
+    }
+    std::fprintf(stderr,
+                 "[FBXParser] baked animation hierarchy bones=%u "
+                 "meshSpaceRoots=%u referenceMesh='%s'\n",
+                 bakedBoneCount, meshSpaceRootCount,
+                 skinnedMeshNode != nullptr ? skinnedMeshNode->mName.C_Str() : "(none)");
+}
+
+} // namespace
 
 // R-02: scene->mAnimations → IntermediateAsset::animations
 // 每个 aiAnimation = 一个 take,转换为一条 AnimationData。
@@ -1901,7 +2235,6 @@ void FBXParser::_parseAnimations(const aiScene* scene) {
 
         AnimationData data;
         data.name = std::string(anim->mName.C_Str());
-        data.duration = static_cast<Float32>(anim->mDuration);
         // mTicksPerSecond == 0 在 Assimp 契约里表示 "use scene default",fallback 30
         data.ticksPerSecond = anim->mTicksPerSecond != 0.0
             ? static_cast<Float32>(anim->mTicksPerSecond)
@@ -1910,65 +2243,21 @@ void FBXParser::_parseAnimations(const aiScene* scene) {
         const double ticks = (anim->mTicksPerSecond != 0.0)
             ? anim->mTicksPerSecond
             : 30.0;
+        // IAnimation keeps clip duration in seconds while track key times stay
+        // in source ticks. AnimationPlayer normalizes the latter exactly once
+        // when a clip is bound. Converting keys here as well compresses the
+        // sampled motion by ticksPerSecond a second time.
+        data.duration = static_cast<Float32>(anim->mDuration / ticks);
 
-        for (unsigned int ci = 0; ci < anim->mNumChannels; ++ci) {
-            const aiNodeAnim* chan = anim->mChannels[ci];
-            if (!chan) continue;
-
-            const std::string nodeName = chan->mNodeName.C_Str();
-
-            // ---- Position track (Vector3) ----
-            if (chan->mNumPositionKeys > 0) {
-                KeyframeTrack tr;
-                tr.targetNode = nodeName;
-                tr.property = "position";
-                tr.valueType = AnimTrackType::Vector3;
-                tr.times.reserve(chan->mNumPositionKeys);
-                tr.values.reserve(chan->mNumPositionKeys * 3);
-                for (unsigned int k = 0; k < chan->mNumPositionKeys; ++k) {
-                    tr.times.push_back(static_cast<Float32>(chan->mPositionKeys[k].mTime / ticks));
-                    tr.values.push_back(chan->mPositionKeys[k].mValue.x);
-                    tr.values.push_back(chan->mPositionKeys[k].mValue.y);
-                    tr.values.push_back(chan->mPositionKeys[k].mValue.z);
-                }
-                data.tracks.push_back(std::move(tr));
-            }
-
-            // ---- Rotation track (Quaternion) ----
-            if (chan->mNumRotationKeys > 0) {
-                KeyframeTrack tr;
-                tr.targetNode = nodeName;
-                tr.property = "rotation";
-                tr.valueType = AnimTrackType::Quaternion;
-                tr.times.reserve(chan->mNumRotationKeys);
-                tr.values.reserve(chan->mNumRotationKeys * 4);
-                for (unsigned int k = 0; k < chan->mNumRotationKeys; ++k) {
-                    tr.times.push_back(static_cast<Float32>(chan->mRotationKeys[k].mTime / ticks));
-                    // assimp quat: (x, y, z, w); 我们 IAnimation 期望 (x, y, z, w) 顺序,直接 memcpy
-                    tr.values.push_back(chan->mRotationKeys[k].mValue.x);
-                    tr.values.push_back(chan->mRotationKeys[k].mValue.y);
-                    tr.values.push_back(chan->mRotationKeys[k].mValue.z);
-                    tr.values.push_back(chan->mRotationKeys[k].mValue.w);
-                }
-                data.tracks.push_back(std::move(tr));
-            }
-
-            // ---- Scale track (Vector3) ----
-            if (chan->mNumScalingKeys > 0) {
-                KeyframeTrack tr;
-                tr.targetNode = nodeName;
-                tr.property = "scale";
-                tr.valueType = AnimTrackType::Vector3;
-                tr.times.reserve(chan->mNumScalingKeys);
-                tr.values.reserve(chan->mNumScalingKeys * 3);
-                for (unsigned int k = 0; k < chan->mNumScalingKeys; ++k) {
-                    tr.times.push_back(static_cast<Float32>(chan->mScalingKeys[k].mTime / ticks));
-                    tr.values.push_back(chan->mScalingKeys[k].mValue.x);
-                    tr.values.push_back(chan->mScalingKeys[k].mValue.y);
-                    tr.values.push_back(chan->mScalingKeys[k].mValue.z);
-                }
-                data.tracks.push_back(std::move(tr));
-            }
+        if (!_boneNodeNames.empty() && !_boneNameToIndex.empty()) {
+            appendHierarchyBakedBoneTracks(
+                scene, anim, _boneNodeNames, _boneNameToIndex, data);
+        } else {
+            // Meshless animation sources do not expose a deform-bone set via
+            // Assimp. Preserve their channels verbatim; callers that target a
+            // separate skeleton can still bind by name, but no hierarchy
+            // compaction can be proven without target-skeleton metadata.
+            appendDirectNodeTracks(anim, data);
         }
 
         // Shape-key animation is independent from skeletal TRS animation.
@@ -2047,7 +2336,7 @@ void FBXParser::_parseAnimations(const aiScene* scene) {
                             }
                         }
                     }
-                    track.times.push_back(static_cast<Float32>(key.mTime / ticks));
+                    track.times.push_back(static_cast<Float32>(key.mTime));
                     track.values.push_back(weight);
                 }
 

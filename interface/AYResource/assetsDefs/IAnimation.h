@@ -84,6 +84,8 @@ public:
 
     // ===== Basic info =====
     virtual const char* getName() const = 0;
+    // Clip duration is expressed in seconds. Track key times remain in source
+    // ticks and are converted by the playback runtime using ticksPerSecond.
     virtual Float32 getDuration() const = 0;
     virtual Float32 getTicksPerSecond() const = 0;
 
@@ -93,7 +95,7 @@ public:
     virtual const char* getTrackProperty(UInt32 trackIndex) const = 0;
     virtual AnimTrackType getTrackType(UInt32 trackIndex) const = 0;
     virtual UInt32 getTrackKeyframeCount(UInt32 trackIndex) const = 0;
-    virtual const Float32* getTrackTimes(UInt32 trackIndex) const = 0;
+    virtual const Float32* getTrackTimes(UInt32 trackIndex) const = 0; // raw ticks
 
     // ===== 值访问 (根据类型返回) =====
     virtual const ayt::math::FVector3* getTrackVector3Values(UInt32 trackIndex) const = 0;

@@ -42,6 +42,13 @@ struct VertexSkinWeight {
     Float32 boneWeight[4];   // 对应权重 (和为1)
 };
 
+// One render section's local-joint table inside the mesh-wide palette array.
+// Local UInt8 vertex indices address [jointOffset, jointOffset + jointCount).
+struct SkinPalette {
+    UInt32 jointOffset = 0u;
+    UInt32 jointCount = 0u;
+};
+
 // ===== IMesh — 网格资源接口 =====
 // All indexed triangle meshes obey GeometryConvention.h: left-handed engine
 // space, clockwise front faces. Mirrored world transforms are handled by the
@@ -97,6 +104,12 @@ public:
     // ===== Skin weights (骨骼蒙皮) =====
     virtual Bool hasSkinWeights() const = 0;
     virtual const VertexSkinWeight* getSkinWeights() const = 0;
+    // Optional for source compatibility with procedural/legacy IMesh
+    // implementations. Cooked skinned meshes expose one record per submesh.
+    virtual UInt32 getSkinPaletteCount() const { return 0u; }
+    virtual const SkinPalette* getSkinPalettes() const { return nullptr; }
+    virtual UInt32 getSkinPaletteJointCount() const { return 0u; }
+    virtual const UInt32* getSkinPaletteJoints() const { return nullptr; }
 
     // ===== LOD (预留扩展) =====
     struct LODData {

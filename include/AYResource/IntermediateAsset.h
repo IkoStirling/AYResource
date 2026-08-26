@@ -9,7 +9,7 @@
 
 #define AYT_RESOURCE_STRINGIZE_IMPL(value) #value
 #define AYT_RESOURCE_STRINGIZE(value) AYT_RESOURCE_STRINGIZE_IMPL(value)
-#define AYT_RESOURCE_INTERMEDIATE_ASSET_ABI_VERSION 17
+#define AYT_RESOURCE_INTERMEDIATE_ASSET_ABI_VERSION 18
 
 // IntermediateAsset crosses converter/module boundaries by value. Detect
 // consumers built against an older field layout before they can corrupt
@@ -156,6 +156,20 @@ struct SubmeshData {
     // flattened into runtime virtual paths.  This is importer-only metadata:
     // MeshConverter intentionally does not serialize it into .aymesh.
     uint32_t sourceMaterialIndex = UINT32_MAX;
+    // Cooked skin sections own a compact draw-local palette. Each entry maps
+    // the UInt32 local joint stored on a vertex back to SkeletonData::bones.
+    // Source/import meshes leave this empty and use GlobalSkeleton indices.
+    std::vector<UInt32> bonePalette;
+};
+
+enum class SkinIndexSpace : UInt8 {
+    GlobalSkeleton = 0,
+    LocalPalette = 1
+};
+
+struct SkinVertexData {
+    UInt32 joint[4] = {0u, 0u, 0u, 0u};
+    Float32 weight[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 };
 
 struct MorphVertexDelta {
@@ -187,9 +201,11 @@ struct MeshData {
     uint8_t attributeMask = 0;
     float boundsMin[3] = {0};
     float boundsMax[3] = {0};
-    // 骨骼蒙皮数据：每顶点 8 floats (4 bone indices as float + 4 weights)
-    // bone indices 存储为 float（避免类型混用），实际使用时会转换回 UInt8
-    std::vector<float> skinWeights;
+    // Canonical converter representation. Imported data keeps scene-wide
+    // SkeletonData indices as UInt32 until the platform cooking step builds
+    // per-draw palettes. This prevents silent truncation on large skeletons.
+    std::vector<SkinVertexData> skinVertices;
+    SkinIndexSpace skinIndexSpace = SkinIndexSpace::GlobalSkeleton;
 };
 
 struct MaterialData {
@@ -282,6 +298,7 @@ struct AnimNotifyMarkerData {
 
 struct AnimationData {
     std::string name;
+    // Duration is seconds; KeyframeTrack::times are source ticks.
     float duration = 0.0f;
     float ticksPerSecond = 30.0f;
     std::vector<KeyframeTrack> tracks;

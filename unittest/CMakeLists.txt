@@ -23,6 +23,7 @@ add_executable(${MODULE_NAME}
     AYTest_MeshLoader.cpp
     AYTest_MeshBinaryChunk.cpp
     AYTest_MeshMorphContract.cpp
+    AYTest_SkinningBuild.cpp
     AYTest_FBXConverter.cpp
     AYTest_FBXParserAnimation.cpp
     AYTest_AnimationConverter.cpp

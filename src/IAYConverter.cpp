@@ -13,7 +13,7 @@ namespace ayt::resource
 {
 
 const char kFbxImporterContractTag[] =
-        "fbx-material-complete-assimp-source-contract-v17";
+        "fbx-animation-mesh-bind-space-runtime-scale1-contract-v21";
 
 namespace {
 

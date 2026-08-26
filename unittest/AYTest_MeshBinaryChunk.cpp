@@ -159,6 +159,29 @@ TEST_CASE(skin_weight_chunk_round_trip)
     }
 }
 
+TEST_CASE(joint_palette_chunk_round_trip)
+{
+    auto mesh = std::make_shared<Mesh>();
+    mesh->createCube(1.0f);
+    mesh->debugSetSkinWeights(makeSkinWeights(mesh->getVertexCount()));
+    const std::vector<SkinPalette> palettes{{0u, 3u}};
+    const std::vector<UInt32> joints{4u, 260u, 900u};
+    mesh->_setForTestSkinPalettes(palettes, joints);
+
+    std::vector<UInt8> binary;
+    CHECK(mesh->saveToBinary(binary));
+
+    auto loaded = std::make_shared<Mesh>();
+    CHECK(loaded->loadFromBinary(binary.data(), binary.size()));
+    CHECK(loaded->getSkinPaletteCount() == 1u);
+    CHECK(loaded->getSkinPaletteJointCount() == 3u);
+    CHECK(loaded->getSkinPalettes()[0].jointOffset == 0u);
+    CHECK(loaded->getSkinPalettes()[0].jointCount == 3u);
+    CHECK(loaded->getSkinPaletteJoints()[0] == 4u);
+    CHECK(loaded->getSkinPaletteJoints()[1] == 260u);
+    CHECK(loaded->getSkinPaletteJoints()[2] == 900u);
+}
+
 TEST_CASE(load_rejects_truncated_chunk)
 {
     auto mesh = std::make_shared<Mesh>();

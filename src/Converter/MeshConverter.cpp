@@ -3,11 +3,12 @@
 #include "AYResource/assetsImpl/Mesh.h"
 #include "AYResource/MeshMorphContract.h"
 #include "AYResource/assetsDefs/IMesh.h"
+#include "AYResource/SkinningBuild.h"
 #include "AYIO/File.h"
 #include <AYStorage/Guid.h>
 #include <AYLog.h>
+#include <cmath>
 #include <cstring>
-#include <vector>
 #include <fstream>
 #include <vector>
 
@@ -33,7 +34,26 @@ UInt8 MeshConverter::computeVertexStride(uint8_t attributeMask) {
 // 复用 Mesh 类的 chunked 序列化：把 MeshData 数据装到一个临时 Mesh 实例上，
 // 调用 Mesh::saveToBinary，再将生成的 chunked 字节流写出。这样保证两个写入端
 // (Mesh::saveToBinary 和 MeshConverter) 共用同一份磁盘格式，未来修改一处即可。
-bool MeshConverter::saveToBinary(const MeshData& mesh, std::vector<UInt8>& outData) {
+bool MeshConverter::saveToBinary(const MeshData& source, std::vector<UInt8>& outData) {
+    MeshData cooked;
+    const MeshData* input = &source;
+    if (!source.skinVertices.empty()
+        && source.skinIndexSpace == SkinIndexSpace::GlobalSkeleton) {
+        SkinningBuildStats stats;
+        std::string error;
+        if (!buildSkinnedRenderChunks(source, skinningProfile, cooked, &stats, &error)) {
+            ayt::log::error("[MeshConverter] skin cooking failed for '%s': %s",
+                            source.name.c_str(), error.c_str());
+            return false;
+        }
+        ayt::log::info("[MeshConverter] skin cooked '%s': sections=%u chunks=%u "
+                       "split=%u duplicatedVertices=%u maxPalette=%u",
+                       source.name.c_str(), stats.sourceSubmeshCount,
+                       stats.outputChunkCount, stats.splitSubmeshCount,
+                       stats.duplicatedVertexCount, stats.maximumPaletteSize);
+        input = &cooked;
+    }
+    const MeshData& mesh = *input;
     const UInt32 vertexCount = static_cast<UInt32>(mesh.positions.size() / 3);
     const UInt32 indexCount  = static_cast<UInt32>(mesh.indices.size());
 
@@ -117,19 +137,83 @@ bool MeshConverter::saveToBinary(const MeshData& mesh, std::vector<UInt8>& outDa
         tmp._addForTestMaterialSlot(slot);
     }
 
-    // skin weights: 8 floats per vertex = (4 indices as float, 4 weights)
+    // Skin vertices are already draw-local after buildSkinnedRenderChunks.
     const bool hasSkin = (mesh.attributeMask & (1u << static_cast<uint8_t>(MeshAttribute::SkinWeight))) != 0
-                        && !mesh.skinWeights.empty();
+                        && !mesh.skinVertices.empty();
     if (hasSkin) {
+        if (mesh.skinIndexSpace != SkinIndexSpace::LocalPalette
+            || mesh.skinVertices.size() != vertexCount
+            || mesh.submeshes.size() == 0u) {
+            ayt::log::error("[MeshConverter] invalid cooked skin contract for '%s'", mesh.name.c_str());
+            return false;
+        }
+        for (size_t sectionIndex = 0; sectionIndex < mesh.submeshes.size(); ++sectionIndex) {
+            const SubmeshData& submesh = mesh.submeshes[sectionIndex];
+            if (submesh.bonePalette.size() > skinningProfile.maxBonesPerDraw
+                || submesh.bonePalette.size() > 256u) {
+                ayt::log::error("[MeshConverter] section %zu palette exceeds cook profile", sectionIndex);
+                return false;
+            }
+            const uint64_t rangeEnd = static_cast<uint64_t>(submesh.startIndex)
+                                    + submesh.indexCount;
+            if (rangeEnd > mesh.indices.size()) {
+                ayt::log::error("[MeshConverter] section %zu index range is invalid", sectionIndex);
+                return false;
+            }
+            for (uint64_t at = submesh.startIndex; at < rangeEnd; ++at) {
+                const UInt32 vertex = mesh.indices[at];
+                if (vertex >= vertexCount) {
+                    ayt::log::error("[MeshConverter] section %zu references vertex %u/%u",
+                                    sectionIndex, vertex, vertexCount);
+                    return false;
+                }
+                const SkinVertexData& skin = mesh.skinVertices[vertex];
+                Float32 weightSum = 0.0f;
+                for (UInt32 slot = 0u; slot < 4u; ++slot) {
+                    const Float32 weight = skin.weight[slot];
+                    if (!std::isfinite(weight) || weight < 0.0f
+                        || (weight > 0.0f && skin.joint[slot] >= submesh.bonePalette.size())) {
+                        ayt::log::error("[MeshConverter] section %zu has invalid local skin slot", sectionIndex);
+                        return false;
+                    }
+                    weightSum += weight;
+                }
+                if (std::abs(weightSum - 1.0f) > 0.001f) {
+                    ayt::log::error("[MeshConverter] section %zu has non-normalized skin weights", sectionIndex);
+                    return false;
+                }
+            }
+        }
         std::vector<VertexSkinWeight> packed(vertexCount);
         for (UInt32 v = 0; v < vertexCount; ++v) {
-            const float* src = &mesh.skinWeights[v * 8];
             for (int b = 0; b < 4; ++b) {
-                packed[v].boneIndex[b]  = static_cast<UInt8>(src[b]);
-                packed[v].boneWeight[b] = src[b + 4];
+                const UInt32 localJoint = mesh.skinVertices[v].joint[b];
+                const Float32 weight = mesh.skinVertices[v].weight[b];
+                if (localJoint > 255u && weight > 0.0f) {
+                    ayt::log::error("[MeshConverter] local skin index %u exceeds UInt8", localJoint);
+                    return false;
+                }
+                // GPU array indexing may still evaluate a zero-weight slot,
+                // so canonicalize inactive indices instead of narrowing junk.
+                packed[v].boneIndex[b] = weight > 0.0f
+                    ? static_cast<UInt8>(localJoint) : 0u;
+                packed[v].boneWeight[b] = weight;
             }
         }
         tmp._setForTestSkinWeights(packed);
+
+        std::vector<SkinPalette> palettes;
+        std::vector<UInt32> paletteJoints;
+        palettes.reserve(mesh.submeshes.size());
+        for (const SubmeshData& submesh : mesh.submeshes) {
+            SkinPalette palette;
+            palette.jointOffset = static_cast<UInt32>(paletteJoints.size());
+            palette.jointCount = static_cast<UInt32>(submesh.bonePalette.size());
+            palettes.push_back(palette);
+            paletteJoints.insert(paletteJoints.end(), submesh.bonePalette.begin(),
+                                 submesh.bonePalette.end());
+        }
+        tmp._setForTestSkinPalettes(palettes, paletteJoints);
     }
 
     // bounds
@@ -304,7 +388,7 @@ std::vector<ConversionResult::ConvertedResource> MeshConverter::convertAll(
         res.guid = lastGuid;
         res.path = virtualPath;
         res.type = "Mesh";
-        res.role = mesh.skinWeights.empty() ? "StaticMesh" : "SkinnedMesh";
+        res.role = mesh.skinVertices.empty() ? "StaticMesh" : "SkinnedMesh";
         res.size = static_cast<uint64_t>(binaryData.size());
         results.push_back(res);
         lastOutputPath = virtualPath;

@@ -15,6 +15,9 @@ void Mesh::_clear() {
     _indices.clear();
     _submeshes.clear();
     _materialSlots.clear();
+    _skinWeights.clear();
+    _skinPalettes.clear();
+    _skinPaletteJoints.clear();
     _extensions.clear();
     _extensionStorage.clear();
     _lodData.clear();
@@ -23,6 +26,7 @@ void Mesh::_clear() {
     _vertexCount = 0;
     _vertexStride = 0;
     _attributeMask = 0;
+    _hasSkinWeights = false;
 }
 
 bool Mesh::unload() {
@@ -37,6 +41,10 @@ size_t Mesh::sizeInBytes() const {
         extensionBytes += storage.size();
     }
     return sizeof(Mesh) + _vertexData.size() + _indices.size() * sizeof(UInt32)
+         + _submeshes.size() * sizeof(Submesh)
+         + _skinWeights.size() * sizeof(VertexSkinWeight)
+         + _skinPalettes.size() * sizeof(SkinPalette)
+         + _skinPaletteJoints.size() * sizeof(UInt32)
          + extensionBytes;
 }
 
@@ -348,6 +356,48 @@ bool Mesh::loadFromBinary(const void* data, size_t size) {
                 _hasSkinWeights = true;
                 break;
             }
+            case JPAL: {
+                if (sz < sizeof(MeshJointPaletteHeader)) {
+                    ayt::log::error("[Mesh] loadFromBinary: JPAL header truncated");
+                    return false;
+                }
+                MeshJointPaletteHeader paletteHeader{};
+                std::memcpy(&paletteHeader, cdata, sizeof(paletteHeader));
+                if (paletteHeader.version != kMeshJointPaletteVersion
+                    || paletteHeader.paletteCount != header->submeshCount) {
+                    ayt::log::error("[Mesh] loadFromBinary: invalid JPAL version/count");
+                    return false;
+                }
+                const size_t expected = sizeof(MeshJointPaletteHeader)
+                    + static_cast<size_t>(paletteHeader.paletteCount) * sizeof(SkinPalette)
+                    + static_cast<size_t>(paletteHeader.jointCount) * sizeof(UInt32);
+                if (sz != expected) {
+                    ayt::log::error("[Mesh] loadFromBinary: JPAL size=%u expected=%zu", sz, expected);
+                    return false;
+                }
+                const UInt8* paletteData = cdata + sizeof(MeshJointPaletteHeader);
+                _skinPalettes.resize(paletteHeader.paletteCount);
+                if (!_skinPalettes.empty()) {
+                    std::memcpy(_skinPalettes.data(), paletteData,
+                                _skinPalettes.size() * sizeof(SkinPalette));
+                }
+                const UInt8* jointData = paletteData
+                    + _skinPalettes.size() * sizeof(SkinPalette);
+                _skinPaletteJoints.resize(paletteHeader.jointCount);
+                if (!_skinPaletteJoints.empty()) {
+                    std::memcpy(_skinPaletteJoints.data(), jointData,
+                                _skinPaletteJoints.size() * sizeof(UInt32));
+                }
+                for (const SkinPalette& palette : _skinPalettes) {
+                    const uint64_t paletteEnd = static_cast<uint64_t>(palette.jointOffset)
+                                              + palette.jointCount;
+                    if (paletteEnd > _skinPaletteJoints.size() || palette.jointCount > 256u) {
+                        ayt::log::error("[Mesh] loadFromBinary: JPAL palette range invalid");
+                        return false;
+                    }
+                }
+                break;
+            }
             case MORP: {
                 _extensionStorage.push_back(std::vector<UInt8>(sz));
                 if (! _extensionStorage.back().empty()) {
@@ -428,6 +478,13 @@ void Mesh::_setForTestSkinWeights(const std::vector<VertexSkinWeight>& weights)
     if (_hasSkinWeights) {
         _attributeMask |= (1u << static_cast<UInt8>(MeshAttribute::SkinWeight));
     }
+}
+
+void Mesh::_setForTestSkinPalettes(const std::vector<SkinPalette>& palettes,
+                                   const std::vector<UInt32>& joints)
+{
+    _skinPalettes = palettes;
+    _skinPaletteJoints = joints;
 }
 
 void Mesh::_setForTestBounds(const ayt::math::FVector3& center, const ayt::math::FVector3& halfExtent)
@@ -573,6 +630,32 @@ bool Mesh::saveToBinary(std::vector<UInt8>& outData) const {
         const UInt32 sz = _vertexCount * sizeof(VertexSkinWeight);
         ChunkSpec ch{SKIN, std::vector<UInt8>(sz)};
         std::memcpy(ch.data.data(), _skinWeights.data(), sz);
+        chunks.push_back(std::move(ch));
+    }
+
+    // JPAL (optional): one local-to-global palette range per render submesh.
+    if (!_skinPalettes.empty()) {
+        MeshJointPaletteHeader paletteHeader{
+            kMeshJointPaletteVersion,
+            static_cast<UInt32>(_skinPalettes.size()),
+            static_cast<UInt32>(_skinPaletteJoints.size())
+        };
+        const size_t sz = sizeof(paletteHeader)
+            + _skinPalettes.size() * sizeof(SkinPalette)
+            + _skinPaletteJoints.size() * sizeof(UInt32);
+        ChunkSpec ch{JPAL, std::vector<UInt8>(sz)};
+        size_t cursor = 0u;
+        std::memcpy(ch.data.data() + cursor, &paletteHeader, sizeof(paletteHeader));
+        cursor += sizeof(paletteHeader);
+        if (!_skinPalettes.empty()) {
+            std::memcpy(ch.data.data() + cursor, _skinPalettes.data(),
+                        _skinPalettes.size() * sizeof(SkinPalette));
+            cursor += _skinPalettes.size() * sizeof(SkinPalette);
+        }
+        if (!_skinPaletteJoints.empty()) {
+            std::memcpy(ch.data.data() + cursor, _skinPaletteJoints.data(),
+                        _skinPaletteJoints.size() * sizeof(UInt32));
+        }
         chunks.push_back(std::move(ch));
     }
 

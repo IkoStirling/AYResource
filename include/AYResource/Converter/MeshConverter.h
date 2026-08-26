@@ -1,6 +1,7 @@
 #pragma once
 #include "AYResource/IntermediateAsset.h"
 #include "AYResource/IConverter.h"
+#include "AYResource/SkinningBuild.h"
 #include <string>
 #include <vector>
 
@@ -19,6 +20,12 @@ public:
     // 设置虚拟路径前缀
     void setVirtualPath(const std::string& path) { virtualPath = path; }
 
+    // Selects the target renderer's per-draw skinning capability. This does
+    // not cap SkeletonData; it only controls render-section cooking.
+    void setSkinningBuildProfile(const SkinningBuildProfile& profile) {
+        skinningProfile = profile;
+    }
+
     // 单个 Mesh 转换
     bool convert(const MeshData& mesh);
 
@@ -36,6 +43,7 @@ private:
     std::string virtualPath;
     std::string lastOutputPath;
     ayt::math::FGuid lastGuid;
+    SkinningBuildProfile skinningProfile{};
 
     // 计算顶点 stride
     static UInt8 computeVertexStride(uint8_t attributeMask);

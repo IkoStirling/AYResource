@@ -210,7 +210,7 @@ Per `ENGINE-FOUNDATION-PLAN.md` §2.3, **prefer extension over rewrite.** A form
 
 | Format | Magic | Version | Status today | Phase 0–1 plan |
 |--------|-------|---------|--------------|----------------|
-| `.aymesh` | `'AYMH'` | v1 | Static mesh + optional skin weights (`SkinWeight` bit `1<<5`) + `Extension[]` | **Phase 0:** stabilize skin-weights upload path. **v2 optional:** explicit `MORP` and `SKEL` chunks (use `IMesh::Extension` first) |
+| `.aymesh` | `'AYMH'` | v1 | Static mesh + optional local skin weights (`SkinWeight` bit `1<<5`) + `JPAL` per-submesh palette + `Extension[]` | Skin cook compacts global skeleton indices into renderer-profiled draw palettes; `MORP` remains an extension chunk |
 | `.ayskel` | `'AYSK'` | v1 | Bone hierarchy + bind pose + inverse bind matrix | Stable; bone-name hash optional |
 | `.ayanm` | `'AYNM'` | v1 | Node-name-keyed tracks (pos/rot/scale) | Stable; ensure skeleton-binding metadata (skel path + bone-name table) |
 | `.aymat` | `'AYMT'` | v1 | Phoskia shader path + typed params + texture slots | Stable; shader variant tags (`skinned`, `morph`) as params, not new file type |
@@ -279,10 +279,17 @@ Submeshes[submeshCount]:
     uint32_t materialIndex                  // identifier into .aydep.json
 
 Extensions[] (optional, four-cc):
-    uint32_t type        ('MORP' | 'CLTH' | 'PHYS' | 'SKEL' | user-defined)
+    uint32_t type        ('JPAL' | 'MORP' | 'CLTH' | 'PHYS' | 'SKEL' | user-defined)
     uint32_t size
     uint8_t  data[size]
 ```
+
+`JPAL` stores one local-to-global joint range per submesh. Cooked vertex `boneIndex`
+values address that submesh's range, while each palette entry addresses the complete
+`.ayskel`. The current uniform-buffer profile limits a draw palette to 128 joints;
+the skeleton itself is not capped. If a source submesh exceeds the profile, the
+converter partitions it on triangle boundaries and preserves material assignment,
+vertex attributes, and morph deltas.
 
 Version policy: loaders accept v1 and **at most** v(n-1); converters emit current v(n).
 
@@ -319,7 +326,8 @@ FBXParser → IntermediateAsset
 ```cpp
 struct MeshData       { name, positions, normals, uvs, tangents, colors,
                         indices, submeshes, materialSlots, attributeMask,
-                        skinWeights (Phase 1+); };
+                        skinVertices, skinIndexSpace; };
+struct SubmeshData    { indexOffset, indexCount, materialIndex, bonePalette; };
 struct MaterialData   { name, shaderPath (Phoskia), params, textureRefs };
 struct TextureData    { name, width, height, format, imageData, usage };
 struct SkeletonData   { name, bones[] };
