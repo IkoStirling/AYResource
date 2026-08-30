@@ -17,6 +17,19 @@ struct aiNodeAnim;
 namespace ayt::resource
 {
 
+namespace detail {
+
+/// Resolves the axis-only FBX wrapper emitted by DCC exporters into the
+/// explicit source policy used by the AY coordinate baker.  Exposed in the
+/// detail namespace so the importer contract can be regression-tested without
+/// depending on a large binary FBX fixture.
+SourceCoordinatePolicy resolveFbxAutoCoordinatePolicy(
+    const SourceCoordinatePolicy& requested,
+    const ayt::math::Float4x4& referenceNodeTransform,
+    bool* inferred = nullptr);
+
+} // namespace detail
+
 // ===== FBXParser — 使用 Assimp 解析 FBX =====
 // 输出 IntermediateAsset，供 MeshConverter/MaterialConverter 等使用
 class FBXParser : public IFormatParser {
@@ -94,7 +107,7 @@ private:
     // R-02: 把 aiNodeAnim 的 channel 转换为 3 条 KeyframeTrack (position/rotation/scale)
     // valueType 由 property 推断 (rotation → Quaternion, 其它 → Vector3)
     void _parseAnimations(const aiScene* scene);
-    bool _applySourceCoordinatePolicy();
+    bool _applySourceCoordinatePolicy(const SourceCoordinatePolicy& policy);
     UInt8 _getMeshAttributeMask(const aiMesh* m);
     void _parseMorphTargets(const aiMesh* sourceMesh,
                            UInt32 vertexOffset,

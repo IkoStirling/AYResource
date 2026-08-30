@@ -239,6 +239,32 @@ TEST_SUITE(FBXConverterTests)
         CHECK(checkedMesh);
     }
 
+    TEST_CASE(AutoFbxCoordinatesResolveAxisWrapperWithoutItsUnitScale) {
+        // Blender commonly leaves mesh/bind data in Z-up space and emits a
+        // 100x, +90-degree FBX object wrapper.  Auto import must use only the
+        // signed-axis basis: Assimp has already converted the payload units.
+        const Float4x4 blenderFbxWrapper(
+            100.0f, 0.0f,   0.0f,   0.0f,
+            0.0f,   0.0f, 100.0f,   0.0f,
+            0.0f,-100.0f,   0.0f,   0.0f,
+            0.0f,   0.0f,   0.0f,   1.0f);
+        SourceCoordinatePolicy requested;
+        requested.mode = SourceCoordinateMode::Auto;
+        requested.metersPerUnit = 0.0f;
+
+        bool inferred = false;
+        const SourceCoordinatePolicy resolved =
+            detail::resolveFbxAutoCoordinatePolicy(
+                requested, blenderFbxWrapper, &inferred);
+
+        CHECK(inferred);
+        CHECK(resolved.mode == SourceCoordinateMode::Manual);
+        CHECK(resolved.up == ImportAxis::PositiveZ);
+        CHECK(resolved.forward == ImportAxis::NegativeY);
+        CHECK(resolved.handedness == ImportHandedness::Right);
+        CHECK(std::abs(resolved.metersPerUnit - 1.0f) < 0.0001f);
+    }
+
     TEST_CASE(AssimpMaterialSurfaceStateDoesNotTreatDefaultBlendAsTransparency) {
         namespace fs = std::filesystem;
         const fs::path root =

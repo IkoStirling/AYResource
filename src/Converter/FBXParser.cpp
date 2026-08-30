@@ -19,11 +19,124 @@
 #include <iomanip>
 #include <limits>
 #include <sstream>
+#include <cctype>
 
 namespace ayt::resource
 {
 
 namespace {
+
+bool isFbxPath(std::string_view path)
+{
+    const std::size_t dot = path.find_last_of('.');
+    if (dot == std::string_view::npos) return false;
+    std::string extension(path.substr(dot));
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return extension == ".fbx";
+}
+
+bool nodeReferencesMeshKind(const aiNode* node, const aiScene* scene,
+                            bool requireSkinning)
+{
+    if (!node || !scene) return false;
+    for (unsigned i = 0; i < node->mNumMeshes; ++i) {
+        const unsigned meshIndex = node->mMeshes[i];
+        if (meshIndex >= scene->mNumMeshes || !scene->mMeshes[meshIndex]) {
+            continue;
+        }
+        if (!requireSkinning || scene->mMeshes[meshIndex]->HasBones()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool findReferenceMeshTransform(const aiNode* node, const aiScene* scene,
+                                const aiMatrix4x4& parentWorld,
+                                bool requireSkinning, aiMatrix4x4& out)
+{
+    if (!node) return false;
+    const aiMatrix4x4 world = parentWorld * node->mTransformation;
+    if (nodeReferencesMeshKind(node, scene, requireSkinning)) {
+        out = world;
+        return true;
+    }
+    for (unsigned i = 0; i < node->mNumChildren; ++i) {
+        if (findReferenceMeshTransform(node->mChildren[i], scene, world,
+                                       requireSkinning, out)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+const aiNode* findNodeByName(const aiNode* node, std::string_view name)
+{
+    if (!node) return nullptr;
+    if (node->mName.C_Str() == name) return node;
+    for (unsigned i = 0; i < node->mNumChildren; ++i) {
+        if (const aiNode* found = findNodeByName(node->mChildren[i], name)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+aiMatrix4x4 nodeWorldTransform(const aiNode* node)
+{
+    aiMatrix4x4 world;
+    if (!node) return world;
+    std::vector<const aiNode*> path;
+    for (const aiNode* current = node; current; current = current->mParent) {
+        path.push_back(current);
+    }
+    for (auto it = path.rbegin(); it != path.rend(); ++it) {
+        world *= (*it)->mTransformation;
+    }
+    return world;
+}
+
+bool findAutoReferenceTransform(const aiScene* scene, aiMatrix4x4& out)
+{
+    if (!scene || !scene->mRootNode) return false;
+    const aiMatrix4x4 identity;
+    if (findReferenceMeshTransform(scene->mRootNode, scene, identity,
+                                   true, out)
+        || findReferenceMeshTransform(scene->mRootNode, scene, identity,
+                                      false, out)) {
+        return true;
+    }
+
+    // Animation-only FBX files need the same wrapper resolution even when the
+    // exporter omits render geometry.  Use the top-level owner of the first
+    // animated channel rather than a bone-local transform.
+    for (unsigned ai = 0; ai < scene->mNumAnimations; ++ai) {
+        const aiAnimation* animation = scene->mAnimations[ai];
+        if (!animation) continue;
+        for (unsigned ci = 0; ci < animation->mNumChannels; ++ci) {
+            const aiNodeAnim* channel = animation->mChannels[ci];
+            if (!channel) continue;
+            const aiNode* node = findNodeByName(
+                scene->mRootNode, channel->mNodeName.C_Str());
+            if (!node) continue;
+            while (node->mParent && node->mParent != scene->mRootNode) {
+                node = node->mParent;
+            }
+            out = nodeWorldTransform(node);
+            return true;
+        }
+    }
+
+    if (scene->mRootNode->mNumChildren > 0) {
+        out = nodeWorldTransform(scene->mRootNode->mChildren[0]);
+        return true;
+    }
+    out = scene->mRootNode->mTransformation;
+    return true;
+}
+
+ayt::math::Float4x4 toAyMatrix(const aiMatrix4x4& source);
 
 float normalizeSourceUvV(const SourceCoordinatePolicy& policy, float v)
 {
@@ -211,6 +324,91 @@ void captureSourceProperties(const aiMaterial* source, MaterialData& material)
 
 } // namespace
 
+namespace detail {
+
+namespace {
+
+bool snapSignedAxis(const ayt::math::FVector3& value, ImportAxis& out)
+{
+    const float lengthSquared = value.dot(value);
+    if (!std::isfinite(lengthSquared) || lengthSquared < 1.0e-12f) {
+        return false;
+    }
+    const ayt::math::FVector3 normalized = value / std::sqrt(lengthSquared);
+    const float components[3] = {normalized.x, normalized.y, normalized.z};
+    unsigned major = 0;
+    if (std::abs(components[1]) > std::abs(components[major])) major = 1;
+    if (std::abs(components[2]) > std::abs(components[major])) major = 2;
+    if (std::abs(components[major]) < 0.999f) return false;
+    const bool positive = components[major] >= 0.0f;
+    switch (major) {
+    case 0: out = positive ? ImportAxis::PositiveX : ImportAxis::NegativeX; break;
+    case 1: out = positive ? ImportAxis::PositiveY : ImportAxis::NegativeY; break;
+    default: out = positive ? ImportAxis::PositiveZ : ImportAxis::NegativeZ; break;
+    }
+    return true;
+}
+
+ayt::math::FVector3 policyAxisVector(ImportAxis axis)
+{
+    switch (axis) {
+    case ImportAxis::PositiveX: return { 1.0f, 0.0f, 0.0f};
+    case ImportAxis::NegativeX: return {-1.0f, 0.0f, 0.0f};
+    case ImportAxis::PositiveY: return { 0.0f, 1.0f, 0.0f};
+    case ImportAxis::NegativeY: return { 0.0f,-1.0f, 0.0f};
+    case ImportAxis::PositiveZ: return { 0.0f, 0.0f, 1.0f};
+    case ImportAxis::NegativeZ: return { 0.0f, 0.0f,-1.0f};
+    }
+    return {0.0f, 0.0f, 0.0f};
+}
+
+} // namespace
+
+SourceCoordinatePolicy resolveFbxAutoCoordinatePolicy(
+    const SourceCoordinatePolicy& requested,
+    const ayt::math::Float4x4& referenceNodeTransform,
+    bool* inferred)
+{
+    SourceCoordinatePolicy resolved = requested;
+    resolved.mode = SourceCoordinateMode::Manual;
+    resolved.up = ImportAxis::PositiveY;
+    resolved.forward = ImportAxis::PositiveZ;
+    resolved.handedness = ImportHandedness::Right;
+    resolved.tag.clear();
+    if (resolved.metersPerUnit == 0.0f) {
+        // Assimp's FBX file-scale stage has already converted Auto imports to
+        // metres.  Explicit user unit overrides remain authoritative.
+        resolved.metersPerUnit = 1.0f;
+    }
+
+    ImportAxis rightAxis = ImportAxis::PositiveX;
+    ImportAxis upAxis = ImportAxis::PositiveY;
+    ImportAxis forwardAxis = ImportAxis::PositiveZ;
+    const bool snapped =
+        snapSignedAxis({referenceNodeTransform(0, 0),
+                        referenceNodeTransform(0, 1),
+                        referenceNodeTransform(0, 2)}, rightAxis)
+        && snapSignedAxis({referenceNodeTransform(1, 0),
+                           referenceNodeTransform(1, 1),
+                           referenceNodeTransform(1, 2)}, upAxis)
+        && snapSignedAxis({referenceNodeTransform(2, 0),
+                           referenceNodeTransform(2, 1),
+                           referenceNodeTransform(2, 2)}, forwardAxis);
+    const ayt::math::FVector3 right = policyAxisVector(rightAxis);
+    const ayt::math::FVector3 up = policyAxisVector(upAxis);
+    const ayt::math::FVector3 forward = policyAxisVector(forwardAxis);
+    const bool rightHandedBasis =
+        right.dot(up.cross(forward)) > 0.999f;
+    if (snapped && rightHandedBasis) {
+        resolved.up = upAxis;
+        resolved.forward = forwardAxis;
+    }
+    if (inferred) *inferred = snapped && rightHandedBasis;
+    return resolved;
+}
+
+} // namespace detail
+
 FBXParser::FBXParser(const std::string& sourcePath)
     : _sourcePath(sourcePath) {}
 
@@ -224,12 +422,14 @@ bool FBXParser::parse(const std::string& sourcePath) {
     }
 
     Assimp::Importer importer;
-    // FBXImporter already interprets the file's declared Up axis unless this
-    // property is explicitly disabled. Convert source units to meters before
-    // post-processing so meshes, node translations, bone offsets and
-    // animation translations all share the same scale.
+    // Assimp 6 applies FBX axis metadata to the scene root, but AY persists
+    // mesh-local vertices and bind-space skeleton data without that node. Auto
+    // therefore keeps Assimp right-handed until AY can bake the reference FBX
+    // wrapper across mesh, skeleton, morph and animation payloads together.
     const bool manualCoordinates =
         _sourceCoordinates.mode == SourceCoordinateMode::Manual;
+    const bool autoFbxCoordinates = !manualCoordinates && isFbxPath(_sourcePath);
+    const bool explicitCoordinates = manualCoordinates || autoFbxCoordinates;
     importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_IGNORE_UP_DIRECTION,
                              manualCoordinates);
     importer.SetPropertyBool(AI_CONFIG_FBX_CONVERT_TO_M,
@@ -238,11 +438,9 @@ bool FBXParser::parse(const std::string& sourcePath) {
     unsigned int flags = aiProcess_Triangulate
                        | aiProcess_JoinIdenticalVertices
                        | aiProcess_LimitBoneWeights;
-    // Auto mode retains Assimp's normalized left-handed output. Manual mode
-    // loads the declared source basis unchanged; _applySourceCoordinatePolicy
-    // then performs one explicit, auditable conversion across every asset
-    // payload (not just mesh vertices).
-    if (!manualCoordinates) {
+    // Direct parser tests also use OBJ fixtures. Preserve their legacy Assimp
+    // conversion; the explicit Auto wrapper resolution is FBX-specific.
+    if (!explicitCoordinates) {
         flags |= aiProcess_MakeLeftHanded | aiProcess_FlipWindingOrder;
     }
     if (_loadOption == IConverter::LoadOption::MeshOnly) {
@@ -261,6 +459,25 @@ bool FBXParser::parse(const std::string& sourcePath) {
 
     if (!scene->mRootNode) {
         return false;
+    }
+
+    SourceCoordinatePolicy effectiveCoordinates = _sourceCoordinates;
+    if (autoFbxCoordinates) {
+        aiMatrix4x4 referenceTransform;
+        const bool hasReference = findAutoReferenceTransform(
+            scene, referenceTransform);
+        bool inferred = false;
+        effectiveCoordinates = detail::resolveFbxAutoCoordinatePolicy(
+            _sourceCoordinates,
+            hasReference ? toAyMatrix(referenceTransform)
+                         : ayt::math::Float4x4::identity(),
+            &inferred);
+        std::fprintf(stderr,
+                     "[FBXParser] Auto FBX basis %s up=%u forward=%u "
+                     "source=RH target=LH/Y-up/+Z-forward\n",
+                     inferred ? "inferred" : "fallback",
+                     static_cast<unsigned>(effectiveCoordinates.up),
+                     static_cast<unsigned>(effectiveCoordinates.forward));
     }
 
     std::fprintf(stderr,
@@ -283,7 +500,8 @@ bool FBXParser::parse(const std::string& sourcePath) {
         // nearest runtime bone tracks instead of being silently discarded.
         _prepareSkeletonMapping(scene);
         _parseAnimations(scene);
-        if (manualCoordinates && !_applySourceCoordinatePolicy()) {
+        if (explicitCoordinates
+            && !_applySourceCoordinatePolicy(effectiveCoordinates)) {
             return false;
         }
         return !_result->animations.empty();
@@ -323,7 +541,8 @@ bool FBXParser::parse(const std::string& sourcePath) {
         _parseAnimations(scene);
     }
 
-    if (manualCoordinates && !_applySourceCoordinatePolicy()) {
+    if (explicitCoordinates
+        && !_applySourceCoordinatePolicy(effectiveCoordinates)) {
         return false;
     }
 
@@ -399,18 +618,19 @@ ayt::math::Float4x4 toAyMatrix(const aiMatrix4x4& source)
 
 } // namespace
 
-bool FBXParser::_applySourceCoordinatePolicy()
+bool FBXParser::_applySourceCoordinatePolicy(
+    const SourceCoordinatePolicy& policy)
 {
     if (!_result) return false;
-    if (!std::isfinite(_sourceCoordinates.metersPerUnit)
-        || _sourceCoordinates.metersPerUnit < 0.0f) {
+    if (!std::isfinite(policy.metersPerUnit)
+        || policy.metersPerUnit < 0.0f) {
         std::fprintf(stderr, "[FBXParser] invalid metersPerUnit %.9g\n",
-                     _sourceCoordinates.metersPerUnit);
+                     policy.metersPerUnit);
         return false;
     }
 
-    const ayt::math::FVector3 up = axisVector(_sourceCoordinates.up);
-    const ayt::math::FVector3 forward = axisVector(_sourceCoordinates.forward);
+    const ayt::math::FVector3 up = axisVector(policy.up);
+    const ayt::math::FVector3 forward = axisVector(policy.forward);
     if (std::abs(up.dot(forward)) > 0.5f) {
         std::fprintf(stderr,
                      "[FBXParser] manual Up and Forward axes must be orthogonal\n");
@@ -418,12 +638,12 @@ bool FBXParser::_applySourceCoordinatePolicy()
     }
 
     ayt::math::FVector3 right = up.cross(forward);
-    if (_sourceCoordinates.handedness == ImportHandedness::Right) {
+    if (policy.handedness == ImportHandedness::Right) {
         right = -right;
     }
     const float determinant = basisDeterminant(right, up, forward);
-    const float unitScale = _sourceCoordinates.metersPerUnit > 0.0f
-        ? _sourceCoordinates.metersPerUnit : 1.0f;
+    const float unitScale = policy.metersPerUnit > 0.0f
+        ? policy.metersPerUnit : 1.0f;
     const ayt::math::Float4x4 basis = basisMatrix(right, up, forward, 1.0f);
     const ayt::math::Float4x4 sourceToEngine =
         basisMatrix(right, up, forward, unitScale);
@@ -540,7 +760,7 @@ bool FBXParser::_applySourceCoordinatePolicy()
 
     std::fprintf(stderr,
                  "[FBXParser] explicit source coordinates applied tag='%s' det=%.0f unit=%.9g\n",
-                 sourceCoordinatePolicyCacheTag(_sourceCoordinates).c_str(),
+                 sourceCoordinatePolicyCacheTag(policy).c_str(),
                  determinant, unitScale);
     return true;
 }
