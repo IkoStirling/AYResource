@@ -109,4 +109,9 @@ inline std::string makeTilemapVirtualPath(const std::string& baseName) {
     return "tilemaps/" + baseName + ".aytilemap";
 }
 
+// atlases/{baseName}.ayatlas — formal 2D atlas metadata asset.
+inline std::string makeAtlasVirtualPath(const std::string& baseName) {
+    return "atlases/" + baseName + ".ayatlas";
+}
+
 } // namespace ayt::resource

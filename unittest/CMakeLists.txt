@@ -42,6 +42,7 @@ add_executable(${MODULE_NAME}
     AYTest_TilemapLoader.cpp
     # CM-2 (2026-08-11): .aytilemap.json -> .aytilemap v2 Converter.
     AYTest_TilemapConverter.cpp
+    AYTest_Atlas.cpp
 )
 
 target_link_libraries(${MODULE_NAME} PRIVATE

@@ -3,6 +3,7 @@
 #include "AYResource/Converter/GLTFConverter.h"
 #include "AYResource/Converter/TextureConverter.h"
 #include "AYResource/Converter/TilemapConverter.h"
+#include "AYResource/Converter/AtlasConverter.h"
 #include "AYResource/Converter/AudioConverter.h"
 #include <cstdlib>
 #include <cstring>
@@ -126,6 +127,18 @@ std::unique_ptr<IConverter> IConverter::create(const std::string& sourcePath) {
         }
         if (suffix == ".aytilemap.json") {
             return std::make_unique<TilemapConverter>(sourcePath);
+        }
+    }
+    {
+        std::string suffix;
+        if (sourcePath.size() >= 13) {
+            suffix = sourcePath.substr(sourcePath.size() - 13);
+        }
+        for (auto& c : suffix) {
+            c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+        }
+        if (suffix == ".ayatlas.json") {
+            return std::make_unique<AtlasConverter>(sourcePath);
         }
     }
 

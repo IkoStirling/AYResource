@@ -12,6 +12,7 @@
 #include "AYResource/Loader/ScriptLoader.h"
 #include "AYResource/Loader/PhysicsLoader.h"
 #include "AYResource/Loader/TilemapLoader.h"
+#include "AYResource/Loader/AtlasLoader.h"
 #include "AYResource/ResourceRegistry.h"
 
 #include <atomic>
@@ -59,7 +60,8 @@ bool initializeLoaders()
                      && registerLoaderType<FontLoader>("Font", ".ayfont")
                      && registerLoaderType<ScriptLoader>("Script", ".ayscript")
                      && registerLoaderType<PhysicsLoader>("Physics", ".ayphys")
-                     && registerLoaderType<TilemapLoader>("Tilemap", ".aytilemap");
+                     && registerLoaderType<TilemapLoader>("Tilemap", ".aytilemap")
+                     && registerLoaderType<AtlasLoader>("Atlas", ".ayatlas");
 #if defined(AY_AUDIO_LOOSE_FORMATS)
         // Dev/Editor: same Audio loader also owns loose authoring formats.
         ResourceRegistry::registerExtension(".wav", "Audio");

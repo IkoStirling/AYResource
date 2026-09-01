@@ -1,5 +1,11 @@
 # AYResource — Design (v2.0)
 
+> **2026-09-01 — `.ayatlas` v1**: `.ayatlas.json` is the author format and
+> `AtlasConverter` emits `.ayatlas` v1 (`AYAT`). `IAtlas` exposes the referenced
+> texture path, atlas/tile dimensions, dense-grid counts, gutter, filter, and
+> per-axis wrap. The asset owns no GPU handle; AYRenderer owns L3 texture
+> residency.
+
 **Status:** Living document, aligned with [`ENGINE-FOUNDATION-PLAN.md`](../../../../ENGINE-FOUNDATION-PLAN.md) and [`docs/runtime-conventions.md`](docs/runtime-conventions.md)
 **Last revised:** 2026-07-27
 **Owner:** Content engineer
