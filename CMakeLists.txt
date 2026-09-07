@@ -10,10 +10,38 @@ file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
     src/*.cpp
 )
 
-find_package(assimp REQUIRED)
 find_package(Stb REQUIRED)
-find_package(unofficial-libsquish CONFIG REQUIRED)
-find_package(basisu CONFIG REQUIRED)
+
+set(AYRESOURCE_IMPORT_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/AYImportJob.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/IAYConverter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/AnimationConverter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/AtlasConverter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/AudioConverter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/FBXConverter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/FBXParser.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/FontConverter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/GLTFConverter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/MaterialConverter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/MeshConverter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/ShaderConverter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/SkeletonConverter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/TextureCompressorSquish.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/TextureConverter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/TilemapConverter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/VideoConverter.cpp
+)
+set(AYRESOURCE_COOK_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/AYCookShip.cpp
+)
+
+# The runtime build keeps the converter data contract but excludes all
+# authoring implementations and heavy importer SDKs.
+list(REMOVE_ITEM SRC_FILES
+    ${AYRESOURCE_IMPORT_SOURCES}
+    ${AYRESOURCE_COOK_SOURCES}
+)
+list(APPEND SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/IAYConverter.cpp)
 
 # minimp3 (header-only) for AudioDecoder MP3 path (AYAudio design §2.3).
 find_path(MINIMP3_INCLUDE_DIRS "minimp3/minimp3.h")
@@ -100,12 +128,48 @@ target_link_libraries(${MODULE_NAME}
         AYEventSystem
     PRIVATE
         AYLog
-        assimp::assimp
-        unofficial::libsquish::squish
-        basisu::basisu_encoder
 )
 
-enable_testing()
-add_subdirectory(unittest)
+if(AY_BUILD_RESOURCE_AUTHORING)
+    find_package(assimp REQUIRED)
+    find_package(unofficial-libsquish CONFIG REQUIRED)
+    find_package(basisu CONFIG REQUIRED)
 
-message(STATUS "AYResource v2.0.0 (IAnimation V4 + IFBX/IMesh + .aytilemap loader + per-tile collision flags) — see ${CMAKE_CURRENT_SOURCE_DIR}/design.md")
+    add_library(AYResourceImport STATIC ${AYRESOURCE_IMPORT_SOURCES})
+    add_library(AYResource::Import ALIAS AYResourceImport)
+    target_compile_definitions(AYResourceImport PRIVATE
+        AY_RESOURCE_BUILD_CONVERTER_FACTORY=1)
+    target_include_directories(AYResourceImport PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/interface
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/assetsImpl
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/Converter
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/Loader
+        ${Stb_INCLUDE_DIR}
+    )
+    target_link_libraries(AYResourceImport
+        PUBLIC AYResource
+        PRIVATE
+            AYLog
+            assimp::assimp
+            unofficial::libsquish::squish
+            basisu::basisu_encoder
+    )
+
+    add_library(AYResourceCook STATIC ${AYRESOURCE_COOK_SOURCES})
+    add_library(AYResource::Cook ALIAS AYResourceCook)
+    target_include_directories(AYResourceCook PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/interface
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_link_libraries(AYResourceCook PUBLIC AYResource)
+endif()
+
+if(BUILD_TESTING AND AY_BUILD_RESOURCE_AUTHORING)
+    enable_testing()
+    add_subdirectory(unittest)
+endif()
+
+message(STATUS "AYResource v2.0.0 (runtime + optional import/cook targets) — see ${CMAKE_CURRENT_SOURCE_DIR}/design.md")

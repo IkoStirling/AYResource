@@ -6,8 +6,8 @@
 #include <AYStorage/Guid.h>
 #include <cstring>
 
-// stb_image for PNG/JPG loading
-#define STB_IMAGE_IMPLEMENTATION
+// stb_image declarations; implementation lives in Loader/StbImage.cpp so
+// runtime loose-texture loading does not depend on this authoring target.
 #include <stb_image.h>
 
 namespace ayt::resource

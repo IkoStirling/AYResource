@@ -1,18 +1,23 @@
 #include "AYResource/IConverter.h"
+#if defined(AY_RESOURCE_BUILD_CONVERTER_FACTORY)
 #include "AYResource/Converter/FBXConverter.h"
 #include "AYResource/Converter/GLTFConverter.h"
 #include "AYResource/Converter/TextureConverter.h"
 #include "AYResource/Converter/TilemapConverter.h"
 #include "AYResource/Converter/AtlasConverter.h"
 #include "AYResource/Converter/AudioConverter.h"
+#include <cctype>
+#else
 #include <cstdlib>
 #include <cstring>
 #include <iomanip>
 #include <sstream>
+#endif
 
 namespace ayt::resource
 {
 
+#if !defined(AY_RESOURCE_BUILD_CONVERTER_FACTORY)
 const char kFbxImporterContractTag[] =
         "fbx-auto-wrapper-basis-animation-mesh-bind-space-contract-v22";
 
@@ -112,6 +117,7 @@ std::string sourceCoordinatePolicyCacheTag(const SourceCoordinatePolicy& policy)
     return oss.str();
 }
 
+#else
 std::unique_ptr<IConverter> IConverter::create(const std::string& sourcePath) {
     // CM-2: .aytilemap.json MUST be dispatched before the generic
     // extension check — its last extension is "json" and the check below
@@ -162,7 +168,9 @@ std::unique_ptr<IConverter> IConverter::create(const std::string& sourcePath) {
 
     return nullptr;
 }
+#endif
 
+#if !defined(AY_RESOURCE_BUILD_CONVERTER_FACTORY)
 std::string ConversionResult::toJson() const {
     std::ostringstream oss;
     oss << "{\n";
@@ -252,5 +260,6 @@ ConversionResult ConversionResult::fromJson(const std::string& json) {
 
     return result;
 }
+#endif
 
 } // namespace ayt::resource
