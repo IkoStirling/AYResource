@@ -14,6 +14,8 @@
 
 ## 0. Reading guide
 
+角色资产的尺寸、绑定、版本、动画兼容与多纹理验收统一见 [AYHumanoid 标准骨架与参考模型规范](../../AYDocs/AYHUMANOID-STANDARD.md)；FBX 操作见 [外部角色与动画导入标准](docs/external-character-animation-import-standard.md)。标准参考资产及验收工具待实施，设计目标不表示当前 importer 已实现相应检查。
+
 | Audience | Read |
 |----------|------|
 | All engine engineers | §1, §2 (boundaries), §6 (public API) |

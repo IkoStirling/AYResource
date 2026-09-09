@@ -370,4 +370,38 @@ TEST_CASE(TilemapConverterWithoutAnimationsLoadsWithEmptyTable)
     std::remove("tilemaps/ground.aytilemap");
 }
 
+TEST_CASE(TilemapConverterRejectsUnrepresentableEditorVisuals)
+{
+    const char* layered =
+        "{\"name\":\"layered\",\"cols\":1,\"rows\":1,"
+        "\"tileWidth\":16,\"tileHeight\":16,\"tiles\":[1],"
+        "\"layers\":[{\"tiles\":[1]},{\"tiles\":[2]}]}";
+    CHECK(writeTextFile("cm_editor_layers.aytilemap.json", layered));
+    TilemapConverter layers("cm_editor_layers.aytilemap.json");
+    CHECK_INT_EQ(static_cast<int>(layers.convert().resources.size()), 0);
+
+    const char* atlas =
+        "{\"name\":\"atlas\",\"cols\":1,\"rows\":1,"
+        "\"tileWidth\":16,\"tileHeight\":16,\"tiles\":[1],"
+        "\"layers\":[{\"tiles\":[1]}],\"tileAssets\":{"
+        "\"atlases\":[{\"atlasId\":1}],\"entries\":[]}}";
+    CHECK(writeTextFile("cm_editor_atlas.aytilemap.json", atlas));
+    TilemapConverter atlasConverter("cm_editor_atlas.aytilemap.json");
+    CHECK_INT_EQ(static_cast<int>(atlasConverter.convert().resources.size()), 0);
+
+    const char* tint =
+        "{\"name\":\"tint\",\"cols\":1,\"rows\":1,"
+        "\"tileWidth\":16,\"tileHeight\":16,\"tiles\":[1],"
+        "\"layers\":[{\"tiles\":[1]}],\"tileAssets\":{"
+        "\"atlases\":[],\"entries\":[{\"tileId\":1,"
+        "\"tintRgba\":4278190335}]}}";
+    CHECK(writeTextFile("cm_editor_tint.aytilemap.json", tint));
+    TilemapConverter tintConverter("cm_editor_tint.aytilemap.json");
+    CHECK_INT_EQ(static_cast<int>(tintConverter.convert().resources.size()), 0);
+
+    std::remove("cm_editor_layers.aytilemap.json");
+    std::remove("cm_editor_atlas.aytilemap.json");
+    std::remove("cm_editor_tint.aytilemap.json");
+}
+
 TEST_SUITE_END

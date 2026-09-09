@@ -2,6 +2,8 @@
 
 本文是 DCC、外包和资产商向 AYEngine 交付角色资产的最低契约。模型与动画文件承担不同职责；不要为了加入动画而重新导出并替换一个已经验证通过的模型文件。
 
+标准参考骨架、尺寸、模型、纹理测试、版本及动画共享条件统一见 [AYHumanoid 标准骨架与参考模型规范](../../../AYDocs/AYHUMANOID-STANDARD.md)。本文负责外部 FBX 交付与导入操作；通用资产不强制使用参考模型的身高或完整 57 根骨。新增参考资产验收仍待实施。
+
 ## 1. 交付物
 
 每个角色至少包含：
@@ -30,7 +32,7 @@ import_tool.exe --in D:\Assets\Hero_Anim_Idle.fbx --out D:\Cache\assets --animat
 
 - 左手坐标系。
 - `+Y` 向上，`+Z` 向前。
-- CW 为正面；渲染使用 `CULL_CCW` 剔除背面。
+- CCW 为正面；以 `AYFoundation/AYMath/include/AYMath/CoordinateConvention.h` 为准，渲染后端负责将该契约映射到剔除状态。
 - UV 原点为左上。
 - 长度单位为米。
 
@@ -63,7 +65,7 @@ import_tool.exe --in D:\Assets\Hero_Anim_Idle.fbx --out D:\Cache\assets --animat
 ## 4. 动画 FBX
 
 - 动画 channel 的骨骼名称必须与模型目标骨架逐字节一致，包括大小写、命名空间和非 ASCII 字符。
-- 不得在动画导出时重命名骨骼、改变父子拓扑或应用不同的轴/单位设置。
+- 不得在动画导出时重命名骨骼或改变父子拓扑；源轴/单位元数据必须准确，归一化后的绑定空间必须与模型一致。
 - 动画与模型可以声明不同的 FBX 导出轴，但必须各自携带正确元数据，并在 `Auto` 模式下归一到相同引擎空间；不要用模型的手工轴 preset 覆盖动画。运行时不会保存动画文件的 Object/Armature 包装变换；根 deform bone 会先相对动画源的 skinned-mesh 节点求值，子 deform bone相对最近的 deform 父骨求值。因此 Blender/FBX 的轴、单位换算和 Armature 包装不会被重复旋转或缩放，真正的骨骼局部动画仍会保留。
 - 约束、IK、驱动器和控制器必须烘焙为 deform bones 的局部 TRS key；运行时不执行 DCC 约束图。
 - 推荐一个文件一个逻辑 clip；多 take 文件按导出顺序生成多个 `.ayanm`。
@@ -83,7 +85,7 @@ import_tool.exe --in D:\Assets\Hero_Anim_Idle.fbx --out D:\Cache\assets --animat
 5. 动画 track 名称全部能在目标 skeleton 中解析；未知 track 和未命中骨骼必须报告。
 6. cook 后每个 submesh 的局部骨骼调色板不超过目标 renderer capability，且所有局部索引都能映射到完整 skeleton。
 7. 一个三角形的有效骨骼集合不得超过目标 renderer capability；否则应报告不可分割的源资产错误。
-8. 每个 submesh 的材质槽有效，索引范围不越界，CW 正面契约通过。
+8. 每个 submesh 的材质槽有效，索引范围不越界，CCW 正面契约通过。
 9. 运行时角色 Transform 为单位缩放；模型静止姿态对每根骨骼满足 `bindWorld * inverseBind == identity`，且动画根轨道不含 DCC 单位包装造成的额外倍率。
 
 不满足任一硬性条件时应中止发布导入；编辑器预览可 fail-soft 到 bind pose，但必须输出明确诊断。

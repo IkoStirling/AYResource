@@ -2,6 +2,10 @@
 
 AYResource 是资产注册、导入、加载、缓存、热重载与 Cook/Ship 管线模块，维护资源 GUID、虚拟路径和运行时资产接口。
 
+## 角色资产规范
+
+标准资产条件见 [AYHumanoid 骨架与模型规范](../../AYDocs/AYHUMANOID-STANDARD.md)，FBX 操作见 [外部角色与动画导入标准](docs/external-character-animation-import-standard.md)。参考资产尚待按 [low poly 实施计划](../../AYDocs/AYHUMANOID-IMPLEMENTATION-PLAN.md) 制作。
+
 ## 公开接口
 
 ```cpp

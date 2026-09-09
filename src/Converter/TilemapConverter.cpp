@@ -7,6 +7,7 @@
 #include <AYLog.h>
 #include <cctype>
 #include <cstring>
+#include <limits>
 
 namespace ayt::resource
 {
@@ -125,7 +126,14 @@ ConversionResult TilemapConverter::convert() {
     serializer->field("defaultTileId", defaultTileId);
     serializer->field("mode", mode);
 
-    if (cols == 0 || rows == 0 || tileWidth == 0 || tileHeight == 0) {
+    constexpr uint64_t kMaxCookedCells = 16ull * 1024ull * 1024ull;
+    const uint64_t cellCount = static_cast<uint64_t>(cols) * rows;
+    if (cols == 0 || rows == 0 || tileWidth == 0 || tileHeight == 0
+        || tileWidth > (std::numeric_limits<UInt16>::max)()
+        || tileHeight > (std::numeric_limits<UInt16>::max)()
+        || cellCount > kMaxCookedCells) {
+        ayt::log::warn("[TilemapConverter] '%s' geometry exceeds the cook budget",
+                       sourcePath.c_str());
         return result;  // invalid geometry — never emit garbage
     }
 
@@ -136,6 +144,70 @@ ConversionResult TilemapConverter::convert() {
         } else if (mode != "narrow16") {
             ayt::log::warn("[TilemapConverter] '%s' unknown mode '%s'; "
                            "defaulting to narrow16", sourcePath.c_str(), mode.c_str());
+        }
+    }
+
+    if (packMode == TilemapPackMode::Narrow16
+        && defaultTileId > (std::numeric_limits<UInt16>::max)()) {
+        ayt::log::warn("[TilemapConverter] '%s' defaultTileId exceeds narrow16",
+                       sourcePath.c_str());
+        return result;
+    }
+
+    // The runtime v2 asset is intentionally single-layer and also has no
+    // atlas sub-rectangle or per-tile tint payload. Refuse authoring data that
+    // cannot be represented instead of silently cooking only the legacy
+    // top-level `tiles` compatibility field.
+    if (serializer->isFieldPending("layers")) {
+        size_t layerCount = 0u;
+        serializer->beginArray("layers");
+        while (serializer->hasMoreArrayElements()) {
+            serializer->beginObject(nullptr);
+            serializer->endObject();
+            ++layerCount;
+        }
+        serializer->endArray();
+        if (layerCount != 1u) {
+            ayt::log::warn("[TilemapConverter] '%s' has %zu layers; runtime v2 supports exactly one",
+                           sourcePath.c_str(), layerCount);
+            return result;
+        }
+    }
+    if (serializer->isFieldPending("tileAssets")) {
+        bool unsupportedVisual = false;
+        serializer->beginObject("tileAssets");
+        if (serializer->isFieldPending("atlases")) {
+            serializer->beginArray("atlases");
+            unsupportedVisual = serializer->hasMoreArrayElements();
+            while (serializer->hasMoreArrayElements()) {
+                serializer->beginObject(nullptr);
+                serializer->endObject();
+            }
+            serializer->endArray();
+        }
+        if (serializer->isFieldPending("entries")) {
+            serializer->beginArray("entries");
+            while (serializer->hasMoreArrayElements()) {
+                UInt32 atlasId = 0u;
+                UInt32 tintRgba = 0xffffffffu;
+                serializer->beginObject(nullptr);
+                if (serializer->isFieldPending("atlasId")) {
+                    serializer->field("atlasId", atlasId);
+                }
+                if (serializer->isFieldPending("tintRgba")) {
+                    serializer->field("tintRgba", tintRgba);
+                }
+                serializer->endObject();
+                unsupportedVisual = unsupportedVisual || atlasId != 0u
+                    || tintRgba != 0xffffffffu;
+            }
+            serializer->endArray();
+        }
+        serializer->endObject();
+        if (unsupportedVisual) {
+            ayt::log::warn("[TilemapConverter] '%s' uses atlas rectangles or tile tint unsupported by runtime v2",
+                           sourcePath.c_str());
+            return result;
         }
     }
 
