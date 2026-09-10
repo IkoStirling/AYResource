@@ -1,13 +1,22 @@
 #include "AYResource/Converter/TilemapConverter.h"
+#include "AYResource/Converter/TextureConverter.h"
 #include "AYResource/VirtualAssetPath.h"
 #include "AYResource/assetsImpl/TilemapAsset.h"
 #include "AYIO/File.h"
 #include <AYSerializer.h>
 #include <AYStorage/Guid.h>
 #include <AYLog.h>
+#include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <limits>
+#include <optional>
+#include <set>
+#include <sstream>
 
 namespace ayt::resource
 {
@@ -94,6 +103,72 @@ std::string tilemapStem(const std::string& fileName) {
     return stem;
 }
 
+std::optional<std::filesystem::path> resolveAtlasSourcePath(
+    const std::string& authoredPath, const std::string& tilemapSourcePath,
+    const std::string& assetRoot)
+{
+    const std::filesystem::path authored =
+        std::filesystem::u8path(authoredPath);
+    std::vector<std::filesystem::path> candidates;
+    if (authored.is_absolute()) {
+        candidates.push_back(authored);
+    } else {
+        if (!assetRoot.empty()) {
+            candidates.push_back(std::filesystem::u8path(assetRoot) / authored);
+            if (authored.begin() != authored.end()
+                && authored.begin()->string() == "Assets") {
+                candidates.push_back(
+                    std::filesystem::u8path(assetRoot).parent_path()
+                    / authored);
+            }
+        }
+        candidates.push_back(
+            std::filesystem::u8path(tilemapSourcePath).parent_path()
+            / authored);
+    }
+    for (const std::filesystem::path& candidate : candidates) {
+        std::error_code error;
+        if (!std::filesystem::is_regular_file(candidate, error) || error) {
+            continue;
+        }
+        const std::filesystem::path absolute =
+            std::filesystem::absolute(candidate, error);
+        return (error ? candidate : absolute).lexically_normal();
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> atlasContentSuffix(
+    const std::filesystem::path& path)
+{
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return std::nullopt;
+    uint64_t hash = 14695981039346656037ull;
+    std::array<char, 64u * 1024u> buffer{};
+    while (input) {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const std::streamsize count = input.gcount();
+        for (std::streamsize index = 0; index < count; ++index) {
+            hash ^= static_cast<unsigned char>(buffer[static_cast<size_t>(index)]);
+            hash *= 1099511628211ull;
+        }
+    }
+    if (input.bad()) return std::nullopt;
+    std::ostringstream text;
+    text << std::hex << std::setfill('0') << std::setw(16) << hash;
+    return text.str();
+}
+
+std::string safeTextureStem(std::string value)
+{
+    for (char& ch : value) {
+        const unsigned char byte = static_cast<unsigned char>(ch);
+        if (!std::isalnum(byte) && ch != '_' && ch != '-') ch = '_';
+    }
+    while (!value.empty() && value.back() == '_') value.pop_back();
+    return value.empty() ? "tile_atlas" : value;
+}
+
 } // namespace
 
 ConversionResult TilemapConverter::convert() {
@@ -120,6 +195,10 @@ ConversionResult TilemapConverter::convert() {
     serializer->field("tileHeight", tileHeight);
     serializer->field("defaultTileId", defaultTileId);
     serializer->field("mode", mode);
+
+    const std::string baseName = name.empty()
+        ? tilemapStem(getFileName(sourcePath)) : name;
+    const std::string virtualPath = makeTilemapVirtualPath(baseName);
 
     constexpr uint64_t kMaxCookedCells = 16ull * 1024ull * 1024ull;
     const uint64_t cellCount = static_cast<uint64_t>(cols) * rows;
@@ -184,6 +263,9 @@ ConversionResult TilemapConverter::convert() {
                  static_cast<UInt16>(tileHeight), packMode, defaultTileId,
                  flags.empty() ? nullptr : flags.data(),
                  static_cast<UInt32>(flags.size()));
+    std::vector<ConversionResult::ConvertedResource> atlasResources;
+    std::vector<ConversionResult::Dependency> atlasDependencies;
+    std::set<std::string> cookedAtlasPaths;
 
     // Per-cell tiles (row-major flat list; absent/short = defaultTileId).
     if (serializer->isFieldPending("tiles")) {
@@ -263,11 +345,54 @@ ConversionResult TilemapConverter::convert() {
                 serializer->field("imageWidth", imageWidth);
                 serializer->field("imageHeight", imageHeight);
                 serializer->endObject();
-                if (!asset.addAtlasSource(atlasId, atlasSourcePath,
+                const auto resolved = resolveAtlasSourcePath(
+                    atlasSourcePath, sourcePath, outputDir);
+                if (!resolved) {
+                    ayt::log::warn(
+                        "[TilemapConverter] '%s' atlas %u source is unavailable: %s",
+                        sourcePath.c_str(), atlasId, atlasSourcePath.c_str());
+                    return {};
+                }
+                const auto contentSuffix = atlasContentSuffix(*resolved);
+                if (!contentSuffix) return {};
+                TextureConverter texture;
+                texture.setOutputDir(outputDir);
+                texture.setOutputFormat(TextureFormat::RGBA8);
+                texture.setGenerateMipmaps(false);
+                texture.setPassthrough(false);
+                const std::string textureName = safeTextureStem(
+                    resolved->stem().string()) + "_" + *contentSuffix;
+                const ConversionResult textureResult = texture.convertFromPath(
+                    resolved->string(), textureName, {}, "_tilemap");
+                const auto cookedTexture = std::find_if(
+                    textureResult.resources.begin(), textureResult.resources.end(),
+                    [](const ConversionResult::ConvertedResource& resource) {
+                        return resource.type == "Texture";
+                    });
+                if (cookedTexture == textureResult.resources.end()) {
+                    ayt::log::warn(
+                        "[TilemapConverter] '%s' failed to cook atlas %u: %s",
+                        sourcePath.c_str(), atlasId, resolved->string().c_str());
+                    return {};
+                }
+                if (!asset.addAtlasSource(atlasId, cookedTexture->path,
                                           imageWidth, imageHeight)) {
                     ayt::log::warn("[TilemapConverter] '%s' has an invalid atlas %u",
                                    sourcePath.c_str(), atlasId);
-                    return result;
+                    return {};
+                }
+                if (cookedAtlasPaths.insert(cookedTexture->path).second) {
+                    atlasResources.push_back(*cookedTexture);
+                }
+                if (std::none_of(
+                        atlasDependencies.begin(), atlasDependencies.end(),
+                        [&virtualPath, &cookedTexture](
+                            const ConversionResult::Dependency& dependency) {
+                            return dependency.from == virtualPath
+                                && dependency.to == cookedTexture->path;
+                        })) {
+                    atlasDependencies.push_back(
+                        {virtualPath, cookedTexture->path});
                 }
             }
             serializer->endArray();
@@ -392,10 +517,6 @@ ConversionResult TilemapConverter::convert() {
         binaryData.data(), binaryData.size());
     asset.setGuid(lastGuid);
 
-    const std::string baseName = name.empty()
-        ? tilemapStem(getFileName(sourcePath)) : name;
-    const std::string virtualPath = makeTilemapVirtualPath(baseName);
-
     if (!outputDir.empty()) {
         const std::string fullPath = outputDir + "/" + virtualPath;
         if (!ayt::io::File::atomicWrite(fullPath, binaryData.data(), binaryData.size())) {
@@ -410,6 +531,8 @@ ConversionResult TilemapConverter::convert() {
     res.path = virtualPath;
     res.type = "Tilemap";
     res.size = static_cast<uint64_t>(binaryData.size());
+    result.resources = std::move(atlasResources);
+    result.dependencies = std::move(atlasDependencies);
     result.resources.push_back(res);
 
     return result;

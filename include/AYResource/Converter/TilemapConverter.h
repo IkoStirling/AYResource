@@ -1,5 +1,5 @@
 #pragma once
-// AYResource/Converter/AYResource/Converter/AYResource/Converter/TilemapConverter.h — CM-2 (2026-08-11): JSON -> .aytilemap v2 binary.
+// TilemapConverter.h — authoring JSON -> portable .aytilemap v3 binary.
 // Mirrors MaterialConverter structure (sourcePath/outputDir + setters +
 // convert() -> ConversionResult). Output path MUST go through
 // makeTilemapVirtualPath so cook tools, the loader, and the demo agree
@@ -12,9 +12,9 @@ namespace ayt::resource
 {
 
 // ===== TilemapConverter — 2D tilemap 转换器 =====
-// Converts a .aytilemap.json author file into a .aytilemap v2 binary
-// (magic 'AYTM', version 3 — the format TilemapLoader::loadFromBinary
-// decodes; never invent a new magic/version).
+// Converts a .aytilemap.json author file into a .aytilemap v3 binary.
+// Atlas source images are cooked to lossless, single-mip RGBA8 .aytex assets;
+// the runtime file stores only their virtual resource paths.
 //
 // JSON schema:
 //   {

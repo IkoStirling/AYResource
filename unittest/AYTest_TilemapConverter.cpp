@@ -1,6 +1,6 @@
 // AYTest_TilemapConverter.cpp — CM-2 (2026-08-11) acceptance cases.
 //
-// Covers the .aytilemap.json -> .aytilemap v2 Converter:
+// Covers the .aytilemap.json -> .aytilemap v3 Converter:
 //   1. round-trip: author JSON -> convert() -> on-disk binary ->
 //      TilemapAsset::loadFromBinary — every field asserted.
 //   2. Guid determinism: same input twice -> same guid; one changed
@@ -14,12 +14,15 @@
 //      makeTilemapVirtualPath spelling is exact.
 
 #include "AYResource.h"
+#include "AYResource/assetsImpl/Texture.h"
 #include "AYResource/assetsImpl/TilemapAsset.h"
 #include "AYResource/Converter/TilemapConverter.h"
 #include "AYResource/VirtualAssetPath.h"
 #include "AYTest.h"
 
+#include <algorithm>
 #include <fstream>
+#include <array>
 #include <string>
 
 using namespace ayt::resource;
@@ -72,6 +75,28 @@ const char* kAuthorJson =
     "}\n";
 
 const char* kOutputDir = ".";
+
+constexpr std::array<unsigned char, 136> kRedPng{
+    0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,
+    0x49,0x48,0x44,0x52,0x00,0x00,0x00,0x04,0x00,0x00,0x00,0x04,
+    0x08,0x06,0x00,0x00,0x00,0xa9,0xf1,0x9e,0x7e,0x00,0x00,0x00,
+    0x4f,0x49,0x44,0x41,0x54,0x78,0x01,0x01,0x44,0x00,0xbb,0xff,
+    0x00,0xff,0x00,0x00,0xff,0xff,0x00,0x00,0xff,0xff,0x00,0x00,
+    0xff,0xff,0x00,0x00,0xff,0x00,0xff,0x00,0x00,0xff,0xff,0x00,
+    0x00,0xff,0xff,0x00,0x00,0xff,0xff,0x00,0x00,0xff,0x00,0xff,
+    0x00,0x00,0xff,0xff,0x00,0x00,0xff,0xff,0x00,0x00,0xff,0xff,
+    0x00,0x00,0xff,0x00,0xff,0x00,0x00,0xff,0xff,0x00,0x00,0xff,
+    0xff,0x00,0x00,0xff,0xff,0x00,0x00,0xff,0x3c,0x40,0x1f,0xe1,
+    0x52,0xed,0xff,0xa2,0x00,0x00,0x00,0x00,0x49,0x45,0x4e,0x44,
+    0xae,0x42,0x60,0x82};
+
+bool writeRedPng(const std::string& path)
+{
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    file.write(reinterpret_cast<const char*>(kRedPng.data()),
+               static_cast<std::streamsize>(kRedPng.size()));
+    return static_cast<bool>(file);
+}
 
 } // namespace
 
@@ -372,6 +397,7 @@ TEST_CASE(TilemapConverterWithoutAnimationsLoadsWithEmptyTable)
 
 TEST_CASE(TilemapConverterV3AuthoringDataRoundTrip)
 {
+    CHECK(writeRedPng("cm_editor_sheet.png"));
     const char* json =
         "{\"name\":\"rich\",\"cols\":2,\"rows\":1,"
         "\"tileWidth\":16,\"tileHeight\":16,\"defaultTileId\":0,"
@@ -380,17 +406,27 @@ TEST_CASE(TilemapConverterV3AuthoringDataRoundTrip)
         "{\"visible\":false,\"tiles\":[3,2]}],"
         "\"shadows\":{\"colorRgba\":287454020,\"masks\":[1,10]},"
         "\"tileAssets\":{\"atlases\":[{\"atlasId\":7,"
-        "\"sourcePath\":\"D:/tiles/sheet.png\","
-        "\"imageWidth\":64,\"imageHeight\":32}],"
+        "\"sourcePath\":\"cm_editor_sheet.png\","
+        "\"imageWidth\":4,\"imageHeight\":4}],"
         "\"entries\":[{\"tileId\":2,\"atlasId\":7,"
-        "\"sourceRect\":[16,0,16,16],\"tintRgba\":4278255615},"
+        "\"sourceRect\":[0,0,2,2],\"tintRgba\":4278255615},"
         "{\"tileId\":3,\"atlasId\":7,"
-        "\"sourceRect\":[32,16,16,16]}]}}";
+        "\"sourceRect\":[2,2,2,2]}]}}";
     CHECK(writeTextFile("cm_editor_v3.aytilemap.json", json));
     TilemapConverter converter("cm_editor_v3.aytilemap.json");
     converter.setOutputDir(kOutputDir);
     const ConversionResult result = converter.convert();
-    CHECK_INT_EQ(static_cast<int>(result.resources.size()), 1);
+    CHECK_INT_EQ(static_cast<int>(result.resources.size()), 2);
+    CHECK_INT_EQ(static_cast<int>(result.dependencies.size()), 1);
+    const auto textureResource = std::find_if(
+        result.resources.begin(), result.resources.end(),
+        [](const ConversionResult::ConvertedResource& resource) {
+            return resource.type == "Texture";
+        });
+    CHECK_TRUE(textureResource != result.resources.end());
+    CHECK_TRUE(result.dependencies[0].from == "tilemaps/rich.aytilemap");
+    CHECK_TRUE(textureResource != result.resources.end()
+        && result.dependencies[0].to == textureResource->path);
 
     std::vector<UInt8> binary;
     readBinaryFile("tilemaps/rich.aytilemap", binary);
@@ -402,15 +438,28 @@ TEST_CASE(TilemapConverterV3AuthoringDataRoundTrip)
     CHECK_INT_EQ(loaded.getLayerTileIds16(0u)[0], 2u);
     CHECK_INT_EQ(loaded.getLayerTileIds16(1u)[0], 3u);
     CHECK_INT_EQ(loaded.getAtlasCount(), 1u);
-    CHECK_TRUE(std::string(loaded.getAtlasEntries()[0].sourcePath)
-               == "D:/tiles/sheet.png");
+    CHECK_TRUE(textureResource != result.resources.end()
+        && std::string(loaded.getAtlasEntries()[0].sourcePath)
+            == textureResource->path);
     CHECK_INT_EQ(loaded.getVisualCount(), 2u);
-    CHECK_INT_EQ(loaded.getVisualEntries()[0].sourceX, 16u);
+    CHECK_INT_EQ(loaded.getVisualEntries()[0].sourceX, 0u);
     CHECK_INT_EQ(loaded.getVisualEntries()[0].tintRgba, 4278255615u);
     CHECK_INT_EQ(loaded.getShadowColorRgba(), 287454020u);
     CHECK_INT_EQ(loaded.getShadowMaskCount(), 2u);
     CHECK_INT_EQ(loaded.getShadowMasks()[1], 10u);
 
+    if (textureResource != result.resources.end()) {
+        std::vector<UInt8> textureBinary;
+        readBinaryFile(textureResource->path, textureBinary);
+        Texture texture;
+        CHECK_TRUE(texture.loadFromBinary(
+            textureBinary.data(), textureBinary.size()));
+        CHECK_TRUE(texture.getFormat() == TextureFormat::RGBA8);
+        CHECK_INT_EQ(texture.getMipmapCount(), 1u);
+        std::remove(textureResource->path.c_str());
+    }
+
+    std::remove("cm_editor_sheet.png");
     std::remove("cm_editor_v3.aytilemap.json");
     std::remove("tilemaps/rich.aytilemap");
 }
