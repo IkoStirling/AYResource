@@ -1,19 +1,36 @@
 #include "AYResource/AssetPath.h"
 
 #include <AYIO/Path.h>
+#include <AYIO/File.h>
+#include <algorithm>
 #include <cctype>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace ayt::resource
 {
 
 namespace {
 
-std::string& assetRootStorage()
+std::vector<std::string>& assetRootsStorage()
 {
-    static std::string root;
-    return root;
+    static std::vector<std::string> roots;
+    return roots;
+}
+
+std::string resolveFromRoots(const std::string& refPath)
+{
+    const auto& roots = assetRootsStorage();
+    if (roots.empty()) return {};
+    std::string first;
+    for (const std::string& root : roots) {
+        const std::string candidate = ayt::io::path::normalize(
+            ayt::io::path::join(root, refPath));
+        if (first.empty()) first = candidate;
+        if (ayt::io::File::exists(candidate)) return candidate;
+    }
+    return first;
 }
 
 // Cooked virtual paths are always root-relative: materials/, textures/, ...
@@ -66,12 +83,33 @@ bool isRootRelativeVirtualPath(const std::string& refPath)
 
 void setAssetRoot(const std::string& path)
 {
-    assetRootStorage() = path.empty() ? std::string{} : ayt::io::path::normalize(path);
+    setAssetRoots(path.empty() ? std::vector<std::string>{}
+                               : std::vector<std::string>{path});
 }
 
 const std::string& assetRoot()
 {
-    return assetRootStorage();
+    static const std::string empty;
+    const auto& roots = assetRootsStorage();
+    return roots.empty() ? empty : roots.front();
+}
+
+void setAssetRoots(const std::vector<std::string>& paths)
+{
+    auto& roots = assetRootsStorage();
+    roots.clear();
+    for (const std::string& path : paths) {
+        if (path.empty()) continue;
+        const std::string normalized = ayt::io::path::normalize(path);
+        if (std::find(roots.begin(), roots.end(), normalized) == roots.end()) {
+            roots.push_back(normalized);
+        }
+    }
+}
+
+const std::vector<std::string>& assetRoots()
+{
+    return assetRootsStorage();
 }
 
 std::string resolveAssetPath(const std::string& basePath, const std::string& refPath)
@@ -83,13 +121,11 @@ std::string resolveAssetPath(const std::string& basePath, const std::string& ref
         return ayt::io::path::normalize(refPath);
     }
 
-    const std::string& root = assetRoot();
-
     // Contract virtual paths must resolve against the asset root, not the
     // referring file's directory (otherwise meshes/foo.aymesh + materials/x
     // becomes meshes/materials/x).
-    if (!root.empty() && isRootRelativeVirtualPath(refPath)) {
-        return ayt::io::path::normalize(ayt::io::path::join(root, refPath));
+    if (!assetRoots().empty() && isRootRelativeVirtualPath(refPath)) {
+        return resolveFromRoots(refPath);
     }
 
     std::string baseDir = ayt::io::path::directory(basePath);
@@ -97,8 +133,8 @@ std::string resolveAssetPath(const std::string& basePath, const std::string& ref
         return ayt::io::path::normalize(ayt::io::path::join(baseDir, refPath));
     }
 
-    if (!root.empty()) {
-        return ayt::io::path::normalize(ayt::io::path::join(root, refPath));
+    if (!assetRoots().empty()) {
+        return resolveFromRoots(refPath);
     }
 
     return ayt::io::path::normalize(refPath);
