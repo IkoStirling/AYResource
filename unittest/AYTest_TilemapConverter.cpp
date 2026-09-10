@@ -418,6 +418,7 @@ TEST_CASE(TilemapConverterV3AuthoringDataRoundTrip)
     const ConversionResult result = converter.convert();
     CHECK_INT_EQ(static_cast<int>(result.resources.size()), 2);
     CHECK_INT_EQ(static_cast<int>(result.dependencies.size()), 1);
+    CHECK_TRUE(result.resources[0].type == "Tilemap");
     const auto textureResource = std::find_if(
         result.resources.begin(), result.resources.end(),
         [](const ConversionResult::ConvertedResource& resource) {

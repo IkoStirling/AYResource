@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <set>
@@ -531,9 +532,12 @@ ConversionResult TilemapConverter::convert() {
     res.path = virtualPath;
     res.type = "Tilemap";
     res.size = static_cast<uint64_t>(binaryData.size());
-    result.resources = std::move(atlasResources);
     result.dependencies = std::move(atlasDependencies);
     result.resources.push_back(res);
+    result.resources.insert(
+        result.resources.end(),
+        std::make_move_iterator(atlasResources.begin()),
+        std::make_move_iterator(atlasResources.end()));
 
     return result;
 }
