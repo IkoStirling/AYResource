@@ -373,12 +373,15 @@ TEST_CASE(SaveAndLoadBinaryRoundTripWithAnimations) {
 
 TEST_CASE(LoadFromBinaryWithoutAnimationSegment) {
     // Files written before CM-5 end exactly after the tile ids. Reproduce by
-    // stripping the always-written trailer (a zero count) from a fresh save.
+    // patching a fresh v3 save to v2 and keeping only header + tile ids.
     TilemapAsset original;
     original.create(2, 2, 16, 16, TilemapPackMode::Narrow16, 0u, nullptr, 0u);
     std::vector<UInt8> binary;
     original.saveToBinary(binary);
-    binary.resize(binary.size() - sizeof(UInt32));  // strip animation count
+    const UInt16 legacyVersion = 2u;
+    std::memcpy(binary.data() + sizeof(UInt32), &legacyVersion,
+                sizeof(legacyVersion));
+    binary.resize(32u + 4u * sizeof(UInt16));
 
     TilemapAsset loaded;
     CHECK(loaded.loadFromBinary(binary.data(), binary.size()) == true);

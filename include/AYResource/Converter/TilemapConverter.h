@@ -13,7 +13,7 @@ namespace ayt::resource
 
 // ===== TilemapConverter — 2D tilemap 转换器 =====
 // Converts a .aytilemap.json author file into a .aytilemap v2 binary
-// (magic 'AYTM', version 2 — the format TilemapLoader::loadFromBinary
+// (magic 'AYTM', version 3 — the format TilemapLoader::loadFromBinary
 // decodes; never invent a new magic/version).
 //
 // JSON schema:

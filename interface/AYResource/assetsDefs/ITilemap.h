@@ -64,6 +64,27 @@ struct TileAnimationEntry {
     const TileAnimationFrame* frames;
 };
 
+// Runtime visual catalogue introduced by .aytilemap v3. Atlas paths and
+// source rectangles are authored once in the Tilemap document and cooked
+// with the map, so a scene component no longer has to reconstruct a grid
+// atlas that may not match the imported source sheet.
+struct TilemapAtlasEntry {
+    UInt32 atlasId;
+    const char* sourcePath; // resource-owned UTF-8 string
+    UInt32 imageWidth;
+    UInt32 imageHeight;
+};
+
+struct TilemapVisualEntry {
+    UInt32 tileId;
+    UInt32 atlasId;
+    UInt32 sourceX;
+    UInt32 sourceY;
+    UInt32 sourceWidth;
+    UInt32 sourceHeight;
+    UInt32 tintRgba;
+};
+
 // ===== ITilemap — 2D tilemap resource interface (L2 cache hand-out)
 //
 // design.md (AY2D §9.1 / §9.3): `.aytilemap` is an L1 disk file (magic 'AYTM',
@@ -113,14 +134,44 @@ public:
     virtual UInt32 getAnimationCount() const = 0;
     virtual const TileAnimationEntry* getAnimationEntries() const = 0;
 
+    // ===== v3 authoring/runtime bridge =====
+    // Layer zero aliases the legacy tile-id getters above. v1/v2 resources
+    // therefore appear as one visible layer without special handling in
+    // consumers. Extra layers are row-major and use the map pack mode.
+    virtual UInt32 getLayerCount() const { return 1u; }
+    virtual bool isLayerVisible(UInt32 layerIndex) const {
+        return layerIndex == 0u;
+    }
+    virtual const UInt16* getLayerTileIds16(UInt32 layerIndex) const {
+        return layerIndex == 0u ? getTileIds16() : nullptr;
+    }
+    virtual const UInt32* getLayerTileIds32(UInt32 layerIndex) const {
+        return layerIndex == 0u ? getTileIds32() : nullptr;
+    }
+    virtual UInt32 getLayerTileIdCount(UInt32 layerIndex) const {
+        return layerIndex == 0u ? getTileIdCount() : 0u;
+    }
+
+    virtual UInt32 getAtlasCount() const { return 0u; }
+    virtual const TilemapAtlasEntry* getAtlasEntries() const { return nullptr; }
+    virtual UInt32 getVisualCount() const { return 0u; }
+    virtual const TilemapVisualEntry* getVisualEntries() const { return nullptr; }
+
+    // One byte per map cell. Bits 0..3 are the top-left, top-right,
+    // bottom-left and bottom-right semantic shadow quadrants.
+    virtual UInt32 getShadowColorRgba() const { return 0x00000080u; }
+    virtual const UInt8* getShadowMasks() const { return nullptr; }
+    virtual UInt32 getShadowMaskCount() const { return 0u; }
+
     // ===== Binary serialization =====
     virtual bool loadFromBinary(const void* data, size_t size) = 0;
     virtual bool saveToBinary(std::vector<UInt8>& outData) const = 0;
 
     // ===== Constants =====
     // v1 = bare blocked-id list (back-compat read only; normalized to Solid).
-    // v2 = per-tile-id collision-flags table (current write format).
-    static constexpr UInt32 VERSION = 2;
+    // v2 = per-tile-id collision flags + optional animations.
+    // v3 = layer stack + atlas rectangles/tint + semantic shadow masks.
+    static constexpr UInt32 VERSION = 3;
     static constexpr UInt32 MAGIC = 0x4D545941; // 'AYTM' little-endian (A=0x41,Y=0x59,T=0x54,M=0x4D)
 };
 

@@ -64,6 +64,27 @@ public:
     UInt32 getAnimationCount() const override;
     const TileAnimationEntry* getAnimationEntries() const override;
 
+    UInt32 getLayerCount() const override;
+    bool isLayerVisible(UInt32 layerIndex) const override;
+    const UInt16* getLayerTileIds16(UInt32 layerIndex) const override;
+    const UInt32* getLayerTileIds32(UInt32 layerIndex) const override;
+    UInt32 getLayerTileIdCount(UInt32 layerIndex) const override;
+    UInt32 getAtlasCount() const override;
+    const TilemapAtlasEntry* getAtlasEntries() const override;
+    UInt32 getVisualCount() const override {
+        return static_cast<UInt32>(_visuals.size());
+    }
+    const TilemapVisualEntry* getVisualEntries() const override {
+        return _visuals.empty() ? nullptr : _visuals.data();
+    }
+    UInt32 getShadowColorRgba() const override { return _shadowColorRgba; }
+    const UInt8* getShadowMasks() const override {
+        return _shadowMasks.empty() ? nullptr : _shadowMasks.data();
+    }
+    UInt32 getShadowMaskCount() const override {
+        return static_cast<UInt32>(_shadowMasks.size());
+    }
+
     // ===== Binary serialization =====
     bool loadFromBinary(const void* data, size_t size) override;
     bool saveToBinary(std::vector<UInt8>& outData) const override;
@@ -98,12 +119,31 @@ public:
                            const TileAnimationFrame* frames,
                            UInt32 frameCount);
 
+    bool setLayer(UInt32 layerIndex, bool visible,
+                  const UInt32* tileIds, UInt32 tileIdCount);
+    bool addAtlasSource(UInt32 atlasId, const std::string& sourcePath,
+                        UInt32 imageWidth, UInt32 imageHeight);
+    bool addTileVisual(const TilemapVisualEntry& visual);
+    bool setShadowData(UInt32 colorRgba, const UInt8* masks,
+                       UInt32 maskCount);
+
 private:
     void clear();
 
     struct StoredAnimationEntry {
         UInt32 sourceTileId;
         std::vector<TileAnimationFrame> frames;
+    };
+    struct StoredLayer {
+        bool visible = true;
+        std::vector<UInt16> tileIds16;
+        std::vector<UInt32> tileIds32;
+    };
+    struct StoredAtlasEntry {
+        UInt32 atlasId = 0u;
+        std::string sourcePath;
+        UInt32 imageWidth = 0u;
+        UInt32 imageHeight = 0u;
     };
 
     FGuid _guid{};
@@ -118,6 +158,15 @@ private:
     // Only one of these is populated at a time (driven by _mode).
     std::vector<UInt16> _tileIds16;
     std::vector<UInt32> _tileIds32;
+    bool _baseLayerVisible = true;
+    std::vector<StoredLayer> _extraLayers;
+
+    std::vector<StoredAtlasEntry> _atlases;
+    mutable std::vector<TilemapAtlasEntry> _atlasEntriesView;
+    mutable bool _atlasViewDirty = false;
+    std::vector<TilemapVisualEntry> _visuals;
+    UInt32 _shadowColorRgba = 0x00000080u;
+    std::vector<UInt8> _shadowMasks;
 
     std::vector<TileCollisionFlagEntry> _tileCollisionFlags;
 

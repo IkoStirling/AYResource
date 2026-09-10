@@ -897,3 +897,20 @@ unittest/
 | **2026-07-27** | Content / agent | **§5.7 MMD (PMX/VMD) via saba** — future optional Parser frontend reusing IntermediateAsset + existing typed Converters; CMake `AY_RESOURCE_USE_SABA`; near-term path remains Blender→FBX. Updated §5.6 coverage table + §12 deferred row. |
 | **2026-08-13** | Audio / agent | **§4.2.1 Audio authoring vs cook locked** — Dev loose WAV/MP3/OGG in AYResource; cook PCM `.ayaudio` only for ship/optimize; aligns `AYAudio/design.md` §2.3. Updated `.ayaudio` row + §5.6 + §7.5. |
 | **2026-08-02** | Content / agent | **P6 ownership** — §6.5 hot-reload matches eager reload + `setOnHotReload`; §8/§11 PublicApiSurface scan + allowlist; link `ownership-contracts.md`. |
+## Tilemap runtime v3（2026-09-10）
+
+`.aytilemap.json` 是可编辑作者文件，`.aytilemap` 是运行时资源。v3 保留 v1/v2
+读取兼容，并把编辑器已经具有、但 v2 无法表达的数据纳入同一份运行时资源：
+
+- layer 0 继续占用旧 tile-id 主数组，额外层以相同 pack mode 顺序存储；每层携带
+  visible，名称、文件夹、stamp 和 terrain rule 仍只属于作者数据；
+- 图集表保存来源路径与原始尺寸，Tile visual 表保存 atlasId、精确像素裁剪矩形和
+  `0xRRGGBBAA` tint；运行时不再从 Tile ID 猜测规则网格位置；
+- 阴影保存为每格四分区语义 mask 和全图颜色，不烘焙进 PNG；动画表和碰撞表沿用
+  v2 契约；
+- Converter 以最终二进制作为 GUID 摘要输入，任意图层、裁剪、色调或阴影变更都会
+  使 cook cache 失效。
+
+选择这一边界的原因是：terrain/stamp 是生成 Tile ID 的编辑操作，文件夹/名称是资产
+组织信息，它们不影响运行；layer、visual、tint、shadow 则直接影响每帧绘制，必须进入
+运行时格式。v1/v2 资源在接口中自然表现为“一个可见层、无视觉目录、无语义阴影”。

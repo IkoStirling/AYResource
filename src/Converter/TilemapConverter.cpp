@@ -72,11 +72,6 @@ bool parseNumericFlags(const std::string& text, UInt32& out) {
     return true;
 }
 
-void appendBytes(std::vector<UInt8>& out, const void* data, size_t n) {
-    const UInt8* p = static_cast<const UInt8*>(data);
-    out.insert(out.end(), p, p + n);
-}
-
 std::string getFileName(const std::string& path) {
     size_t pos = path.find_last_of("/\\");
     if (pos == std::string::npos) {
@@ -154,63 +149,6 @@ ConversionResult TilemapConverter::convert() {
         return result;
     }
 
-    // The runtime v2 asset is intentionally single-layer and also has no
-    // atlas sub-rectangle or per-tile tint payload. Refuse authoring data that
-    // cannot be represented instead of silently cooking only the legacy
-    // top-level `tiles` compatibility field.
-    if (serializer->isFieldPending("layers")) {
-        size_t layerCount = 0u;
-        serializer->beginArray("layers");
-        while (serializer->hasMoreArrayElements()) {
-            serializer->beginObject(nullptr);
-            serializer->endObject();
-            ++layerCount;
-        }
-        serializer->endArray();
-        if (layerCount != 1u) {
-            ayt::log::warn("[TilemapConverter] '%s' has %zu layers; runtime v2 supports exactly one",
-                           sourcePath.c_str(), layerCount);
-            return result;
-        }
-    }
-    if (serializer->isFieldPending("tileAssets")) {
-        bool unsupportedVisual = false;
-        serializer->beginObject("tileAssets");
-        if (serializer->isFieldPending("atlases")) {
-            serializer->beginArray("atlases");
-            unsupportedVisual = serializer->hasMoreArrayElements();
-            while (serializer->hasMoreArrayElements()) {
-                serializer->beginObject(nullptr);
-                serializer->endObject();
-            }
-            serializer->endArray();
-        }
-        if (serializer->isFieldPending("entries")) {
-            serializer->beginArray("entries");
-            while (serializer->hasMoreArrayElements()) {
-                UInt32 atlasId = 0u;
-                UInt32 tintRgba = 0xffffffffu;
-                serializer->beginObject(nullptr);
-                if (serializer->isFieldPending("atlasId")) {
-                    serializer->field("atlasId", atlasId);
-                }
-                if (serializer->isFieldPending("tintRgba")) {
-                    serializer->field("tintRgba", tintRgba);
-                }
-                serializer->endObject();
-                unsupportedVisual = unsupportedVisual || atlasId != 0u
-                    || tintRgba != 0xffffffffu;
-            }
-            serializer->endArray();
-        }
-        serializer->endObject();
-        if (unsupportedVisual) {
-            ayt::log::warn("[TilemapConverter] '%s' uses atlas rectangles or tile tint unsupported by runtime v2",
-                           sourcePath.c_str());
-            return result;
-        }
-    }
-
     // Collision flags table first (create() takes it as a parameter).
     std::vector<TileCollisionFlagEntry> flags;
     if (serializer->isFieldPending("collisionFlags")) {
@@ -265,6 +203,145 @@ ConversionResult TilemapConverter::convert() {
         serializer->endArray();
     }
 
+    // v3 layer stack. Layer zero replaces the legacy compatibility list;
+    // short lists retain defaultTileId for their remaining cells.
+    if (serializer->isFieldPending("layers")) {
+        UInt32 layerIndex = 0u;
+        serializer->beginArray("layers");
+        while (serializer->hasMoreArrayElements()) {
+            bool visible = true;
+            std::vector<UInt32> tiles;
+            serializer->beginObject(nullptr);
+            if (serializer->isFieldPending("visible")) {
+                serializer->field("visible", visible);
+            }
+            if (serializer->isFieldPending("tiles")) {
+                serializer->beginArray("tiles");
+                while (serializer->hasMoreArrayElements()) {
+                    UInt32 tileId = 0u;
+                    serializer->field(nullptr, tileId);
+                    tiles.push_back(tileId);
+                    if (tiles.size() > cellCount) {
+                        ayt::log::warn("[TilemapConverter] '%s' layer %u exceeds map cells",
+                                       sourcePath.c_str(), layerIndex);
+                        return result;
+                    }
+                }
+                serializer->endArray();
+            }
+            serializer->endObject();
+            if (!asset.setLayer(layerIndex, visible,
+                                tiles.empty() ? nullptr : tiles.data(),
+                                static_cast<UInt32>(tiles.size()))) {
+                ayt::log::warn("[TilemapConverter] '%s' invalid layer %u",
+                               sourcePath.c_str(), layerIndex);
+                return result;
+            }
+            ++layerIndex;
+        }
+        serializer->endArray();
+        if (layerIndex == 0u) {
+            ayt::log::warn("[TilemapConverter] '%s' has an empty layer stack",
+                           sourcePath.c_str());
+            return result;
+        }
+    }
+
+    // v3 atlas catalogue and exact source rectangles. Only visual entries
+    // backed by an imported atlas are cooked; preview-only/editor entries
+    // intentionally remain authoring metadata.
+    if (serializer->isFieldPending("tileAssets")) {
+        serializer->beginObject("tileAssets");
+        if (serializer->isFieldPending("atlases")) {
+            serializer->beginArray("atlases");
+            while (serializer->hasMoreArrayElements()) {
+                UInt32 atlasId = 0u, imageWidth = 0u, imageHeight = 0u;
+                std::string atlasSourcePath;
+                serializer->beginObject(nullptr);
+                serializer->field("atlasId", atlasId);
+                serializer->field("sourcePath", atlasSourcePath);
+                serializer->field("imageWidth", imageWidth);
+                serializer->field("imageHeight", imageHeight);
+                serializer->endObject();
+                if (!asset.addAtlasSource(atlasId, atlasSourcePath,
+                                          imageWidth, imageHeight)) {
+                    ayt::log::warn("[TilemapConverter] '%s' has an invalid atlas %u",
+                                   sourcePath.c_str(), atlasId);
+                    return result;
+                }
+            }
+            serializer->endArray();
+        }
+        if (serializer->isFieldPending("entries")) {
+            serializer->beginArray("entries");
+            while (serializer->hasMoreArrayElements()) {
+                TilemapVisualEntry visual{};
+                visual.tintRgba = 0xffffffffu;
+                bool hasSourceRect = false;
+                serializer->beginObject(nullptr);
+                serializer->field("tileId", visual.tileId);
+                if (serializer->isFieldPending("atlasId")) {
+                    serializer->field("atlasId", visual.atlasId);
+                }
+                if (serializer->isFieldPending("tintRgba")) {
+                    serializer->field("tintRgba", visual.tintRgba);
+                }
+                if (serializer->isFieldPending("sourceRect")) {
+                    UInt32* values[] = {&visual.sourceX, &visual.sourceY,
+                                       &visual.sourceWidth, &visual.sourceHeight};
+                    size_t valueIndex = 0u;
+                    serializer->beginArray("sourceRect");
+                    while (serializer->hasMoreArrayElements()) {
+                        UInt32 value = 0u;
+                        serializer->field(nullptr, value);
+                        if (valueIndex < 4u) *values[valueIndex] = value;
+                        ++valueIndex;
+                    }
+                    serializer->endArray();
+                    hasSourceRect = valueIndex == 4u;
+                }
+                serializer->endObject();
+                if (visual.atlasId != 0u || hasSourceRect) {
+                    if (!hasSourceRect || !asset.addTileVisual(visual)) {
+                        ayt::log::warn("[TilemapConverter] '%s' has an invalid visual for tile %u",
+                                       sourcePath.c_str(), visual.tileId);
+                        return result;
+                    }
+                }
+            }
+            serializer->endArray();
+        }
+        serializer->endObject();
+    }
+
+    if (serializer->isFieldPending("shadows")) {
+        UInt32 shadowColor = 0x00000080u;
+        std::vector<UInt8> masks;
+        serializer->beginObject("shadows");
+        if (serializer->isFieldPending("colorRgba")) {
+            serializer->field("colorRgba", shadowColor);
+        }
+        if (serializer->isFieldPending("masks")) {
+            serializer->beginArray("masks");
+            while (serializer->hasMoreArrayElements()) {
+                UInt8 mask = 0u;
+                serializer->field(nullptr, mask);
+                masks.push_back(static_cast<UInt8>(mask & 0x0fu));
+                if (masks.size() > cellCount) return result;
+            }
+            serializer->endArray();
+        }
+        serializer->endObject();
+        if (!masks.empty() && masks.size() != cellCount) {
+            masks.resize(static_cast<size_t>(cellCount), 0u);
+        }
+        if (!asset.setShadowData(shadowColor,
+                                 masks.empty() ? nullptr : masks.data(),
+                                 static_cast<UInt32>(masks.size()))) {
+            return result;
+        }
+    }
+
     // Animation table (CM-5): sparse per-source-tile-id flipbook.
     // Schema: "animations": [ { "sourceTileId": 2, "frames":
     //   [ {"tileId": 10, "durationMs": 100}, ... ] } ]
@@ -304,49 +381,16 @@ ConversionResult TilemapConverter::convert() {
 
     serializer->endObject(); // root
 
-    // Guid covers every data-carrying byte: meta + mode + ids + flags +
-    // animation table. A missed field here silently breaks cook caching
-    // correctness — a changed frame tile id or duration must invalidate
-    // cooked output.
-    std::vector<UInt8> contentData;
-    appendBytes(contentData, &cols, sizeof(cols));
-    appendBytes(contentData, &rows, sizeof(rows));
-    appendBytes(contentData, &tileWidth, sizeof(tileWidth));
-    appendBytes(contentData, &tileHeight, sizeof(tileHeight));
-    const UInt8 modeByte = static_cast<UInt8>(packMode);
-    appendBytes(contentData, &modeByte, sizeof(modeByte));
-    appendBytes(contentData, &defaultTileId, sizeof(defaultTileId));
-    const UInt32 idCount = asset.getTileIdCount();
-    if (packMode == TilemapPackMode::Narrow16) {
-        appendBytes(contentData, asset.getTileIds16(), idCount * sizeof(UInt16));
-    } else {
-        appendBytes(contentData, asset.getTileIds32(), idCount * sizeof(UInt32));
-    }
-    for (const TileCollisionFlagEntry& e : flags) {
-        appendBytes(contentData, &e.tileId, sizeof(e.tileId));
-        appendBytes(contentData, &e.flags, sizeof(e.flags));
-    }
-    // Animation bytes in the same layout the binary writes them
-    // (count + per-entry {sourceTileId, frameCount, frames}).
-    const UInt32 animCount = asset.getAnimationCount();
-    appendBytes(contentData, &animCount, sizeof(animCount));
-    const TileAnimationEntry* entries = asset.getAnimationEntries();
-    for (UInt32 i = 0u; i < animCount; ++i) {
-        const TileAnimationEntry& e = entries[i];
-        appendBytes(contentData, &e.sourceTileId, sizeof(e.sourceTileId));
-        appendBytes(contentData, &e.frameCount, sizeof(e.frameCount));
-        if (e.frameCount > 0) {
-            appendBytes(contentData, e.frames,
-                        e.frameCount * sizeof(TileAnimationFrame));
-        }
-    }
-    lastGuid = ayt::storage::Guid::computeFromData(contentData.data(), contentData.size());
-    asset.setGuid(lastGuid);
-
     std::vector<UInt8> binaryData;
     if (!asset.saveToBinary(binaryData)) {
         return result;
     }
+    // The binary is now the single canonical digest input. This makes every
+    // v3 field (including atlas path, layer visibility, tint and shadows)
+    // participate in cook-cache invalidation automatically.
+    lastGuid = ayt::storage::Guid::computeFromData(
+        binaryData.data(), binaryData.size());
+    asset.setGuid(lastGuid);
 
     const std::string baseName = name.empty()
         ? tilemapStem(getFileName(sourcePath)) : name;

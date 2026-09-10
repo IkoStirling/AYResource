@@ -14,7 +14,7 @@ namespace ayt::resource
 //
 //   offset  field           notes
 //   0       UInt32 magic    = 0x4D545941 ('AYTM')
-//   4       UInt16 version  = 2 (current). 1 = legacy bare blocked-id list.
+//   4       UInt16 version  = 3 (current). 1/2 remain readable.
 //   6       UInt16 tileWidth
 //   8       UInt16 tileHeight
 //  10       UInt32 cols
@@ -38,12 +38,10 @@ namespace ayt::resource
 //             UInt32 frameCount               // 0 rejected by the reader
 //             frame[frameCount]: { UInt32 frameTileId; UInt32 durationMs }
 //
-// The animation segment is a single optional trailer: files written before
-// CM-5 end exactly after the tile ids (empty table), the current writer
-// always appends it (count may be 0), and the reader strictly consumes the
-// tail — any leftover bytes after a full segment parse fail the load. This
-// acts as a version lock: a future third segment must switch to four-cc
-// chunks or bump the version (design.md §9.2), it must not be stacked here.
+// v3 follows the animation segment with a fixed extension header, extra
+// layer payloads, atlas paths, visual records and semantic shadow masks.
+// Layer zero stays in the legacy payload above so old engine concepts retain
+// a cheap compatibility view; only layers 1..N are stored in the extension.
 //
 // v1 back-compat: a v1 file stores `blockedCount` at offset 24 followed by
 // `UInt32 blockedTileIds[blockedCount]` (4 bytes each). The reader normalizes
@@ -65,6 +63,37 @@ struct TilemapBinaryHeader {
 #pragma pack(pop)
 static_assert(sizeof(TilemapBinaryHeader) == 32, "AYTilemap header must be 32 bytes");
 
+constexpr UInt32 kTilemapV3Magic = 0x33564D54u; // 'TMV3'
+
+#pragma pack(push, 1)
+struct TilemapV3ExtensionHeader {
+    UInt32 magic;
+    UInt32 layerCount;
+    UInt32 atlasCount;
+    UInt32 visualCount;
+    UInt32 shadowColorRgba;
+    UInt32 shadowMaskCount;
+    UInt32 baseLayerVisible;
+};
+
+struct TilemapV3LayerHeader {
+    UInt32 visible;
+    UInt32 tileIdCount;
+};
+
+struct TilemapV3AtlasHeader {
+    UInt32 atlasId;
+    UInt32 imageWidth;
+    UInt32 imageHeight;
+    UInt32 pathBytes;
+};
+#pragma pack(pop)
+
+static_assert(sizeof(TilemapV3ExtensionHeader) == 28);
+static_assert(sizeof(TilemapV3LayerHeader) == 8);
+static_assert(sizeof(TilemapV3AtlasHeader) == 16);
+static_assert(sizeof(TilemapVisualEntry) == 28);
+
 // ===== TilemapAsset =====
 
 void TilemapAsset::clear() {
@@ -76,6 +105,14 @@ void TilemapAsset::clear() {
     _defaultTileId = 0;
     _tileIds16.clear();
     _tileIds32.clear();
+    _baseLayerVisible = true;
+    _extraLayers.clear();
+    _atlases.clear();
+    _atlasEntriesView.clear();
+    _atlasViewDirty = false;
+    _visuals.clear();
+    _shadowColorRgba = 0x00000080u;
+    _shadowMasks.clear();
     _tileCollisionFlags.clear();
     _animations.clear();
     _animFlat.clear();
@@ -102,9 +139,20 @@ size_t TilemapAsset::sizeInBytes() const {
         animBytes += sizeof(UInt32) * 2
                    + e.frames.size() * sizeof(TileAnimationFrame);
     }
-    return sizeof(TilemapAsset) + tileBytes
+    size_t extraLayerBytes = 0u;
+    for (const StoredLayer& layer : _extraLayers) {
+        extraLayerBytes += _mode == TilemapPackMode::Narrow16
+            ? layer.tileIds16.size() * sizeof(UInt16)
+            : layer.tileIds32.size() * sizeof(UInt32);
+    }
+    size_t atlasBytes = 0u;
+    for (const StoredAtlasEntry& atlas : _atlases) {
+        atlasBytes += sizeof(TilemapV3AtlasHeader) + atlas.sourcePath.size();
+    }
+    return sizeof(TilemapAsset) + tileBytes + extraLayerBytes + atlasBytes
          + _tileCollisionFlags.size() * sizeof(TileCollisionFlagEntry)
-         + animBytes + _name.size();
+         + _visuals.size() * sizeof(TilemapVisualEntry)
+         + _shadowMasks.size() + animBytes + _name.size();
 }
 
 bool TilemapAsset::load(const std::string& path) {
@@ -139,9 +187,9 @@ bool TilemapAsset::loadFromBinary(const void* data, size_t size) {
     if (header->magic != ITilemap::MAGIC) {
         return false;
     }
-    // Accept v1 (legacy bare blocked-id list) and v2 (per-tile-id flags table).
+    // Accept v1/v2 compatibility assets and the current v3 authoring bridge.
     const UInt16 version = header->version;
-    if (version != 1u && version != 2u) {
+    if (version != 1u && version != 2u && version != 3u) {
         return false;
     }
 
@@ -257,9 +305,114 @@ bool TilemapAsset::loadFromBinary(const void* data, size_t size) {
             offset += static_cast<size_t>(framesBytes);
             _animations.push_back(std::move(e));
         }
-        if (offset != size) {
+        if (version <= 2u && offset != size) {
             clear();
             return false;  // strict tail consumption (version lock)
+        }
+    }
+
+    if (version == 3u) {
+        if (size - offset < sizeof(TilemapV3ExtensionHeader)) {
+            clear();
+            return false;
+        }
+        TilemapV3ExtensionHeader extension{};
+        std::memcpy(&extension, ptr + offset, sizeof(extension));
+        offset += sizeof(extension);
+        if (extension.magic != kTilemapV3Magic || extension.layerCount == 0u
+            || extension.layerCount > 1024u
+            || extension.atlasCount > 65536u
+            || extension.visualCount > 16u * 1024u * 1024u
+            || (extension.shadowMaskCount != 0u
+                && extension.shadowMaskCount != header->tileIdsCount)) {
+            clear();
+            return false;
+        }
+        _baseLayerVisible = extension.baseLayerVisible != 0u;
+        _extraLayers.reserve(extension.layerCount - 1u);
+        for (UInt32 layerIndex = 1u; layerIndex < extension.layerCount;
+             ++layerIndex) {
+            if (size - offset < sizeof(TilemapV3LayerHeader)) {
+                clear();
+                return false;
+            }
+            TilemapV3LayerHeader layerHeader{};
+            std::memcpy(&layerHeader, ptr + offset, sizeof(layerHeader));
+            offset += sizeof(layerHeader);
+            if (layerHeader.tileIdCount != header->tileIdsCount) {
+                clear();
+                return false;
+            }
+            const uint64_t bytes = static_cast<uint64_t>(
+                layerHeader.tileIdCount) * elemSize;
+            if (bytes > static_cast<uint64_t>(size - offset)) {
+                clear();
+                return false;
+            }
+            StoredLayer layer;
+            layer.visible = layerHeader.visible != 0u;
+            if (_mode == TilemapPackMode::Narrow16) {
+                layer.tileIds16.resize(layerHeader.tileIdCount);
+                std::memcpy(layer.tileIds16.data(), ptr + offset,
+                            static_cast<size_t>(bytes));
+            } else {
+                layer.tileIds32.resize(layerHeader.tileIdCount);
+                std::memcpy(layer.tileIds32.data(), ptr + offset,
+                            static_cast<size_t>(bytes));
+            }
+            offset += static_cast<size_t>(bytes);
+            _extraLayers.push_back(std::move(layer));
+        }
+        _atlases.reserve(extension.atlasCount);
+        for (UInt32 i = 0u; i < extension.atlasCount; ++i) {
+            if (size - offset < sizeof(TilemapV3AtlasHeader)) {
+                clear();
+                return false;
+            }
+            TilemapV3AtlasHeader atlasHeader{};
+            std::memcpy(&atlasHeader, ptr + offset, sizeof(atlasHeader));
+            offset += sizeof(atlasHeader);
+            if (atlasHeader.pathBytes == 0u
+                || atlasHeader.pathBytes > 1024u * 1024u
+                || atlasHeader.imageWidth == 0u || atlasHeader.imageHeight == 0u
+                || atlasHeader.pathBytes > size - offset) {
+                clear();
+                return false;
+            }
+            StoredAtlasEntry atlas;
+            atlas.atlasId = atlasHeader.atlasId;
+            atlas.imageWidth = atlasHeader.imageWidth;
+            atlas.imageHeight = atlasHeader.imageHeight;
+            atlas.sourcePath.assign(
+                reinterpret_cast<const char*>(ptr + offset),
+                atlasHeader.pathBytes);
+            offset += atlasHeader.pathBytes;
+            _atlases.push_back(std::move(atlas));
+        }
+        const uint64_t visualBytes = static_cast<uint64_t>(
+            extension.visualCount) * sizeof(TilemapVisualEntry);
+        if (visualBytes > static_cast<uint64_t>(size - offset)) {
+            clear();
+            return false;
+        }
+        _visuals.resize(extension.visualCount);
+        if (visualBytes > 0u) {
+            std::memcpy(_visuals.data(), ptr + offset,
+                        static_cast<size_t>(visualBytes));
+            offset += static_cast<size_t>(visualBytes);
+        }
+        _shadowColorRgba = extension.shadowColorRgba;
+        if (extension.shadowMaskCount > size - offset) {
+            clear();
+            return false;
+        }
+        _shadowMasks.assign(ptr + offset,
+                            ptr + offset + extension.shadowMaskCount);
+        offset += extension.shadowMaskCount;
+        _atlasViewDirty = true;
+        if (offset != size) {
+            clear();
+            return false;
         }
     }
 
@@ -284,7 +437,20 @@ bool TilemapAsset::saveToBinary(std::vector<UInt8>& outData) const {
         animBytes += sizeof(UInt32) * 2
                    + static_cast<uint64_t>(e.frames.size()) * sizeof(TileAnimationFrame);
     }
-    const uint64_t total = sizeof(TilemapBinaryHeader) + flagsBytes + tileIdsBytes + animBytes;
+    uint64_t extensionBytes = sizeof(TilemapV3ExtensionHeader);
+    for (const StoredLayer& layer : _extraLayers) {
+        const uint64_t layerCount = _mode == TilemapPackMode::Narrow16
+            ? layer.tileIds16.size() : layer.tileIds32.size();
+        extensionBytes += sizeof(TilemapV3LayerHeader) + layerCount * elemSize;
+    }
+    for (const StoredAtlasEntry& atlas : _atlases) {
+        extensionBytes += sizeof(TilemapV3AtlasHeader) + atlas.sourcePath.size();
+    }
+    extensionBytes += static_cast<uint64_t>(_visuals.size())
+                    * sizeof(TilemapVisualEntry);
+    extensionBytes += _shadowMasks.size();
+    const uint64_t total = sizeof(TilemapBinaryHeader) + flagsBytes
+                         + tileIdsBytes + animBytes + extensionBytes;
 
     outData.resize(static_cast<size_t>(total));
     UInt8* ptr = outData.data();
@@ -340,6 +506,58 @@ bool TilemapAsset::saveToBinary(std::vector<UInt8>& outData) const {
         }
     }
 
+    TilemapV3ExtensionHeader extension{};
+    extension.magic = kTilemapV3Magic;
+    extension.layerCount = getLayerCount();
+    extension.atlasCount = static_cast<UInt32>(_atlases.size());
+    extension.visualCount = static_cast<UInt32>(_visuals.size());
+    extension.shadowColorRgba = _shadowColorRgba;
+    extension.shadowMaskCount = static_cast<UInt32>(_shadowMasks.size());
+    extension.baseLayerVisible = _baseLayerVisible ? 1u : 0u;
+    std::memcpy(ptr + offset, &extension, sizeof(extension));
+    offset += sizeof(extension);
+    for (const StoredLayer& layer : _extraLayers) {
+        TilemapV3LayerHeader layerHeader{};
+        layerHeader.visible = layer.visible ? 1u : 0u;
+        layerHeader.tileIdCount = static_cast<UInt32>(
+            _mode == TilemapPackMode::Narrow16
+                ? layer.tileIds16.size() : layer.tileIds32.size());
+        std::memcpy(ptr + offset, &layerHeader, sizeof(layerHeader));
+        offset += sizeof(layerHeader);
+        const size_t bytes = static_cast<size_t>(layerHeader.tileIdCount)
+                           * static_cast<size_t>(elemSize);
+        if (bytes > 0u) {
+            const void* source = _mode == TilemapPackMode::Narrow16
+                ? static_cast<const void*>(layer.tileIds16.data())
+                : static_cast<const void*>(layer.tileIds32.data());
+            std::memcpy(ptr + offset, source, bytes);
+            offset += bytes;
+        }
+    }
+    for (const StoredAtlasEntry& atlas : _atlases) {
+        TilemapV3AtlasHeader atlasHeader{};
+        atlasHeader.atlasId = atlas.atlasId;
+        atlasHeader.imageWidth = atlas.imageWidth;
+        atlasHeader.imageHeight = atlas.imageHeight;
+        atlasHeader.pathBytes = static_cast<UInt32>(atlas.sourcePath.size());
+        std::memcpy(ptr + offset, &atlasHeader, sizeof(atlasHeader));
+        offset += sizeof(atlasHeader);
+        if (!atlas.sourcePath.empty()) {
+            std::memcpy(ptr + offset, atlas.sourcePath.data(),
+                        atlas.sourcePath.size());
+            offset += atlas.sourcePath.size();
+        }
+    }
+    if (!_visuals.empty()) {
+        const size_t bytes = _visuals.size() * sizeof(TilemapVisualEntry);
+        std::memcpy(ptr + offset, _visuals.data(), bytes);
+        offset += bytes;
+    }
+    if (!_shadowMasks.empty()) {
+        std::memcpy(ptr + offset, _shadowMasks.data(), _shadowMasks.size());
+        offset += _shadowMasks.size();
+    }
+
     return true;
 }
 
@@ -385,6 +603,151 @@ bool TilemapAsset::setTile(UInt32 cellIndex, UInt32 tileId) {
     }
     _tileIds32[cellIndex] = tileId;
     return true;
+}
+
+UInt32 TilemapAsset::getLayerCount() const {
+    return 1u + static_cast<UInt32>(_extraLayers.size());
+}
+
+bool TilemapAsset::isLayerVisible(UInt32 layerIndex) const {
+    if (layerIndex == 0u) return _baseLayerVisible;
+    const UInt32 extraIndex = layerIndex - 1u;
+    return extraIndex < _extraLayers.size()
+        ? _extraLayers[extraIndex].visible : false;
+}
+
+const UInt16* TilemapAsset::getLayerTileIds16(UInt32 layerIndex) const {
+    if (_mode != TilemapPackMode::Narrow16) return nullptr;
+    if (layerIndex == 0u) return _tileIds16.empty() ? nullptr : _tileIds16.data();
+    const UInt32 extraIndex = layerIndex - 1u;
+    return extraIndex < _extraLayers.size()
+        && !_extraLayers[extraIndex].tileIds16.empty()
+            ? _extraLayers[extraIndex].tileIds16.data() : nullptr;
+}
+
+const UInt32* TilemapAsset::getLayerTileIds32(UInt32 layerIndex) const {
+    if (_mode != TilemapPackMode::Wide32) return nullptr;
+    if (layerIndex == 0u) return _tileIds32.empty() ? nullptr : _tileIds32.data();
+    const UInt32 extraIndex = layerIndex - 1u;
+    return extraIndex < _extraLayers.size()
+        && !_extraLayers[extraIndex].tileIds32.empty()
+            ? _extraLayers[extraIndex].tileIds32.data() : nullptr;
+}
+
+UInt32 TilemapAsset::getLayerTileIdCount(UInt32 layerIndex) const {
+    if (layerIndex == 0u) return getTileIdCount();
+    const UInt32 extraIndex = layerIndex - 1u;
+    if (extraIndex >= _extraLayers.size()) return 0u;
+    return static_cast<UInt32>(_mode == TilemapPackMode::Narrow16
+        ? _extraLayers[extraIndex].tileIds16.size()
+        : _extraLayers[extraIndex].tileIds32.size());
+}
+
+bool TilemapAsset::setLayer(UInt32 layerIndex, bool visible,
+                            const UInt32* tileIds, UInt32 tileIdCount) {
+    const UInt32 expected = getTileIdCount();
+    if (tileIdCount > expected || (tileIdCount > 0u && tileIds == nullptr)
+        || layerIndex > getLayerCount()) {
+        return false;
+    }
+    const auto fill16 = [&](std::vector<UInt16>& target) {
+        target.assign(expected, static_cast<UInt16>(_defaultTileId));
+        for (UInt32 i = 0u; i < tileIdCount; ++i) {
+            if (tileIds[i] > 0xffffu) return false;
+            target[i] = static_cast<UInt16>(tileIds[i]);
+        }
+        return true;
+    };
+    const auto fill32 = [&](std::vector<UInt32>& target) {
+        target.assign(expected, _defaultTileId);
+        if (tileIdCount > 0u) {
+            std::copy(tileIds, tileIds + tileIdCount, target.begin());
+        }
+        return true;
+    };
+    if (layerIndex == 0u) {
+        _baseLayerVisible = visible;
+        return _mode == TilemapPackMode::Narrow16
+            ? fill16(_tileIds16) : fill32(_tileIds32);
+    }
+    const UInt32 extraIndex = layerIndex - 1u;
+    if (extraIndex == _extraLayers.size()) _extraLayers.emplace_back();
+    StoredLayer& layer = _extraLayers[extraIndex];
+    layer.visible = visible;
+    return _mode == TilemapPackMode::Narrow16
+        ? fill16(layer.tileIds16) : fill32(layer.tileIds32);
+}
+
+bool TilemapAsset::addAtlasSource(UInt32 atlasId,
+                                  const std::string& sourcePath,
+                                  UInt32 imageWidth, UInt32 imageHeight) {
+    if (atlasId == 0u || sourcePath.empty() || imageWidth == 0u
+        || imageHeight == 0u || sourcePath.size() > 1024u * 1024u) {
+        return false;
+    }
+    for (const StoredAtlasEntry& entry : _atlases) {
+        if (entry.atlasId == atlasId) return false;
+    }
+    _atlases.push_back({atlasId, sourcePath, imageWidth, imageHeight});
+    _atlasViewDirty = true;
+    return true;
+}
+
+bool TilemapAsset::addTileVisual(const TilemapVisualEntry& visual) {
+    if (visual.atlasId == 0u || visual.sourceWidth == 0u
+        || visual.sourceHeight == 0u) {
+        return false;
+    }
+    const StoredAtlasEntry* atlas = nullptr;
+    for (const StoredAtlasEntry& candidate : _atlases) {
+        if (candidate.atlasId == visual.atlasId) {
+            atlas = &candidate;
+            break;
+        }
+    }
+    if (atlas == nullptr
+        || static_cast<uint64_t>(visual.sourceX) + visual.sourceWidth
+            > atlas->imageWidth
+        || static_cast<uint64_t>(visual.sourceY) + visual.sourceHeight
+            > atlas->imageHeight) {
+        return false;
+    }
+    for (const TilemapVisualEntry& entry : _visuals) {
+        if (entry.tileId == visual.tileId) return false;
+    }
+    _visuals.push_back(visual);
+    return true;
+}
+
+bool TilemapAsset::setShadowData(UInt32 colorRgba, const UInt8* masks,
+                                 UInt32 maskCount) {
+    if (maskCount != 0u && (maskCount != getTileIdCount() || masks == nullptr)) {
+        return false;
+    }
+    _shadowColorRgba = colorRgba;
+    if (maskCount == 0u) {
+        _shadowMasks.clear();
+    } else {
+        _shadowMasks.assign(masks, masks + maskCount);
+    }
+    return true;
+}
+
+UInt32 TilemapAsset::getAtlasCount() const {
+    return static_cast<UInt32>(_atlases.size());
+}
+
+const TilemapAtlasEntry* TilemapAsset::getAtlasEntries() const {
+    if (_atlasViewDirty) {
+        _atlasEntriesView.clear();
+        _atlasEntriesView.reserve(_atlases.size());
+        for (const StoredAtlasEntry& atlas : _atlases) {
+            _atlasEntriesView.push_back({atlas.atlasId,
+                atlas.sourcePath.c_str(), atlas.imageWidth, atlas.imageHeight});
+        }
+        _atlasViewDirty = false;
+    }
+    return _atlasEntriesView.empty() ? nullptr : _atlasEntriesView.data();
 }
 
 // ===== Animation table (CM-5) =====
