@@ -14,15 +14,20 @@
 //      makeTilemapVirtualPath spelling is exact.
 
 #include "AYResource.h"
+#include "AYResource/AssetPath.h"
+#include "AYResource/CookShip.h"
+#include "AYResource/LooseDependency.h"
 #include "AYResource/assetsImpl/Texture.h"
 #include "AYResource/assetsImpl/TilemapAsset.h"
 #include "AYResource/Converter/TilemapConverter.h"
 #include "AYResource/VirtualAssetPath.h"
 #include "AYTest.h"
+#include <AYIO/File.h>
 
 #include <algorithm>
-#include <fstream>
 #include <array>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 using namespace ayt::resource;
@@ -428,6 +433,16 @@ TEST_CASE(TilemapConverterV3AuthoringDataRoundTrip)
     CHECK_TRUE(result.dependencies[0].from == "tilemaps/rich.aytilemap");
     CHECK_TRUE(textureResource != result.resources.end()
         && result.dependencies[0].to == textureResource->path);
+    const std::string sidecarPath =
+        looseDependencySidecarPath("tilemaps/rich.aytilemap");
+    CHECK_TRUE(fileExists(sidecarPath));
+    const ConversionResult sidecar = ConversionResult::fromJson(
+        ayt::io::File::readAllText(sidecarPath));
+    CHECK_INT_EQ(static_cast<int>(sidecar.dependencies.size()), 1);
+    CHECK_TRUE(sidecar.dependencies[0].from
+        == "tilemaps/rich.aytilemap");
+    CHECK_TRUE(textureResource != result.resources.end()
+        && sidecar.dependencies[0].to == textureResource->path);
 
     std::vector<UInt8> binary;
     readBinaryFile("tilemaps/rich.aytilemap", binary);
@@ -463,6 +478,85 @@ TEST_CASE(TilemapConverterV3AuthoringDataRoundTrip)
     std::remove("cm_editor_sheet.png");
     std::remove("cm_editor_v3.aytilemap.json");
     std::remove("tilemaps/rich.aytilemap");
+    std::remove(sidecarPath.c_str());
+}
+
+TEST_CASE(TilemapV3PackagesAtlasDependencyAndLoadsWithoutLooseFiles)
+{
+    namespace fs = std::filesystem;
+    const fs::path assetRoot = "cm_tilemap_ship_assets";
+    const fs::path shipRoot = "cm_tilemap_ship_output";
+    std::error_code cleanupError;
+    fs::remove_all(assetRoot, cleanupError);
+    cleanupError.clear();
+    fs::remove_all(shipRoot, cleanupError);
+    CHECK(fs::create_directories(assetRoot));
+
+    const fs::path atlasPath = assetRoot / "atlas.png";
+    CHECK(writeRedPng(atlasPath.string()));
+    const fs::path sourcePath = assetRoot / "portable.aytilemap.json";
+    const char* json =
+        "{\"name\":\"portable\",\"cols\":1,\"rows\":1,"
+        "\"tileWidth\":4,\"tileHeight\":4,\"defaultTileId\":1,"
+        "\"tiles\":[1],\"tileAssets\":{\"atlases\":[{"
+        "\"atlasId\":9,\"sourcePath\":\"atlas.png\","
+        "\"imageWidth\":4,\"imageHeight\":4}],\"entries\":[{"
+        "\"tileId\":1,\"atlasId\":9,\"sourceRect\":[0,0,4,4]}]}}";
+    CHECK(writeTextFile(sourcePath.string(), json));
+
+    TilemapConverter converter(sourcePath.string());
+    converter.setOutputDir(assetRoot.string());
+    const ConversionResult converted = converter.convert();
+    CHECK_INT_EQ(static_cast<int>(converted.resources.size()), 2);
+    CHECK_INT_EQ(static_cast<int>(converted.dependencies.size()), 1);
+    const fs::path runtimeMap = assetRoot / "tilemaps/portable.aytilemap";
+    const fs::path sidecar = assetRoot / "tilemaps/portable.aydep.json";
+    CHECK(fs::is_regular_file(runtimeMap));
+    CHECK(fs::is_regular_file(sidecar));
+
+    TilemapAsset looseMap;
+    CHECK(looseMap.load(runtimeMap.string()));
+    setAssetRoot(assetRoot.string());
+    const std::vector<std::string> intrinsic =
+        collectIntrinsicDependencies(runtimeMap.string(), looseMap);
+    CHECK_INT_EQ(static_cast<int>(intrinsic.size()), 1);
+    CHECK_TRUE(!intrinsic.empty() && fs::is_regular_file(intrinsic[0]));
+    setAssetRoots({});
+
+    CookShipOptions options;
+    options.assetsRoot = assetRoot.string();
+    options.outputDir = shipRoot.string();
+    options.compression = ayt::storage::CompressionAlgo::None;
+    const CookShipResult package = cookShipPackage(options);
+    CHECK(package.ok);
+    CHECK_INT_EQ(package.fileCount, 2u);
+    CHECK_INT_EQ(package.dependencyCount, 1u);
+
+    // The package is the only remaining source. Loading the Tilemap must use
+    // the DB edge to preload its root-relative cooked atlas from the pak.
+    fs::remove_all(assetRoot, cleanupError);
+    auto& manager = ResourceManager::instance();
+    manager.setOnHotReload({});
+    manager.setAutoWatchLoadedResources(false);
+    manager.unloadAll();
+    setAssetRoots({});
+    CHECK(manager.openDatabase(package.dbPath));
+    const std::string mapLogical = "tilemaps/portable.aytilemap";
+    const auto map = manager.load<ITilemap>(mapLogical);
+    CHECK_NOT_NULL(map.get());
+    CHECK_INT_EQ(map ? map->getAtlasCount() : 0u, 1u);
+    const std::string atlasLogical = map && map->getAtlasCount() == 1u
+        ? map->getAtlasEntries()[0].sourcePath : "";
+    CHECK_TRUE(atlasLogical.rfind("textures/", 0u) == 0u);
+    CHECK_TRUE(manager.isLoaded(atlasLogical));
+    const auto texture = manager.load<ITexture>(atlasLogical);
+    CHECK_NOT_NULL(texture.get());
+    CHECK_INT_EQ(texture ? texture->getWidth() : 0u, 4u);
+    CHECK_INT_EQ(texture ? texture->getHeight() : 0u, 4u);
+
+    manager.unloadAll();
+    manager.setDatabase(ayt::storage::IStorageDatabase::create(":memory:"));
+    fs::remove_all(shipRoot, cleanupError);
 }
 
 TEST_SUITE_END

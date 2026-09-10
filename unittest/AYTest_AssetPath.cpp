@@ -28,14 +28,15 @@ TEST_CASE(resolve_virtual_path_uses_asset_root)
     setAssetRoot("");
 }
 
-TEST_CASE(resolve_virtual_path_without_root_falls_back_to_base_dir)
+TEST_CASE(resolve_virtual_path_without_root_stays_logical)
 {
     setAssetRoot("");
     const std::string resolved =
         resolveAssetPath("assets/meshes/hero.aymesh", "materials/hero.aymat");
-    // Without asset root, keep legacy join(baseDir, ref) behavior.
-    CHECK(resolved == "assets/meshes/materials/hero.aymat"
-          || resolved == "assets\\meshes\\materials\\hero.aymat");
+    // Package/DB runtimes intentionally have no loose asset root. Preserve
+    // the virtual path so it remains a valid ResourceManager lookup key.
+    CHECK(resolved == "materials/hero.aymat"
+          || resolved == "materials\\hero.aymat");
 }
 
 TEST_CASE(resolve_with_asset_root)

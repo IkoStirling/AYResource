@@ -10,6 +10,7 @@
 #include <AYIO/File.h>
 #include <AYIO/Path.h>
 
+#include <cctype>
 #include <filesystem>
 #include <unordered_set>
 
@@ -42,6 +43,23 @@ std::string makeLogicalPath(const fs::path& root, const fs::path& file)
 
 bool isCookableAsset(const std::string& path)
 {
+    // The editor can register loose source formats (PNG/WAV/etc.) with runtime
+    // loaders for rapid iteration. CookShip's contract is narrower: its input
+    // is an already-cooked tree, so only final `.ay*` artifacts belong in a
+    // shipping package. This also excludes compound authoring/sidecar names
+    // such as `.aytilemap.json` and `.aydep.json`.
+    std::string lowerPath = path;
+    for (char& ch : lowerPath) {
+        ch = static_cast<char>(std::tolower(
+            static_cast<unsigned char>(ch)));
+    }
+    const size_t separator = lowerPath.find_last_of("/\\");
+    const size_t dot = lowerPath.find_last_of('.');
+    if (dot == std::string::npos ||
+        (separator != std::string::npos && dot < separator) ||
+        lowerPath.compare(dot, 3u, ".ay") != 0) {
+        return false;
+    }
     const std::string type = ResourceRegistry::getTypeFromPath(path);
     return !type.empty();
 }
@@ -70,6 +88,26 @@ std::string resolveLogicalDep(const std::string& ownerLogical, const std::string
     }
     if (!depTo.empty() && (depTo[0] == '/' || depTo[0] == '\\')) {
         return toForwardSlashes(ayt::io::path::normalize(depTo));
+    }
+    // Converter virtual paths are rooted at the Assets/cooked tree. Treating
+    // e.g. a Tilemap's `textures/atlas.aytex` edge as sibling-relative would
+    // produce `tilemaps/textures/atlas.aytex` in resources.db. Keep this list
+    // aligned with AssetPath's cooked virtual-root contract.
+    static const char* kVirtualRoots[] = {
+        "materials/", "textures/", "meshes/", "skeletons/",
+        "animations/", "shaders/", "tilemaps/", "scripts/"
+    };
+    std::string normalized = toForwardSlashes(
+        ayt::io::path::normalize(depTo));
+    std::string lower = normalized;
+    for (char& ch : lower) {
+        ch = static_cast<char>(std::tolower(
+            static_cast<unsigned char>(ch)));
+    }
+    for (const char* root : kVirtualRoots) {
+        if (lower.rfind(root, 0u) == 0u) {
+            return normalized;
+        }
     }
     const std::string ownerDir = ayt::io::path::directory(ownerLogical);
     if (ownerDir.empty() || ownerDir == ".") {

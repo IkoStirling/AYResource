@@ -911,6 +911,17 @@ unittest/
 - Converter 以最终二进制作为 GUID 摘要输入，任意图层、裁剪、色调或阴影变更都会
   使 cook cache 失效。
 
+图集可移植化补充（2026-09-11）：Converter 将作者图集无损烘焙为单 mip RGBA8
+`.aytex`，运行时 Tilemap 只保存 `textures/...` 虚拟路径；同时在主
+`.aytilemap` 旁原子更新同名 `.aydep.json`，使 CookShip 能把 Tilemap→Texture
+边写进 `resources.db`。CookShip 与 loose dependency resolver 都把标准资源目录
+视为 Assets 根相对路径，不能把 `tilemaps/level.aytilemap` 引用的
+`textures/atlas.aytex` 拼成 `tilemaps/textures/...`。即使侧车缺失，ITilemap
+内置 atlas catalogue 仍作为运行时 intrinsic dependency，保证 loose-file
+加载保持可用；侧车只承担离线打包图和预加载顺序。CookShip 严格遵循 cooked-tree
+契约，只收录最终 `.ay*` 资源；Editor/Debug 中注册用于快速迭代的 PNG、WAV 等松散
+源格式，以及作者 JSON 和依赖侧车，都不会进入发布包。
+
 选择这一边界的原因是：terrain/stamp 是生成 Tile ID 的编辑操作，文件夹/名称是资产
 组织信息，它们不影响运行；layer、visual、tint、shadow 则直接影响每帧绘制，必须进入
 运行时格式。v1/v2 资源在接口中自然表现为“一个可见层、无视觉目录、无语义阴影”。

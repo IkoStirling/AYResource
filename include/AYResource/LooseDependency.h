@@ -17,6 +17,7 @@ std::vector<std::string> collectLooseDependencies(const std::string& assetPath);
 // P1: dependencies implied by the loaded L2 object itself (no sidecar required).
 // - IMesh material slots → .aymat paths
 // - IMaterial Texture* parameters → .aytex / image paths
+// - ITilemap atlas catalogue → cooked .aytex paths
 // Paths are resolved relative to assetPath via resolveAssetPath.
 std::vector<std::string> collectIntrinsicDependencies(const std::string& assetPath,
                                                       const IResource& resource);

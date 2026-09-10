@@ -4,6 +4,7 @@
 #include "AYResource/IConverter.h"
 #include "AYResource/assetsDefs/IMesh.h"
 #include "AYResource/assetsDefs/IMaterial.h"
+#include "AYResource/assetsDefs/ITilemap.h"
 #include "AYResource/IntermediateAsset.h"
 #include "AYResource/assetsImpl/Material.h"
 
@@ -110,6 +111,18 @@ std::vector<std::string> collectIntrinsicDependencies(const std::string& assetPa
                 }
                 pushUniqueResolved(resolved, assetPath, concrete->getTexture(name));
             });
+        }
+        return resolved;
+    }
+
+    if (const auto* tilemap = dynamic_cast<const ITilemap*>(&resource)) {
+        const UInt32 atlasCount = tilemap->getAtlasCount();
+        const TilemapAtlasEntry* atlases = tilemap->getAtlasEntries();
+        if (atlasCount > 0u && atlases == nullptr) {
+            return resolved;
+        }
+        for (UInt32 i = 0u; i < atlasCount; ++i) {
+            pushUniqueResolved(resolved, assetPath, atlases[i].sourcePath);
         }
         return resolved;
     }

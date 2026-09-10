@@ -1,5 +1,6 @@
 #include "AYResource/Converter/TilemapConverter.h"
 #include "AYResource/Converter/TextureConverter.h"
+#include "AYResource/LooseDependency.h"
 #include "AYResource/VirtualAssetPath.h"
 #include "AYResource/assetsImpl/TilemapAsset.h"
 #include "AYIO/File.h"
@@ -538,6 +539,26 @@ ConversionResult TilemapConverter::convert() {
         result.resources.end(),
         std::make_move_iterator(atlasResources.begin()),
         std::make_move_iterator(atlasResources.end()));
+
+    // Persist the converter graph beside the primary runtime asset. CookShip
+    // deliberately consumes per-asset sidecars rather than re-running source
+    // converters, so keeping this edge only in the returned result would make
+    // a project work as loose files but silently lose Tilemap -> atlas preload
+    // ordering in a package. Always rewrite the sidecar, including an empty
+    // dependency list, so removing the last atlas cannot leave stale edges.
+    if (!outputDir.empty()) {
+        const std::string runtimePath = outputDir + "/" + virtualPath;
+        const std::string sidecarPath =
+            looseDependencySidecarPath(runtimePath);
+        const std::string sidecarJson = result.toJson();
+        if (!ayt::io::File::atomicWrite(
+                sidecarPath, sidecarJson.data(), sidecarJson.size())) {
+            ayt::log::warn(
+                "[TilemapConverter] failed to write dependency sidecar %s",
+                sidecarPath.c_str());
+            return {};
+        }
+    }
 
     return result;
 }

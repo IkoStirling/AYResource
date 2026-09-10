@@ -124,8 +124,13 @@ std::string resolveAssetPath(const std::string& basePath, const std::string& ref
     // Contract virtual paths must resolve against the asset root, not the
     // referring file's directory (otherwise meshes/foo.aymesh + materials/x
     // becomes meshes/materials/x).
-    if (!assetRoots().empty() && isRootRelativeVirtualPath(refPath)) {
-        return resolveFromRoots(refPath);
+    if (isRootRelativeVirtualPath(refPath)) {
+        // A cooked virtual path stays root-relative even when a package/DB
+        // runtime has no loose asset root mounted. With roots configured we
+        // resolve to disk; otherwise the logical path itself is the lookup key.
+        return assetRoots().empty()
+            ? ayt::io::path::normalize(refPath)
+            : resolveFromRoots(refPath);
     }
 
     std::string baseDir = ayt::io::path::directory(basePath);
