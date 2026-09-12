@@ -3,6 +3,7 @@
 #include "AYResource/Loader/TextureLoader.h"
 #include "AYIO/File.h"
 #include "AYMath/MathUtils.h"
+#include <AYLog.h>
 #include <AYStorage/Guid.h>
 #include <cstring>
 
@@ -71,7 +72,11 @@ void TextureConverter::setOutputDir(const std::string& dir) {
 
 // ===== 工具函数 =====
 static bool writeFile(const std::string& path, const void* data, size_t size) {
-    return ayt::io::File::atomicWrite(path, data, size);
+    if (ayt::io::File::atomicWrite(path, data, size)) {
+        return true;
+    }
+    ayt::log::warn("[TextureConverter] failed to write %s", path.c_str());
+    return false;
 }
 
 // 文件大小（0 = 不可读/空）。rawCopy 的 SKIP 判定用大小相等代表
@@ -457,8 +462,9 @@ ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
             return result;
         }
 
-        if (!fullOutputPath.empty()) {
-            writeFile(fullOutputPath, rawData.data(), rawData.size());
+        if (!fullOutputPath.empty()
+            && !writeFile(fullOutputPath, rawData.data(), rawData.size())) {
+            return result;
         }
 
         ConversionResult::ConvertedResource res;
@@ -584,8 +590,9 @@ ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
     }
 
     // 立即写入（中断恢复支持）
-    if (!fullOutputPath.empty()) {
-        ayt::io::File::atomicWrite(fullOutputPath, binaryData.data(), binaryData.size());
+    if (!fullOutputPath.empty()
+        && !writeFile(fullOutputPath, binaryData.data(), binaryData.size())) {
+        return result;
     }
 
     ConversionResult::ConvertedResource res;
@@ -784,8 +791,9 @@ ConversionResult TextureConverter::convert() {
     }
 
     // 写入输出目录（立即写入，支持中断恢复）
-    if (!fullOutputPath.empty()) {
-        writeFile(fullOutputPath, binaryData.data(), binaryData.size());
+    if (!fullOutputPath.empty()
+        && !writeFile(fullOutputPath, binaryData.data(), binaryData.size())) {
+        return result;
     }
 
     // 构建资源信息
@@ -901,8 +909,9 @@ std::vector<ConversionResult::ConvertedResource> TextureConverter::convertAll(
         }
 
         // 写入输出目录（立即写入，支持中断恢复）
-        if (!fullOutputPath.empty()) {
-            writeFile(fullOutputPath, binaryData.data(), binaryData.size());
+        if (!fullOutputPath.empty()
+            && !writeFile(fullOutputPath, binaryData.data(), binaryData.size())) {
+            continue;
         }
 
         ConversionResult::ConvertedResource res;

@@ -481,6 +481,43 @@ TEST_CASE(TilemapConverterV3AuthoringDataRoundTrip)
     std::remove(sidecarPath.c_str());
 }
 
+TEST_CASE(TilemapConverterAtlasWriteFailureDoesNotPublishSuccess)
+{
+    namespace fs = std::filesystem;
+    const fs::path root = "cm_tilemap_write_failure";
+    const fs::path sourceRoot = root / "source";
+    const fs::path outputRoot = root / "output";
+    std::error_code cleanupError;
+    fs::remove_all(root, cleanupError);
+    CHECK(fs::create_directories(sourceRoot));
+    CHECK(fs::create_directories(outputRoot));
+    CHECK(writeRedPng((sourceRoot / "atlas.png").string()));
+
+    const char* json =
+        "{\"name\":\"write_failure\",\"cols\":1,\"rows\":1,"
+        "\"tileWidth\":4,\"tileHeight\":4,\"defaultTileId\":1,"
+        "\"tiles\":[1],\"tileAssets\":{\"atlases\":[{"
+        "\"atlasId\":9,\"sourcePath\":\"atlas.png\","
+        "\"imageWidth\":4,\"imageHeight\":4}],\"entries\":[{"
+        "\"tileId\":1,\"atlasId\":9,\"sourceRect\":[0,0,4,4]}]}}";
+    const fs::path sourcePath = sourceRoot / "write_failure.aytilemap.json";
+    CHECK(writeTextFile(sourcePath.string(), json));
+
+    // A regular file at the required output directory makes atomicWrite fail
+    // deterministically. The failed atlas must abort the whole conversion so
+    // no tilemap binary or dependency sidecar advertises a missing texture.
+    CHECK(writeTextFile((outputRoot / "textures").string(), "blocked"));
+    TilemapConverter converter(sourcePath.string());
+    converter.setOutputDir(outputRoot.string());
+    const ConversionResult result = converter.convert();
+    CHECK(result.resources.empty());
+    CHECK(result.dependencies.empty());
+    CHECK_FALSE(fs::exists(outputRoot / "tilemaps/write_failure.aytilemap"));
+    CHECK_FALSE(fs::exists(outputRoot / "tilemaps/write_failure.aydep.json"));
+
+    fs::remove_all(root, cleanupError);
+}
+
 TEST_CASE(TilemapV3PackagesAtlasDependencyAndLoadsWithoutLooseFiles)
 {
     namespace fs = std::filesystem;
