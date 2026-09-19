@@ -22,6 +22,7 @@
 #include <sstream>
 #include <system_error>
 #include <unordered_map>
+#include <unordered_set>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -205,6 +206,212 @@ bool matches(const std::string& pattern, const std::string& logical)
     } catch (const std::regex_error&) {
         return false;
     }
+}
+
+void diagnostic(std::vector<ProjectBuildDiagnostic>& target,
+                ProjectBuildDiagnostic::Severity severity,
+                std::string asset, std::string message);
+
+bool isBakedSkeletonPath(const fs::path& path)
+{
+    const std::string filename = lower(path.filename().string());
+    return filename.ends_with(".baked.ayskel");
+}
+
+bool isSkeletonAuthoringMetadata(const fs::path& path)
+{
+    const std::string filename = lower(path.filename().string());
+    return lower(path.extension().string()) == ".aysmap"
+        || filename.ends_with(".bake-plan.json")
+        || filename.ends_with(".bake-result.json");
+}
+
+std::string skeletonSourceFingerprint(const fs::path& path)
+{
+    std::error_code error;
+    const std::uintmax_t size = fs::file_size(path, error);
+    if (error) return {};
+    const auto modified = fs::last_write_time(path, error);
+    if (error) return std::to_string(size);
+    return std::to_string(size) + ":"
+        + std::to_string(modified.time_since_epoch().count());
+}
+
+struct SkeletonReleaseGateResult {
+    bool valid = false;
+    std::unordered_set<std::string> excludedPaths;
+};
+
+SkeletonReleaseGateResult validateSkeletonReleaseGate(
+    const fs::path& skeletonPath, const fs::path& assetsRoot,
+    std::vector<ProjectBuildDiagnostic>& diagnostics)
+{
+    SkeletonReleaseGateResult result;
+    const std::string logical = portable(fs::relative(skeletonPath, assetsRoot));
+    const auto reject = [&](std::string code, std::string message) {
+        diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Error,
+            logical, "[" + std::move(code) + "] " + std::move(message));
+    };
+    fs::path mappingPath = skeletonPath;
+    mappingPath.replace_extension(".aysmap");
+    if (!fs::is_regular_file(mappingPath)) {
+        reject("skeletonMappingMissing",
+            "Source skeleton has no humanoid mapping resource.");
+        return result;
+    }
+
+    Json mapping;
+    try {
+        const std::string text = ayt::io::File::readAllText(mappingPath.string());
+        mapping = Json::parse(text);
+    } catch (const std::exception& exception) {
+        reject("skeletonMappingInvalid",
+            std::string("Skeleton mapping is unreadable: ") + exception.what());
+        return result;
+    }
+    if (mapping.value("type", std::string{}) != "SkeletonMapping"
+        || mapping.value("version", 0u) != 1u) {
+        reject("skeletonMappingInvalid",
+            "Skeleton mapping schema is unsupported.");
+        return result;
+    }
+    const std::string skeletonReference = mapping.value(
+        "skeleton", std::string{});
+    fs::path referenced = skeletonReference;
+    if (referenced.is_relative()) referenced = mappingPath.parent_path() / referenced;
+    std::error_code referenceError;
+    if (fs::weakly_canonical(referenced, referenceError)
+        != fs::weakly_canonical(skeletonPath)) {
+        reject("skeletonMappingMismatch",
+            "Skeleton mapping references a different source skeleton.");
+        return result;
+    }
+    static constexpr std::array<const char*, 15> requiredRoles = {
+        "hips", "spine", "head",
+        "leftUpperArm", "leftLowerArm", "leftHand",
+        "rightUpperArm", "rightLowerArm", "rightHand",
+        "leftUpperLeg", "leftLowerLeg", "leftFoot",
+        "rightUpperLeg", "rightLowerLeg", "rightFoot",
+    };
+    const Json roles = mapping.value("roles", Json::object());
+    for (const char* role : requiredRoles) {
+        const auto value = roles.find(role);
+        if (value == roles.end() || !value->is_number_integer()
+            || value->get<int>() < 0) {
+            reject("skeletonMappingIncomplete",
+                std::string("Required humanoid role is not mapped: ") + role);
+            return result;
+        }
+    }
+    const std::string fingerprint = skeletonSourceFingerprint(skeletonPath);
+    if (fingerprint.empty()
+        || mapping.value("sourceFingerprint", std::string{}) != fingerprint) {
+        reject("skeletonMappingStale",
+            "Source skeleton changed after its mapping was saved.");
+        return result;
+    }
+    const std::string bakeState = mapping.value(
+        "bakeState", std::string{"notBaked"});
+    if (bakeState != "ready") {
+        reject("skeletonBakeNotReady",
+            "Skeleton bake state is '" + bakeState
+                + "'; a successful current bake is required for packaging.");
+        return result;
+    }
+    if (mapping.value("bakedFingerprint", std::string{}) != fingerprint) {
+        reject("skeletonBakeStale",
+            "Baked skeleton was produced from an older source revision.");
+        return result;
+    }
+
+    const fs::path receiptPath = skeletonPath.parent_path() / "Baked"
+        / (skeletonPath.stem().string() + ".bake-result.json");
+    Json receipt;
+    try {
+        const std::string text = ayt::io::File::readAllText(receiptPath.string());
+        receipt = Json::parse(text);
+    } catch (const std::exception& exception) {
+        reject("skeletonBakeReceiptMissing",
+            std::string("Bake result manifest is missing or unreadable: ")
+                + exception.what());
+        return result;
+    }
+    if (receipt.value("type", std::string{}) != "SkeletonBakeResult"
+        || receipt.value("version", 0u) != 1u
+        || receipt.value("sourceFingerprint", std::string{}) != fingerprint) {
+        reject("skeletonBakeReceiptInvalid",
+            "Bake result manifest does not match the current source skeleton.");
+        return result;
+    }
+    bool hasSkeletonOutput = false;
+    std::size_t animationOutputCount = 0u;
+    const Json outputs = receipt.value("outputs", Json::array());
+    if (!outputs.is_array() || outputs.empty()) {
+        reject("skeletonBakeOutputMissing",
+            "Bake result manifest contains no outputs.");
+        return result;
+    }
+    for (const Json& value : outputs) {
+        if (!value.is_string()) {
+            reject("skeletonBakeOutputInvalid",
+                "Bake result manifest contains an invalid output path.");
+            return result;
+        }
+        const fs::path output = value.get<std::string>();
+        if (!fs::is_regular_file(output) || !isUnder(assetsRoot, output)) {
+            reject("skeletonBakeOutputMissing",
+                "Baked output is missing or outside the package asset root: "
+                    + portable(output));
+            return result;
+        }
+        if (isBakedSkeletonPath(output)) hasSkeletonOutput = true;
+        if (lower(output.extension().string()) == ".ayanm") {
+            ++animationOutputCount;
+        }
+    }
+    if (!hasSkeletonOutput) {
+        reject("skeletonBakeOutputMissing",
+            "Bake result has no cleaned .baked.ayskel output.");
+        return result;
+    }
+
+    std::size_t animationDependencyCount = 0u;
+    const Json dependencies = receipt.value("dryRun", Json::object())
+        .value("dependencies", Json::array());
+    if (dependencies.is_array()) {
+        for (const Json& dependency : dependencies) {
+            if (!dependency.is_object()
+                || dependency.value("kind", std::string{}) != "animation") {
+                continue;
+            }
+            ++animationDependencyCount;
+            const fs::path source = dependency.value("path", std::string{});
+            if (!source.empty()) {
+                result.excludedPaths.insert(
+                    portable(fs::absolute(source).lexically_normal()));
+            }
+        }
+    }
+    if (animationOutputCount < animationDependencyCount) {
+        reject("skeletonAnimationBakeIncomplete",
+            "Not every affected animation has a baked output.");
+        return result;
+    }
+
+    result.excludedPaths.insert(
+        portable(fs::absolute(skeletonPath).lexically_normal()));
+    result.excludedPaths.insert(
+        portable(fs::absolute(mappingPath).lexically_normal()));
+    result.excludedPaths.insert(
+        portable(fs::absolute(receiptPath).lexically_normal()));
+    fs::path dryRunPath = mappingPath;
+    dryRunPath += ".bake-plan.json";
+    result.excludedPaths.insert(
+        portable(fs::absolute(dryRunPath).lexically_normal()));
+    result.valid = true;
+    diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Info, logical,
+        "[skeletonBakeReady] Packaging will use cleaned baked skeleton outputs; authoring resources are excluded.");
+    return result;
 }
 
 void diagnostic(std::vector<ProjectBuildDiagnostic>& target,
@@ -787,6 +994,17 @@ ProjectBuildPlan ProjectBuildPlanner::create(
         return plan;
     }
     std::sort(files.begin(), files.end());
+    std::unordered_set<std::string> skeletonAuthoringExclusions;
+    for (const fs::path& file : files) {
+        if (lower(file.extension().string()) != ".ayskel"
+            || isBakedSkeletonPath(file)) {
+            continue;
+        }
+        SkeletonReleaseGateResult gate = validateSkeletonReleaseGate(
+            file, assetsRoot, plan.diagnostics);
+        skeletonAuthoringExclusions.insert(
+            gate.excludedPaths.begin(), gate.excludedPaths.end());
+    }
     for (const fs::path& file : files) {
         ProjectBuildAsset asset;
         asset.sourcePath = file.string();
@@ -808,6 +1026,13 @@ ProjectBuildPlan ProjectBuildPlanner::create(
             asset.transform = isImportSupportedExtension(asset.sourcePath)
                 ? ProjectAssetTransform::Cook
                 : ProjectAssetTransform::Raw;
+        }
+        const std::string absoluteFile = portable(
+            fs::absolute(file).lexically_normal());
+        if (isSkeletonAuthoringMetadata(file)
+            || skeletonAuthoringExclusions.contains(absoluteFile)) {
+            asset.transform = ProjectAssetTransform::Exclude;
+            asset.cacheKey.clear();
         }
         if (asset.transform == ProjectAssetTransform::Cook
             && !isImportSupportedExtension(asset.sourcePath)) {
@@ -843,6 +1068,27 @@ ProjectBuildResult ProjectBuildExecutor::execute(
     report(progress, ProjectBuildStage::Validate, 0.0f, "validating plan");
     if (!plan.valid()) {
         result.error = "Project build plan contains errors.";
+        return result;
+    }
+    const fs::path releaseAssetsRoot = fs::path(plan.projectRoot)
+        / plan.profile.content.assetRoot;
+    std::vector<ProjectBuildDiagnostic> releaseDiagnostics;
+    for (const ProjectBuildAsset& asset : plan.assets) {
+        const fs::path source(asset.sourcePath);
+        if (lower(source.extension().string()) != ".ayskel"
+            || isBakedSkeletonPath(source)) {
+            continue;
+        }
+        (void)validateSkeletonReleaseGate(
+            source, releaseAssetsRoot, releaseDiagnostics);
+    }
+    result.diagnostics.insert(result.diagnostics.end(),
+        releaseDiagnostics.begin(), releaseDiagnostics.end());
+    if (std::any_of(releaseDiagnostics.begin(), releaseDiagnostics.end(),
+            [](const ProjectBuildDiagnostic& item) {
+                return item.severity == ProjectBuildDiagnostic::Severity::Error;
+            })) {
+        result.error = "Skeleton release gate rejected the project build.";
         return result;
     }
     const fs::path projectRoot = plan.projectRoot;
