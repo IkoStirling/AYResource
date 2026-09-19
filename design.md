@@ -1,4 +1,7 @@
-# AYResource — Design (v2.0)
+# AYResource — Design (v2.1)
+
+**Version:** 2.1.0
+**Date:** 2026-09-18
 
 > **2026-09-01 — `.ayatlas` v1**: `.ayatlas.json` is the author format and
 > `AtlasConverter` emits `.ayatlas` v1 (`AYAT`). `IAtlas` exposes the referenced
@@ -7,7 +10,7 @@
 > residency.
 
 **Status:** Living document, aligned with [`ENGINE-FOUNDATION-PLAN.md`](../../../../ENGINE-FOUNDATION-PLAN.md) and [`docs/runtime-conventions.md`](docs/runtime-conventions.md)
-**Last revised:** 2026-07-27
+**Last revised:** 2026-09-18（新增骨骼动画后续设计，不改变既有实现状态）
 **Owner:** Content engineer
 
 ---
@@ -15,6 +18,8 @@
 ## 0. Reading guide
 
 角色资产的尺寸、绑定、版本、动画兼容与多纹理验收统一见 [AYHumanoid 标准骨架与参考模型规范](../../AYDocs/AYHUMANOID-STANDARD.md)；FBX 操作见 [外部角色与动画导入标准](docs/external-character-animation-import-standard.md)。标准参考资产及验收工具待实施，设计目标不表示当前 importer 已实现相应检查。
+
+原始骨架保留、可绑定骨架的映射/重定向配置资源、编辑器状态与发布清理统一见 [骨骼动画资源管线设计](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md)。SKA-01～16 的优先级、owner 和验收仅在该文档 §7 维护，全部待实施。
 
 | Audience | Read |
 |----------|------|
@@ -469,7 +474,7 @@ CMake: `AY_RESOURCE_USE_SABA` (OFF by default). When OFF, `MMDConverter` is not 
 1. **Paired import:** VMD bone names match the **PMX** Japanese names. API shape:
    - `MMDConverter::setModelPath(pmx)` + `setMotionPath(vmd)` or `convert(pmx, vmd)`.
    - Motion-only without a model is unsupported (or requires an explicit prior `.ayskel` + name table).
-2. **Bone names on disk:** First ship may **keep Japanese standard names** in `.ayskel`/`.ayanm` (Player binds by string — works). Optional later: map to engine Humanoid canonical names (see `AYAnimation` Retarget / Humanoid table) **inside the Parser**, never at tick time.
+2. **Bone names on disk:** The future PMX/VMD frontend may **keep Japanese standard names** in `.ayskel`/`.ayanm` (the shared Player already binds by string). The planned pipeline preserves source names in authoring resources and compiles selected mappings/profiles into cleaned runtime outputs; see [skeletal resource pipeline](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md). Import-time and editor-time configuration share the same core, never rename or guess aliases at tick time. Both the PMX/VMD frontend and the new publication gate remain future work.
 3. **IK / physics / morph (v1):** Prefer **bake into keyframes** or **drop**. Do not require runtime MMD IK. Morph → future `MORP` extension (§4 / R-08) if needed.
 4. **Encoding:** Rely on saba for PMX UTF-16 vs VMD Shift-JIS; do not reimplement in AY code.
 5. **Quality bar for v1:** “Clip plays on the imported mesh/skeleton” — not perfect foot IK or cross-model retarget.
@@ -491,6 +496,22 @@ CMake: `AY_RESOURCE_USE_SABA` (OFF by default). When OFF, `MMDConverter` is not 
 - [ ] Unit test under `unittest/` with a tiny fixture (or skipped if `AY_RESOURCE_USE_SABA=OFF`)
 
 ---
+
+### 5.8 骨骼作者资源与发布编译（2026-09-18，待实施）
+
+设计权威入口为 [骨骼动画资源管线](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md)，不改变 §7 中现有 `ISkeleton/IAnimation` 公共接口。
+新增完整源骨架视图、SkeletonMapping、RetargetProfile 和 MappingTemplate 作者资源；允许用户
+导入时不转换，在编辑器手工/模板配置后生成派生输出。映射按稳定资源/骨身份保存，不持久化 cook 索引。
+默认配置绑定由编辑器元数据管理，避免 profile 与骨架的加载循环；完全烘焙输出不依赖作者模板。
+
+当前 FBXParser 仅从 skin cluster 骨精简层级，因此完整源骨架与两根保留需要 SKA-03 的实质改造。
+当前 CookShip 只打包已 cook 文件，必须新增离线骨架/动画编译与 manifest 门禁，不能凭 `.ay*`
+扩展名认定输出已清理。清理只写派生资源，不删除源文件；按蒙皮及挂点、根运动、Mask、IK、
+物理等依赖保留骨，折叠父骨后同步重算 TRS/轨道和所有引用，不强制只留下 57 个角色。
+
+AYResource 负责 schema、IO、身份、清理与引用重写、构建记录及发布验收；转换数学由 AYAnimation
+提供。共同调用两者的离线编排使用独立 target，禁止引入 AYResource 核心反向依赖 AYAnimation。
+源/目标/profile/clip 或输出变化使构建失效，发布不回退到旧缓存；取消/失败不替换上次成功 manifest。
 
 ## 6. L2 — Runtime resource manager
 
@@ -847,6 +868,14 @@ Full spec with shader-uniform names and parameter conventions: `docs/runtime-con
 
 ---
 
+### 10.1 后续骨骼动画管线实现项（非 Phase 0 完成声明）
+
+- **P0**：SKA-01/03 作者资源与源保留，SKA-02 统一校验，SKA-05 构建指纹/状态，SKA-07 清理与全引用重写，SKA-08 发布 manifest/CLI 门禁；SKA-09 分项和闭环回归持续跟进。
+- **P1**：SKA-10 批量/来源模板编排，SKA-13 版本兼容与配置迁移；协作 SKA-11/12 的转换输出。
+- **P2**：协作 SKA-16 骨骼 LOD/平台压缩。
+
+上述均待实施；具体依赖与验收以 [统一队列](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md) §7 为准，不改变历史 R-01/R-07/R-08 状态。
+
 ## 11. Tests (current)
 
 ```
@@ -879,7 +908,7 @@ unittest/
 |------|-------|------|
 | `RenderMesh` (L3) | `AYRenderer` | now |
 | Bone matrices, skinning, `AnimationPlayer` | `AYAnimation` | Phase 1 (AN-01..AN-03) |
-| State machine, IK, motion matching, retarget | `AYAnimation` | Phase 2+ (`ENGINE-FOUNDATION-PLAN.md` §6 Phase 4) |
+| State machine, IK, motion matching, retarget math | `AYAnimation` | Phase 2+；后续 SKA-02/06/11/12；作者资源、清理与发布编排仍由本模块/离线工具负责，见 §5.8 |
 | glTF 2.0 real converter | `AYResource` | Phase 1 R-04 |
 | PMX / VMD converters (`MMDConverter` + saba) | `AYResource` | Deferred — **spec in §5.7**; schedule with R-05/R-06 when batch MMD is needed |
 | Pak/DB format, streaming | (future `AYStorage`) | Phase 4 |
@@ -891,6 +920,7 @@ unittest/
 
 | Date | Author | Change |
 |------|--------|--------|
+| 2026-09-18 | Content / animation | **设计待实施**：§5.8 / §10.1 接入 SKA 队列；明确完整源骨架、映射/profile 作者资源、非破坏式配置、派生清理和发布门禁，并修正 MMD 映射仅限 Parser 的旧规划；无新增代码或功能完成声明。 |
 | 2026-06-04 | Content team | Initial draft |
 | 2026-06-09 | Content team | Added GUID system, SQLite schema drafts, precision compression framework, pak design |
 | **2026-07-06** | **Content team** | **v2.0 — major realignment with `ENGINE-FOUNDATION-PLAN.md` v1.0 and `runtime-conventions.md`.** Trimmed speculative / out-of-scope sections (precision compression, full SQLite schema, pak design). Added: explicit non-goals, three-layer module layout, current vs target state, IntermediateAsset detail, L1↔L3 bridge map, CR-enforced public/private API surface, Phase 0 backlog with R-01/R-07/R-08 status, deferred items mapped to owning modules. Preserved all concrete API signatures from the actual headers — no API removed. |
