@@ -8,8 +8,11 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <cstdio>
+#include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using namespace ayt::resource;
@@ -141,8 +144,71 @@ nlohmann::json requiredSkeletonRoles()
     };
     nlohmann::json result = nlohmann::json::object();
     int index = 0;
-    for (const char* role : roles) result[role] = index++;
+    for (const char* role : roles) {
+        result[role] = {
+            {"bonePath", std::string("root/") + role},
+            {"sourceIndex", index++},
+        };
+    }
     return result;
+}
+
+nlohmann::json rigProfile(const std::string& fingerprint)
+{
+    return {
+        {"type", "RigProfile"}, {"version", 1},
+        {"id", "rig-test-hero"}, {"kind", "mapping"},
+        {"source", {
+            {"skeleton", "hero.ayskel"},
+            {"fingerprint", fingerprint},
+        }},
+        {"native", false}, {"roles", requiredSkeletonRoles()},
+    };
+}
+
+std::string rigProfileFingerprint(const nlohmann::json& profile,
+                                  const std::string& sourceFingerprint)
+{
+    static constexpr std::string_view roles[] = {
+        "sceneRoot", "motionRoot", "hips", "spine", "chest", "upperChest",
+        "neck", "head", "leftEye", "rightEye", "jaw", "leftShoulder",
+        "leftUpperArm", "leftLowerArm", "leftHand", "rightShoulder",
+        "rightUpperArm", "rightLowerArm", "rightHand", "leftUpperLeg",
+        "leftLowerLeg", "leftFoot", "leftToes", "rightUpperLeg",
+        "rightLowerLeg", "rightFoot", "rightToes", "leftThumbMetacarpal",
+        "leftThumbProximal", "leftThumbDistal", "leftIndexProximal",
+        "leftIndexIntermediate", "leftIndexDistal", "leftMiddleProximal",
+        "leftMiddleIntermediate", "leftMiddleDistal", "leftRingProximal",
+        "leftRingIntermediate", "leftRingDistal", "leftLittleProximal",
+        "leftLittleIntermediate", "leftLittleDistal", "rightThumbMetacarpal",
+        "rightThumbProximal", "rightThumbDistal", "rightIndexProximal",
+        "rightIndexIntermediate", "rightIndexDistal", "rightMiddleProximal",
+        "rightMiddleIntermediate", "rightMiddleDistal", "rightRingProximal",
+        "rightRingIntermediate", "rightRingDistal", "rightLittleProximal",
+        "rightLittleIntermediate", "rightLittleDistal",
+    };
+    const auto profileRoles = profile.value("roles", nlohmann::json::object());
+    std::string canonical = "v1|" + sourceFingerprint + "|native="
+        + (profile.value("native", false) ? "1" : "0");
+    for (const std::string_view role : roles) {
+        canonical += "|";
+        canonical += role;
+        canonical += "=";
+        const auto value = profileRoles.find(std::string(role));
+        canonical += value != profileRoles.end() && value->is_object()
+            ? value->value("bonePath", std::string{"-"}) : "-";
+    }
+    constexpr std::uint64_t offset = 14695981039346656037ull;
+    constexpr std::uint64_t prime = 1099511628211ull;
+    std::uint64_t hash = offset;
+    for (const unsigned char byte : canonical) {
+        hash ^= byte;
+        hash *= prime;
+    }
+    std::ostringstream text;
+    text << "rig-input-" << std::hex << std::setfill('0')
+         << std::setw(16) << hash;
+    return text.str();
 }
 
 } // namespace
@@ -365,18 +431,16 @@ TEST_CASE(package_and_cache_directories_cannot_overlap)
     CHECK(error.find("overlap") != std::string::npos);
 }
 
-TEST_CASE(skeleton_release_gate_rejects_unbaked_authoring_resources)
+TEST_CASE(skeleton_release_gate_requires_legacy_mapping_migration)
 {
     ProjectBuildCleanup cleanup{"ayproject_build_skeleton_unbaked_test"};
     const fs::path skeleton = cleanup.root / "Assets/Characters/hero.ayskel";
     CHECK(writeText(skeleton, "source-skeleton"));
-    const std::string fingerprint = skeletonFingerprint(skeleton);
-    nlohmann::json mapping = {
+    const nlohmann::json mapping = {
         {"type", "SkeletonMapping"}, {"version", 1},
         {"skeleton", "hero.ayskel"},
-        {"sourceFingerprint", fingerprint},
-        {"native", false}, {"bakeState", "notBaked"},
-        {"bakedFingerprint", ""}, {"roles", requiredSkeletonRoles()},
+        {"sourceFingerprint", skeletonFingerprint(skeleton)},
+        {"native", false}, {"roles", nlohmann::json::object()},
     };
     CHECK(writeText(cleanup.root / "Assets/Characters/hero.aysmap",
                     mapping.dump(2)));
@@ -391,7 +455,7 @@ TEST_CASE(skeleton_release_gate_rejects_unbaked_authoring_resources)
     CHECK_FALSE(plan.valid());
     CHECK(std::any_of(plan.diagnostics.begin(), plan.diagnostics.end(),
         [](const ProjectBuildDiagnostic& item) {
-            return item.message.find("skeletonBakeNotReady")
+            return item.message.find("skeletonRigProfileMigrationRequired")
                 != std::string::npos;
         }));
     const ProjectBuildResult built = ProjectBuildExecutor::execute(plan);
@@ -411,17 +475,13 @@ TEST_CASE(skeleton_release_gate_packages_only_verified_baked_outputs)
     CHECK(writeText(bakedSkeleton, "cleaned-skeleton"));
     CHECK(writeText(bakedAnimation, "rewritten-animation"));
     const std::string fingerprint = skeletonFingerprint(skeleton);
-    nlohmann::json mapping = {
-        {"type", "SkeletonMapping"}, {"version", 1},
-        {"skeleton", "hero.ayskel"},
-        {"sourceFingerprint", fingerprint},
-        {"native", false}, {"bakeState", "ready"},
-        {"bakedFingerprint", fingerprint}, {"roles", requiredSkeletonRoles()},
-    };
-    CHECK(writeText(character / "hero.aysmap", mapping.dump(2)));
+    const nlohmann::json mapping = rigProfile(fingerprint);
+    CHECK(writeText(character / "hero.ayrig", mapping.dump(2)));
+    CHECK(writeText(character / "hero.aysmap", "legacy-mapping"));
     nlohmann::json receipt = {
         {"type", "SkeletonBakeResult"}, {"version", 1}, {"generation", 1},
         {"sourceFingerprint", fingerprint},
+        {"profileFingerprint", rigProfileFingerprint(mapping, fingerprint)},
         {"outputs", nlohmann::json::array({
             fs::absolute(bakedSkeleton).lexically_normal().generic_string(),
             fs::absolute(bakedAnimation).lexically_normal().generic_string(),
@@ -453,6 +513,8 @@ TEST_CASE(skeleton_release_gate_packages_only_verified_baked_outputs)
             ? ProjectAssetTransform::Auto : found->transform;
     };
     CHECK(transformOf("Characters/hero.ayskel")
+        == ProjectAssetTransform::Exclude);
+    CHECK(transformOf("Characters/hero.ayrig")
         == ProjectAssetTransform::Exclude);
     CHECK(transformOf("Characters/hero.aysmap")
         == ProjectAssetTransform::Exclude);
@@ -489,16 +551,12 @@ TEST_CASE(skeleton_release_gate_rechecks_source_at_execution_time)
     CHECK(writeText(skeleton, "source-skeleton"));
     CHECK(writeText(bakedSkeleton, "cleaned-skeleton"));
     const std::string fingerprint = skeletonFingerprint(skeleton);
-    nlohmann::json mapping = {
-        {"type", "SkeletonMapping"}, {"version", 1},
-        {"skeleton", "hero.ayskel"},
-        {"sourceFingerprint", fingerprint}, {"bakeState", "ready"},
-        {"bakedFingerprint", fingerprint}, {"roles", requiredSkeletonRoles()},
-    };
-    CHECK(writeText(character / "hero.aysmap", mapping.dump(2)));
+    const nlohmann::json mapping = rigProfile(fingerprint);
+    CHECK(writeText(character / "hero.ayrig", mapping.dump(2)));
     nlohmann::json receipt = {
         {"type", "SkeletonBakeResult"}, {"version", 1},
         {"sourceFingerprint", fingerprint},
+        {"profileFingerprint", rigProfileFingerprint(mapping, fingerprint)},
         {"outputs", nlohmann::json::array({
             fs::absolute(bakedSkeleton).lexically_normal().generic_string(),
         })},
@@ -515,6 +573,44 @@ TEST_CASE(skeleton_release_gate_rechecks_source_at_execution_time)
         profile, cleanup.root.string());
     CHECK(plan.valid());
     CHECK(writeText(skeleton, "source-skeleton-changed"));
+    const ProjectBuildResult built = ProjectBuildExecutor::execute(plan);
+    CHECK_FALSE(built.ok);
+    CHECK(built.error.find("Skeleton release gate") != std::string::npos);
+}
+
+TEST_CASE(skeleton_release_gate_rechecks_rig_profile_at_execution_time)
+{
+    ProjectBuildCleanup cleanup{"ayproject_build_rig_profile_stale_test"};
+    const fs::path character = cleanup.root / "Assets/Characters";
+    const fs::path skeleton = character / "hero.ayskel";
+    const fs::path bakedSkeleton = character / "Baked/hero.baked.ayskel";
+    CHECK(writeText(skeleton, "source-skeleton"));
+    CHECK(writeText(bakedSkeleton, "cleaned-skeleton"));
+    const std::string fingerprint = skeletonFingerprint(skeleton);
+    nlohmann::json mapping = rigProfile(fingerprint);
+    CHECK(writeText(character / "hero.ayrig", mapping.dump(2)));
+    const nlohmann::json receipt = {
+        {"type", "SkeletonBakeResult"}, {"version", 1},
+        {"sourceFingerprint", fingerprint},
+        {"profileFingerprint", rigProfileFingerprint(mapping, fingerprint)},
+        {"outputs", nlohmann::json::array({
+            fs::absolute(bakedSkeleton).lexically_normal().generic_string(),
+        })},
+        {"dryRun", {{"dependencies", nlohmann::json::array()}}},
+    };
+    CHECK(writeText(character / "Baked/hero.bake-result.json",
+                    receipt.dump(2)));
+    CHECK(writeText(cleanup.root / "BuildProfiles/test.aybuild.json",
+                    profileJson()));
+    std::string error;
+    const ProjectBuildProfile profile = ProjectBuildProfile::load(
+        (cleanup.root / "BuildProfiles/test.aybuild.json").string(), &error);
+    const ProjectBuildPlan plan = ProjectBuildPlanner::create(
+        profile, cleanup.root.string());
+    CHECK(plan.valid());
+
+    mapping["roles"]["head"]["bonePath"] = "root/reassignedHead";
+    CHECK(writeText(character / "hero.ayrig", mapping.dump(2)));
     const ProjectBuildResult built = ProjectBuildExecutor::execute(plan);
     CHECK_FALSE(built.ok);
     CHECK(built.error.find("Skeleton release gate") != std::string::npos);

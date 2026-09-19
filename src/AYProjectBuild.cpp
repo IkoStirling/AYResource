@@ -16,10 +16,12 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <map>
 #include <regex>
 #include <set>
 #include <sstream>
+#include <string_view>
 #include <system_error>
 #include <unordered_map>
 #include <unordered_set>
@@ -221,7 +223,8 @@ bool isBakedSkeletonPath(const fs::path& path)
 bool isSkeletonAuthoringMetadata(const fs::path& path)
 {
     const std::string filename = lower(path.filename().string());
-    return lower(path.extension().string()) == ".aysmap"
+    const std::string extension = lower(path.extension().string());
+    return extension == ".ayrig" || extension == ".aysmap"
         || filename.ends_with(".bake-plan.json")
         || filename.ends_with(".bake-result.json");
 }
@@ -235,6 +238,55 @@ std::string skeletonSourceFingerprint(const fs::path& path)
     if (error) return std::to_string(size);
     return std::to_string(size) + ":"
         + std::to_string(modified.time_since_epoch().count());
+}
+
+std::string fnvHex(const char* prefix, const std::string& value)
+{
+    constexpr std::uint64_t offset = 14695981039346656037ull;
+    constexpr std::uint64_t prime = 1099511628211ull;
+    std::uint64_t hash = offset;
+    for (const unsigned char byte : value) {
+        hash ^= byte;
+        hash *= prime;
+    }
+    std::ostringstream text;
+    text << prefix << std::hex << std::setfill('0') << std::setw(16) << hash;
+    return text.str();
+}
+
+std::string rigProfileFingerprint(const Json& profile,
+                                  const std::string& sourceFingerprint)
+{
+    static constexpr std::string_view roles[] = {
+        "sceneRoot", "motionRoot", "hips", "spine", "chest", "upperChest",
+        "neck", "head", "leftEye", "rightEye", "jaw", "leftShoulder",
+        "leftUpperArm", "leftLowerArm", "leftHand", "rightShoulder",
+        "rightUpperArm", "rightLowerArm", "rightHand", "leftUpperLeg",
+        "leftLowerLeg", "leftFoot", "leftToes", "rightUpperLeg",
+        "rightLowerLeg", "rightFoot", "rightToes", "leftThumbMetacarpal",
+        "leftThumbProximal", "leftThumbDistal", "leftIndexProximal",
+        "leftIndexIntermediate", "leftIndexDistal", "leftMiddleProximal",
+        "leftMiddleIntermediate", "leftMiddleDistal", "leftRingProximal",
+        "leftRingIntermediate", "leftRingDistal", "leftLittleProximal",
+        "leftLittleIntermediate", "leftLittleDistal", "rightThumbMetacarpal",
+        "rightThumbProximal", "rightThumbDistal", "rightIndexProximal",
+        "rightIndexIntermediate", "rightIndexDistal", "rightMiddleProximal",
+        "rightMiddleIntermediate", "rightMiddleDistal", "rightRingProximal",
+        "rightRingIntermediate", "rightRingDistal", "rightLittleProximal",
+        "rightLittleIntermediate", "rightLittleDistal",
+    };
+    const Json profileRoles = profile.value("roles", Json::object());
+    std::string canonical = "v1|" + sourceFingerprint + "|native="
+        + (profile.value("native", false) ? "1" : "0");
+    for (const std::string_view role : roles) {
+        canonical += "|";
+        canonical += role;
+        canonical += "=";
+        const auto value = profileRoles.find(std::string(role));
+        canonical += value != profileRoles.end() && value->is_object()
+            ? value->value("bonePath", std::string{"-"}) : "-";
+    }
+    return fnvHex("rig-input-", canonical);
 }
 
 struct SkeletonReleaseGateResult {
@@ -253,10 +305,17 @@ SkeletonReleaseGateResult validateSkeletonReleaseGate(
             logical, "[" + std::move(code) + "] " + std::move(message));
     };
     fs::path mappingPath = skeletonPath;
-    mappingPath.replace_extension(".aysmap");
+    mappingPath.replace_extension(".ayrig");
     if (!fs::is_regular_file(mappingPath)) {
-        reject("skeletonMappingMissing",
-            "Source skeleton has no humanoid mapping resource.");
+        fs::path legacyPath = skeletonPath;
+        legacyPath.replace_extension(".aysmap");
+        if (fs::is_regular_file(legacyPath)) {
+            reject("skeletonRigProfileMigrationRequired",
+                "Legacy .aysmap must be opened and saved as .ayrig before packaging.");
+        } else {
+            reject("skeletonRigProfileMissing",
+                "Source skeleton has no Rig Profile resource.");
+        }
         return result;
     }
 
@@ -265,25 +324,28 @@ SkeletonReleaseGateResult validateSkeletonReleaseGate(
         const std::string text = ayt::io::File::readAllText(mappingPath.string());
         mapping = Json::parse(text);
     } catch (const std::exception& exception) {
-        reject("skeletonMappingInvalid",
-            std::string("Skeleton mapping is unreadable: ") + exception.what());
+        reject("skeletonRigProfileInvalid",
+            std::string("Rig Profile is unreadable: ") + exception.what());
         return result;
     }
-    if (mapping.value("type", std::string{}) != "SkeletonMapping"
-        || mapping.value("version", 0u) != 1u) {
-        reject("skeletonMappingInvalid",
-            "Skeleton mapping schema is unsupported.");
+    if (mapping.value("type", std::string{}) != "RigProfile"
+        || mapping.value("version", 0u) != 1u
+        || mapping.value("kind", std::string{}) != "mapping"
+        || mapping.value("id", std::string{}).empty()) {
+        reject("skeletonRigProfileInvalid",
+            "Rig Profile schema is unsupported or incomplete.");
         return result;
     }
-    const std::string skeletonReference = mapping.value(
+    const Json source = mapping.value("source", Json::object());
+    const std::string skeletonReference = source.value(
         "skeleton", std::string{});
     fs::path referenced = skeletonReference;
     if (referenced.is_relative()) referenced = mappingPath.parent_path() / referenced;
     std::error_code referenceError;
     if (fs::weakly_canonical(referenced, referenceError)
         != fs::weakly_canonical(skeletonPath)) {
-        reject("skeletonMappingMismatch",
-            "Skeleton mapping references a different source skeleton.");
+        reject("skeletonRigProfileMismatch",
+            "Rig Profile references a different source skeleton.");
         return result;
     }
     static constexpr std::array<const char*, 15> requiredRoles = {
@@ -296,33 +358,22 @@ SkeletonReleaseGateResult validateSkeletonReleaseGate(
     const Json roles = mapping.value("roles", Json::object());
     for (const char* role : requiredRoles) {
         const auto value = roles.find(role);
-        if (value == roles.end() || !value->is_number_integer()
-            || value->get<int>() < 0) {
-            reject("skeletonMappingIncomplete",
+        if (value == roles.end() || !value->is_object()
+            || value->value("bonePath", std::string{}).empty()) {
+            reject("skeletonRigProfileIncomplete",
                 std::string("Required humanoid role is not mapped: ") + role);
             return result;
         }
     }
     const std::string fingerprint = skeletonSourceFingerprint(skeletonPath);
     if (fingerprint.empty()
-        || mapping.value("sourceFingerprint", std::string{}) != fingerprint) {
-        reject("skeletonMappingStale",
-            "Source skeleton changed after its mapping was saved.");
+        || source.value("fingerprint", std::string{}) != fingerprint) {
+        reject("skeletonRigProfileStale",
+            "Source skeleton changed after its Rig Profile was saved.");
         return result;
     }
-    const std::string bakeState = mapping.value(
-        "bakeState", std::string{"notBaked"});
-    if (bakeState != "ready") {
-        reject("skeletonBakeNotReady",
-            "Skeleton bake state is '" + bakeState
-                + "'; a successful current bake is required for packaging.");
-        return result;
-    }
-    if (mapping.value("bakedFingerprint", std::string{}) != fingerprint) {
-        reject("skeletonBakeStale",
-            "Baked skeleton was produced from an older source revision.");
-        return result;
-    }
+    const std::string profileFingerprint = rigProfileFingerprint(
+        mapping, fingerprint);
 
     const fs::path receiptPath = skeletonPath.parent_path() / "Baked"
         / (skeletonPath.stem().string() + ".bake-result.json");
@@ -338,9 +389,11 @@ SkeletonReleaseGateResult validateSkeletonReleaseGate(
     }
     if (receipt.value("type", std::string{}) != "SkeletonBakeResult"
         || receipt.value("version", 0u) != 1u
-        || receipt.value("sourceFingerprint", std::string{}) != fingerprint) {
+        || receipt.value("sourceFingerprint", std::string{}) != fingerprint
+        || receipt.value("profileFingerprint", std::string{})
+            != profileFingerprint) {
         reject("skeletonBakeReceiptInvalid",
-            "Bake result manifest does not match the current source skeleton.");
+            "Bake result manifest does not match the current skeleton and Rig Profile.");
         return result;
     }
     bool hasSkeletonOutput = false;
