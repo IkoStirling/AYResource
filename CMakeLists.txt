@@ -11,6 +11,7 @@ file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
 )
 
 find_package(Stb REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 set(AYRESOURCE_IMPORT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AYImportJob.cpp
@@ -34,12 +35,16 @@ set(AYRESOURCE_IMPORT_SOURCES
 set(AYRESOURCE_COOK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AYCookShip.cpp
 )
+set(AYPROJECT_BUILD_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/AYProjectBuild.cpp
+)
 
 # The runtime build keeps the converter data contract but excludes all
 # authoring implementations and heavy importer SDKs.
 list(REMOVE_ITEM SRC_FILES
     ${AYRESOURCE_IMPORT_SOURCES}
     ${AYRESOURCE_COOK_SOURCES}
+    ${AYPROJECT_BUILD_SOURCES}
 )
 list(APPEND SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/IAYConverter.cpp)
 
@@ -165,6 +170,27 @@ if(AY_BUILD_RESOURCE_AUTHORING)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_link_libraries(AYResourceCook PUBLIC AYResource)
+
+    # Project-level Build/Cook/Stage/Package orchestration. This remains an
+    # authoring target so shipping runtimes do not link compiler or converter
+    # control paths.
+    add_library(AYProjectBuild STATIC ${AYPROJECT_BUILD_SOURCES})
+    add_library(AYResource::ProjectBuild ALIAS AYProjectBuild)
+    target_include_directories(AYProjectBuild PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/interface
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_link_libraries(AYProjectBuild
+        PUBLIC
+            AYResource
+            AYResourceImport
+            nlohmann_json::nlohmann_json
+        PRIVATE
+            AYCrypto
+            AYStorage
+            AYIO
+    )
 endif()
 
 if(BUILD_TESTING AND AY_BUILD_RESOURCE_AUTHORING)
