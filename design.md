@@ -876,6 +876,20 @@ Full spec with shader-uniform names and parameter conventions: `docs/runtime-con
 
 上述均待实施；具体依赖与验收以 [统一队列](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md) §7 为准，不改变历史 R-01/R-07/R-08 状态。
 
+### 10.2 Project Build authoring contract（2026-09-20）
+
+`AYResource::ProjectBuild` 是编辑器与命令行共享的 Build/Cook/Stage/Package
+编排层。`ProjectBuildProfile::serialize/save` 现在提供唯一的规范化
+`.aybuild.json` 写出路径，并通过临时文件加原子替换发布；读取、可视化编辑器与
+`project_build_tool` 不再各自维护一套 JSON 结构。内容规则保持显式顺序，Pak
+分块按 `pak:<chunk>` 规范化写出，Cook policy、缓存根目录、CMake 产物、打包和
+运行参数均参与往返测试。
+
+`.cookCache` 仍是内容寻址的派生数据，不是源资产。重复构建只在源指纹、转换参数、
+平台配置与工具契约均未变化时复用结果；Raw、Cook、Exclude 与 Loose/Pak 是两个
+独立维度。AYEditor 的 Project Settings & Build 窗口消费本契约，但后台执行器与
+命令行保持可独立使用。
+
 ## 11. Tests (current)
 
 ```

@@ -215,6 +215,36 @@ std::string rigProfileFingerprint(const nlohmann::json& profile,
 
 TEST_SUITE(ProjectBuildTests)
 
+TEST_CASE(profile_round_trip_uses_canonical_serialization)
+{
+    ProjectBuildCleanup cleanup{"ayproject_build_profile_roundtrip"};
+    const fs::path path = cleanup.root
+        / "BuildProfiles/roundtrip.aybuild.json";
+    CHECK(writeText(path, profileJson()));
+
+    std::string error;
+    ProjectBuildProfile profile = ProjectBuildProfile::load(
+        path.string(), &error);
+    CHECK(static_cast<bool>(profile));
+    profile.id = "roundtrip-edited";
+    profile.content.rules.push_back(ProjectBuildRule{
+        "UI/**/*.json", ProjectAssetTransform::Raw,
+        ProjectAssetStorage::Pak, "interface", false});
+    CHECK(profile.save(path.string(), &error));
+
+    const ProjectBuildProfile reloaded = ProjectBuildProfile::load(
+        path.string(), &error);
+    CHECK(static_cast<bool>(reloaded));
+    CHECK(reloaded.id == "roundtrip-edited");
+    CHECK(reloaded.content.rules.size() == profile.content.rules.size());
+    const ProjectBuildRule& rule = reloaded.content.rules.back();
+    CHECK(rule.match == "UI/**/*.json");
+    CHECK(rule.transform == ProjectAssetTransform::Raw);
+    CHECK(rule.storage == ProjectAssetStorage::Pak);
+    CHECK(rule.chunk == "interface");
+    CHECK_FALSE(rule.cookTextures);
+}
+
 TEST_CASE(profile_rules_are_manual_ordered_and_content_addressed)
 {
     ProjectBuildCleanup cleanup{"ayproject_build_profile_test"};

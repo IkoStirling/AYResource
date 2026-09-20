@@ -90,6 +90,12 @@ struct ProjectBuildProfile {
     explicit operator bool() const noexcept;
     bool validate(std::string* error = nullptr) const;
 
+    // Canonical checked-in authoring representation shared by editor and CLI.
+    bool serialize(std::string& jsonText,
+                   std::string* error = nullptr) const;
+    bool save(const std::string& path,
+              std::string* error = nullptr) const;
+
     static ProjectBuildProfile load(const std::string& path,
                                     std::string* error = nullptr);
 };

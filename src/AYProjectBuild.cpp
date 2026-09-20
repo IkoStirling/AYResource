@@ -847,6 +847,111 @@ bool ProjectBuildProfile::validate(std::string* error) const
     return true;
 }
 
+bool ProjectBuildProfile::serialize(
+    std::string& jsonText, std::string* error) const
+{
+    if (error != nullptr) error->clear();
+    if (!validate(error)) return false;
+    try {
+        Json rules = Json::array();
+        for (const ProjectBuildRule& rule : content.rules) {
+            rules.push_back({
+                {"match", rule.match},
+                {"transform", transformName(rule.transform)},
+                {"storage", rule.storage == ProjectAssetStorage::Pak
+                    ? std::string("pak:") + rule.chunk
+                    : std::string("loose")},
+                {"cookTextures", rule.cookTextures},
+            });
+        }
+        Json root = {
+            {"schemaVersion", schemaVersion},
+            {"id", id},
+            {"target", {
+                {"platform", platform},
+                {"architecture", architecture},
+                {"configuration", configuration},
+            }},
+            {"code", {
+                {"enabled", code.enabled},
+                {"backend", code.backend},
+                {"cmakeExecutable", code.cmakeExecutable},
+                {"sourceDirectory", code.sourceDirectory},
+                {"configurePreset", code.configurePreset},
+                {"buildPreset", code.buildPreset},
+                {"target", code.target},
+                {"artifact", code.artifact},
+            }},
+            {"content", {
+                {"assetRoot", content.assetRoot},
+                {"outputSubdirectory", content.outputSubdirectory},
+                {"defaultTransform", transformName(
+                    content.defaultTransform)},
+                {"defaultStorage", storageName(content.defaultStorage)},
+                {"rules", std::move(rules)},
+            }},
+            {"cache", {
+                {"enabled", cache.enabled},
+                {"root", cache.root},
+                {"policy", policyName(cache.policy)},
+            }},
+            {"package", {
+                {"output", package.output},
+                {"compression", package.compression},
+                {"atomic", package.atomic},
+            }},
+            {"run", {
+                {"workingDirectory", run.workingDirectory},
+                {"arguments", run.arguments},
+            }},
+        };
+        jsonText = root.dump(2);
+        jsonText.push_back('\n');
+        return true;
+    } catch (const std::exception& exception) {
+        if (error != nullptr) {
+            *error = std::string("Could not serialize build profile: ")
+                + exception.what();
+        }
+        return false;
+    }
+}
+
+bool ProjectBuildProfile::save(
+    const std::string& path, std::string* error) const
+{
+    if (error != nullptr) error->clear();
+    std::string encoded;
+    if (!serialize(encoded, error)) return false;
+    try {
+        const fs::path destination = fs::absolute(path).lexically_normal();
+        std::error_code directoryError;
+        fs::create_directories(destination.parent_path(), directoryError);
+        if (directoryError) {
+            if (error != nullptr) {
+                *error = "Could not create build profile directory: "
+                    + directoryError.message();
+            }
+            return false;
+        }
+        if (!ayt::io::File::atomicWrite(
+                destination.string(), encoded.data(), encoded.size())) {
+            if (error != nullptr) {
+                *error = "Atomic build profile save failed: "
+                    + destination.string();
+            }
+            return false;
+        }
+        return true;
+    } catch (const std::exception& exception) {
+        if (error != nullptr) {
+            *error = std::string("Could not save build profile: ")
+                + exception.what();
+        }
+        return false;
+    }
+}
+
 ProjectBuildProfile ProjectBuildProfile::load(
     const std::string& path, std::string* error)
 {
