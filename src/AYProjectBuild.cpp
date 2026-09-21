@@ -220,6 +220,15 @@ bool isBakedSkeletonPath(const fs::path& path)
     return filename.ends_with(".baked.ayskel");
 }
 
+bool isBakedSkeletonArtifact(const fs::path& path)
+{
+    const std::string filename = lower(path.filename().string());
+    const std::string extension = lower(path.extension().string());
+    return filename.find(".baked.") != std::string::npos
+        && (extension == ".ayskel" || extension == ".ayanm"
+            || extension == ".aymesh" || extension == ".aymask");
+}
+
 bool isSkeletonAuthoringMetadata(const fs::path& path)
 {
     const std::string filename = lower(path.filename().string());
@@ -254,8 +263,21 @@ std::string fnvHex(const char* prefix, const std::string& value)
     return text.str();
 }
 
+fs::path resolvedProfileReference(const Json& object, const char* key,
+                                  const fs::path& profilePath)
+{
+    fs::path result = object.value(key, std::string{});
+    if (!result.empty() && result.is_relative()) {
+        result = profilePath.parent_path() / result;
+    }
+    std::error_code error;
+    const fs::path absolute = fs::absolute(result, error);
+    return (error ? result : absolute).lexically_normal();
+}
+
 std::string rigProfileFingerprint(const Json& profile,
-                                  const std::string& sourceFingerprint)
+                                  const std::string& sourceFingerprint,
+                                  const fs::path& profilePath)
 {
     static constexpr std::string_view roles[] = {
         "sceneRoot", "motionRoot", "hips", "spine", "chest", "upperChest",
@@ -276,8 +298,43 @@ std::string rigProfileFingerprint(const Json& profile,
         "rightLittleIntermediate", "rightLittleDistal",
     };
     const Json profileRoles = profile.value("roles", Json::object());
+    const std::string kind = profile.value("kind", std::string{"mapping"});
+    const Json target = profile.value("target", Json::object());
+    const Json targetRoles = target.value("roles", Json::object());
+    const Json output = profile.value("output", Json::object());
+    const Json corrections = profile.value("corrections", Json::object());
+    const fs::path targetPath = kind == "retarget"
+        ? resolvedProfileReference(target, "skeleton", profilePath)
+        : fs::path{};
+    const std::string outputMode = kind == "retarget"
+        ? output.value("mode", std::string{"BakeToTarget"})
+        : "SemanticNormalize";
+    const std::string platform = kind == "retarget"
+        ? output.value("platform", std::string{"default"}) : std::string{};
     std::string canonical = "v1|" + sourceFingerprint + "|native="
-        + (profile.value("native", false) ? "1" : "0");
+        + (profile.value("native", false) ? "1" : "0")
+        + "|custom="
+        + (profile.value("strategy", std::string{}) == "custom" ? "1" : "0")
+        + "|kind=" + kind
+        + "|target=" + portable(targetPath)
+        + "|targetFingerprint=" + skeletonSourceFingerprint(targetPath)
+        + "|outputMode=" + outputMode
+        + "|platform=" + platform;
+    const auto appendQuaternion = [&canonical](const Json& value) {
+        std::array<float, 4> quaternion{0.0f, 0.0f, 0.0f, 1.0f};
+        if (value.is_array() && value.size() == quaternion.size()) {
+            for (std::size_t index = 0; index < quaternion.size(); ++index) {
+                if (value[index].is_number()) {
+                    quaternion[index] = value[index].get<float>();
+                }
+            }
+        }
+        std::ostringstream encoded;
+        encoded << std::setprecision(9)
+            << quaternion[0] << "," << quaternion[1] << ","
+            << quaternion[2] << "," << quaternion[3];
+        canonical += "|" + encoded.str();
+    };
     for (const std::string_view role : roles) {
         canonical += "|";
         canonical += role;
@@ -285,13 +342,40 @@ std::string rigProfileFingerprint(const Json& profile,
         const auto value = profileRoles.find(std::string(role));
         canonical += value != profileRoles.end() && value->is_object()
             ? value->value("bonePath", std::string{"-"}) : "-";
+        canonical += "->";
+        const auto targetValue = targetRoles.find(std::string(role));
+        canonical += targetValue != targetRoles.end()
+            && targetValue->is_object()
+            ? targetValue->value("bonePath", std::string{"-"}) : "-";
+        const auto correction = corrections.find(std::string(role));
+        const Json empty = Json::object();
+        const Json& correctionValue = correction != corrections.end()
+            && correction->is_object() ? *correction : empty;
+        appendQuaternion(correctionValue.value(
+            "sourceReferenceOffset", Json::array()));
+        appendQuaternion(correctionValue.value(
+            "targetReferenceOffset", Json::array()));
+        appendQuaternion(correctionValue.value(
+            "axisCorrection", Json::array()));
     }
     return fnvHex("rig-input-", canonical);
+}
+
+std::string rigBakeScope(const Json& profile, const fs::path& profilePath)
+{
+    if (profile.value("kind", std::string{}) != "retarget") return {};
+    const Json target = profile.value("target", Json::object());
+    const Json output = profile.value("output", Json::object());
+    return fnvHex("rt-", portable(resolvedProfileReference(
+        target, "skeleton", profilePath)) + "|"
+        + output.value("mode", std::string{"BakeToTarget"}) + "|"
+        + output.value("platform", std::string{"default"}));
 }
 
 struct SkeletonReleaseGateResult {
     bool valid = false;
     std::unordered_set<std::string> excludedPaths;
+    std::unordered_set<std::string> allowedPaths;
 };
 
 SkeletonReleaseGateResult validateSkeletonReleaseGate(
@@ -330,7 +414,8 @@ SkeletonReleaseGateResult validateSkeletonReleaseGate(
     }
     if (mapping.value("type", std::string{}) != "RigProfile"
         || mapping.value("version", 0u) != 1u
-        || mapping.value("kind", std::string{}) != "mapping"
+        || (mapping.value("kind", std::string{}) != "mapping"
+            && mapping.value("kind", std::string{}) != "retarget")
         || mapping.value("id", std::string{}).empty()) {
         reject("skeletonRigProfileInvalid",
             "Rig Profile schema is unsupported or incomplete.");
@@ -365,6 +450,37 @@ SkeletonReleaseGateResult validateSkeletonReleaseGate(
             return result;
         }
     }
+    const bool retarget = mapping.value("kind", std::string{}) == "retarget";
+    if (retarget) {
+        const Json target = mapping.value("target", Json::object());
+        const fs::path targetSkeleton = resolvedProfileReference(
+            target, "skeleton", mappingPath);
+        if (!fs::is_regular_file(targetSkeleton)
+            || target.value("fingerprint", std::string{})
+                != skeletonSourceFingerprint(targetSkeleton)) {
+            reject("skeletonRetargetTargetStale",
+                "Retarget target skeleton is missing or changed after the Rig Profile was saved.");
+            return result;
+        }
+        const Json targetRoles = target.value("roles", Json::object());
+        for (const char* role : requiredRoles) {
+            const auto value = targetRoles.find(role);
+            if (value == targetRoles.end() || !value->is_object()
+                || value->value("bonePath", std::string{}).empty()) {
+                reject("skeletonRetargetProfileIncomplete",
+                    std::string("Required target humanoid role is not mapped: ")
+                        + role);
+                return result;
+            }
+        }
+        const Json output = mapping.value("output", Json::object());
+        if (output.value("mode", std::string{}) != "BakeToTarget"
+            || output.value("platform", std::string{}).empty()) {
+            reject("skeletonRetargetProfileInvalid",
+                "Retarget output mode or platform is missing or unsupported.");
+            return result;
+        }
+    }
     const std::string fingerprint = skeletonSourceFingerprint(skeletonPath);
     if (fingerprint.empty()
         || source.value("fingerprint", std::string{}) != fingerprint) {
@@ -373,10 +489,13 @@ SkeletonReleaseGateResult validateSkeletonReleaseGate(
         return result;
     }
     const std::string profileFingerprint = rigProfileFingerprint(
-        mapping, fingerprint);
+        mapping, fingerprint, mappingPath);
 
+    const std::string scope = rigBakeScope(mapping, mappingPath);
     const fs::path receiptPath = skeletonPath.parent_path() / "Baked"
-        / (skeletonPath.stem().string() + ".bake-result.json");
+        / (skeletonPath.stem().string()
+            + (scope.empty() ? std::string{} : "." + scope)
+            + ".bake-result.json");
     Json receipt;
     try {
         const std::string text = ayt::io::File::readAllText(receiptPath.string());
@@ -388,66 +507,153 @@ SkeletonReleaseGateResult validateSkeletonReleaseGate(
         return result;
     }
     if (receipt.value("type", std::string{}) != "SkeletonBakeResult"
-        || receipt.value("version", 0u) != 1u
+        || receipt.value("version", 0u) != 2u
         || receipt.value("sourceFingerprint", std::string{}) != fingerprint
         || receipt.value("profileFingerprint", std::string{})
-            != profileFingerprint) {
+            != profileFingerprint
+        || receipt.value("scope", std::string{}) != scope
+        || receipt.value("outputMode", std::string{})
+            != (retarget ? "BakeToTarget" : "SemanticNormalize")
+        || receipt.value("platform", std::string{})
+            != (retarget
+                ? mapping.value("output", Json::object()).value(
+                    "platform", std::string{"default"})
+                : std::string{})) {
         reject("skeletonBakeReceiptInvalid",
             "Bake result manifest does not match the current skeleton and Rig Profile.");
         return result;
     }
-    bool hasSkeletonOutput = false;
-    std::size_t animationOutputCount = 0u;
     const Json outputs = receipt.value("outputs", Json::array());
     if (!outputs.is_array() || outputs.empty()) {
         reject("skeletonBakeOutputMissing",
             "Bake result manifest contains no outputs.");
         return result;
     }
+    std::unordered_set<std::string> outputPaths;
     for (const Json& value : outputs) {
         if (!value.is_string()) {
             reject("skeletonBakeOutputInvalid",
                 "Bake result manifest contains an invalid output path.");
             return result;
         }
-        const fs::path output = value.get<std::string>();
+        const fs::path output = fs::absolute(
+            fs::path(value.get<std::string>())).lexically_normal();
         if (!fs::is_regular_file(output) || !isUnder(assetsRoot, output)) {
             reject("skeletonBakeOutputMissing",
                 "Baked output is missing or outside the package asset root: "
                     + portable(output));
             return result;
         }
-        if (isBakedSkeletonPath(output)) hasSkeletonOutput = true;
-        if (lower(output.extension().string()) == ".ayanm") {
-            ++animationOutputCount;
+        const std::string normalized = portable(output);
+        if (!outputPaths.insert(normalized).second) {
+            reject("skeletonBakeOutputInvalid",
+                "Bake result manifest contains a duplicate output path: "
+                    + normalized);
+            return result;
         }
-    }
-    if (!hasSkeletonOutput) {
-        reject("skeletonBakeOutputMissing",
-            "Bake result has no cleaned .baked.ayskel output.");
-        return result;
+        result.allowedPaths.insert(normalized);
     }
 
-    std::size_t animationDependencyCount = 0u;
     const Json dependencies = receipt.value("dryRun", Json::object())
         .value("dependencies", Json::array());
-    if (dependencies.is_array()) {
-        for (const Json& dependency : dependencies) {
-            if (!dependency.is_object()
-                || dependency.value("kind", std::string{}) != "animation") {
-                continue;
-            }
-            ++animationDependencyCount;
-            const fs::path source = dependency.value("path", std::string{});
-            if (!source.empty()) {
-                result.excludedPaths.insert(
-                    portable(fs::absolute(source).lexically_normal()));
-            }
-        }
+    if (!dependencies.is_array()) {
+        reject("skeletonBakeDependencyClosureInvalid",
+            "Bake receipt has no dependency closure.");
+        return result;
     }
-    if (animationOutputCount < animationDependencyCount) {
-        reject("skeletonAnimationBakeIncomplete",
-            "Not every affected animation has a baked output.");
+    std::unordered_map<std::string, std::string> requiredDependencies;
+    for (const Json& dependency : dependencies) {
+        if (!dependency.is_object()) {
+            reject("skeletonBakeDependencyClosureInvalid",
+                "Bake dependency entry is invalid.");
+            return result;
+        }
+        const std::string kind = dependency.value("kind", std::string{});
+        const std::string impact = dependency.value("impact", std::string{});
+        const fs::path source = fs::absolute(fs::path(
+            dependency.value("path", std::string{}))).lexically_normal();
+        if ((kind != "animation" && kind != "mesh"
+                && kind != "skeletonMask")
+            || impact != "affected" || !fs::is_regular_file(source)
+            || !isUnder(assetsRoot, source)) {
+            reject("skeletonBakeDependencyClosureInvalid",
+                "Bake dependency is unsupported, blocked, missing, or outside the asset root: "
+                    + portable(source));
+            return result;
+        }
+        const std::string key = kind + "|" + portable(source);
+        if (!requiredDependencies.emplace(key, portable(source)).second) {
+            reject("skeletonBakeDependencyClosureInvalid",
+                "Bake dependency closure contains a duplicate entry: "
+                    + portable(source));
+            return result;
+        }
+        result.excludedPaths.insert(portable(source));
+    }
+
+    const Json artifacts = receipt.value("artifacts", Json::array());
+    if (!artifacts.is_array()
+        || artifacts.size() != requiredDependencies.size() + 1u) {
+        reject("skeletonBakeDependencyClosureInvalid",
+            "Bake artifact table does not exactly cover the source closure.");
+        return result;
+    }
+    std::unordered_set<std::string> artifactOutputs;
+    bool hasSkeletonArtifact = false;
+    for (const Json& artifact : artifacts) {
+        if (!artifact.is_object()) {
+            reject("skeletonBakeArtifactInvalid", "Bake artifact entry is invalid.");
+            return result;
+        }
+        const std::string kind = artifact.value("kind", std::string{});
+        const fs::path source = fs::absolute(fs::path(
+            artifact.value("source", std::string{}))).lexically_normal();
+        const fs::path output = fs::absolute(fs::path(
+            artifact.value("output", std::string{}))).lexically_normal();
+        const std::string sourceRevision = artifact.value(
+            "sourceFingerprint", std::string{});
+        const std::string normalizedOutput = portable(output);
+        if (sourceRevision.empty()
+            || sourceRevision != skeletonSourceFingerprint(source)
+            || !outputPaths.contains(normalizedOutput)
+            || !artifactOutputs.insert(normalizedOutput).second) {
+            reject("skeletonBakeArtifactStale",
+                "Bake artifact is stale, duplicated, or not listed as an output: "
+                    + normalizedOutput);
+            return result;
+        }
+        if (kind == "skeleton") {
+            if (hasSkeletonArtifact
+                || fs::weakly_canonical(source)
+                    != fs::weakly_canonical(skeletonPath)
+                || !isBakedSkeletonPath(output)) {
+                reject("skeletonBakeArtifactInvalid",
+                    "Bake receipt has an invalid skeleton artifact.");
+                return result;
+            }
+            hasSkeletonArtifact = true;
+            continue;
+        }
+        const std::string key = kind + "|" + portable(source);
+        const auto required = requiredDependencies.find(key);
+        const std::string extension = lower(output.extension().string());
+        const bool extensionMatches =
+            (kind == "animation" && extension == ".ayanm")
+            || (kind == "mesh" && extension == ".aymesh")
+            || (kind == "skeletonMask" && extension == ".aymask");
+        if (required == requiredDependencies.end() || !extensionMatches
+            || !isBakedSkeletonArtifact(output)) {
+            reject("skeletonBakeArtifactInvalid",
+                "Bake artifact does not match a required dependency: "
+                    + normalizedOutput);
+            return result;
+        }
+        requiredDependencies.erase(required);
+    }
+    if (!hasSkeletonArtifact || !requiredDependencies.empty()
+        || artifactOutputs.size() != outputPaths.size()) {
+        reject("skeletonBakeDependencyClosureInvalid",
+            "Bake artifact table has missing or extra closure members.");
         return result;
     }
 
@@ -1153,6 +1359,7 @@ ProjectBuildPlan ProjectBuildPlanner::create(
     }
     std::sort(files.begin(), files.end());
     std::unordered_set<std::string> skeletonAuthoringExclusions;
+    std::unordered_set<std::string> skeletonBakeOutputs;
     for (const fs::path& file : files) {
         if (lower(file.extension().string()) != ".ayskel"
             || isBakedSkeletonPath(file)) {
@@ -1162,6 +1369,8 @@ ProjectBuildPlan ProjectBuildPlanner::create(
             file, assetsRoot, plan.diagnostics);
         skeletonAuthoringExclusions.insert(
             gate.excludedPaths.begin(), gate.excludedPaths.end());
+        skeletonBakeOutputs.insert(
+            gate.allowedPaths.begin(), gate.allowedPaths.end());
     }
     for (const fs::path& file : files) {
         ProjectBuildAsset asset;
@@ -1188,6 +1397,8 @@ ProjectBuildPlan ProjectBuildPlanner::create(
         const std::string absoluteFile = portable(
             fs::absolute(file).lexically_normal());
         if (isSkeletonAuthoringMetadata(file)
+            || (isBakedSkeletonArtifact(file)
+                && !skeletonBakeOutputs.contains(absoluteFile))
             || skeletonAuthoringExclusions.contains(absoluteFile)) {
             asset.transform = ProjectAssetTransform::Exclude;
             asset.cacheKey.clear();

@@ -10,7 +10,7 @@
 > residency.
 
 **Status:** Living document, aligned with [`ENGINE-FOUNDATION-PLAN.md`](../../../../ENGINE-FOUNDATION-PLAN.md) and [`docs/runtime-conventions.md`](docs/runtime-conventions.md)
-**Last revised:** 2026-09-18（新增骨骼动画后续设计，不改变既有实现状态）
+**Last revised:** 2026-09-21（骨骼引用安全烘焙与发布闭包门禁已实现）
 **Owner:** Content engineer
 
 ---
@@ -19,7 +19,7 @@
 
 角色资产的尺寸、绑定、版本、动画兼容与多纹理验收统一见 [AYHumanoid 标准骨架与参考模型规范](../../AYDocs/AYHUMANOID-STANDARD.md)；FBX 操作见 [外部角色与动画导入标准](docs/external-character-animation-import-standard.md)。标准参考资产及验收工具待实施，设计目标不表示当前 importer 已实现相应检查。
 
-原始骨架保留、可绑定骨架的映射/重定向配置资源、编辑器状态与发布清理统一见 [骨骼动画资源管线设计](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md)。SKA-01～16 的优先级、owner 和验收仅在该文档 §7 维护，全部待实施。
+原始骨架保留、可绑定骨架的映射/重定向配置资源、编辑器状态与发布清理统一见 [骨骼动画资源管线设计](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md)。SKA-01～16 的优先级、owner、实现状态和验收仅在该文档 §7 维护；其中当前正式资源集的 SKA-07/08 已完成，完整源骨架导入 SKA-03 仍待实施。
 
 | Audience | Read |
 |----------|------|
@@ -497,21 +497,26 @@ CMake: `AY_RESOURCE_USE_SABA` (OFF by default). When OFF, `MMDConverter` is not 
 
 ---
 
-### 5.8 骨骼作者资源与发布编译（2026-09-18，待实施）
+### 5.8 骨骼作者资源与发布编译（2026-09-21，当前正式资源集已闭环）
 
 设计权威入口为 [骨骼动画资源管线](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md)，不改变 §7 中现有 `ISkeleton/IAnimation` 公共接口。
 新增完整源骨架视图、SkeletonMapping、RetargetProfile 和 MappingTemplate 作者资源；允许用户
 导入时不转换，在编辑器手工/模板配置后生成派生输出。映射按稳定资源/骨身份保存，不持久化 cook 索引。
 默认配置绑定由编辑器元数据管理，避免 profile 与骨架的加载循环；完全烘焙输出不依赖作者模板。
 
-当前 FBXParser 仅从 skin cluster 骨精简层级，因此完整源骨架与两根保留需要 SKA-03 的实质改造。
-当前 CookShip 只打包已 cook 文件，必须新增离线骨架/动画编译与 manifest 门禁，不能凭 `.ay*`
-扩展名认定输出已清理。清理只写派生资源，不删除源文件；按蒙皮及挂点、根运动、Mask、IK、
-物理等依赖保留骨，折叠父骨后同步重算 TRS/轨道和所有引用，不强制只留下 57 个角色。
+当前 FBXParser 仍仅从 skin cluster 骨精简层级，因此完整源骨架与两根保留需要 SKA-03 的实质改造。
+离线 bake 与 ProjectBuild 发布门禁现已覆盖当前正式文件资源：`.ayskel`、`.ayanm`、`.aymesh`
+draw-local palette/有效 joint 与 `.aymask` 命名引用。清理只写派生资源，不删除源文件；删除骨仍被
+有效蒙皮引用时阻止，未使用 palette 槽可压缩，动画轨道与 Mask 同步重写，不强制只留下 57 个角色。
+当前没有独立挂点/IK/物理作者资源 schema；未来新增此类引用时必须先扩展闭包与重写器再允许发布。
+跨骨架蒙皮网格需要几何空间 rebind，尚未实现时 `BakeToTarget` 会明确阻止，而不是只改 palette。
 
-AYResource 负责 schema、IO、身份、清理与引用重写、构建记录及发布验收；转换数学由 AYAnimation
-提供。共同调用两者的离线编排使用独立 target，禁止引入 AYResource 核心反向依赖 AYAnimation。
-源/目标/profile/clip 或输出变化使构建失效，发布不回退到旧缓存；取消/失败不替换上次成功 manifest。
+AYResource 负责 schema、IO、身份、构建记录及发布验收；清理、引用重写和转换数学由
+AYAnimation 的 UI-free 作者核心提供。receipt v2 记录 scope、输出模式、platform、dry-run 依赖闭包、
+源修订指纹和一一对应的产物表；ProjectBuild 在实际执行时复验源/目标/profile、完整闭包及所有输出，
+排除作者源和不属于任何有效闭包的陈旧 `.baked.*` 产物。源/目标/profile/dependency 或输出变化会
+阻止发布，不回退到旧缓存；烘焙采用暂存、反序列化验证、rollback 副本和最后切换 receipt，失败或
+取消不替换整组有效输出。
 
 ## 6. L2 — Runtime resource manager
 
@@ -874,7 +879,7 @@ Full spec with shader-uniform names and parameter conventions: `docs/runtime-con
 - **P1**：SKA-10 批量/来源模板编排，SKA-13 版本兼容与配置迁移；协作 SKA-11/12 的转换输出。
 - **P2**：协作 SKA-16 骨骼 LOD/平台压缩。
 
-上述均待实施；具体依赖与验收以 [统一队列](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md) §7 为准，不改变历史 R-01/R-07/R-08 状态。
+SKA-07/08 已针对当前正式骨架资源集完成；SKA-03、其余 P1/P2 项及未来新引用类型仍按 [统一队列](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md) §7 推进，不改变历史 R-01/R-07/R-08 状态。
 
 ### 10.2 Project Build authoring contract（2026-09-20）
 
@@ -934,6 +939,7 @@ unittest/
 
 | Date | Author | Change |
 |------|--------|--------|
+| 2026-09-21 | Content / animation | **SKA-07/08 当前正式资源集闭环**：事务式 bake 重写骨架、动画、网格 palette/joint 与 Mask；receipt v2 记录精确依赖/产物及源修订；ProjectBuild 在执行时复验 mapping/retarget scope、目标、profile 与完整闭包，排除作者源和陈旧 baked 产物。跨骨架蒙皮几何 rebind 未实现时显式阻止。AYResource 2495/2495。 |
 | 2026-09-18 | Content / animation | **设计待实施**：§5.8 / §10.1 接入 SKA 队列；明确完整源骨架、映射/profile 作者资源、非破坏式配置、派生清理和发布门禁，并修正 MMD 映射仅限 Parser 的旧规划；无新增代码或功能完成声明。 |
 | 2026-06-04 | Content team | Initial draft |
 | 2026-06-09 | Content team | Added GUID system, SQLite schema drafts, precision compression framework, pak design |

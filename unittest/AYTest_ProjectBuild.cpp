@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -167,7 +168,8 @@ nlohmann::json rigProfile(const std::string& fingerprint)
 }
 
 std::string rigProfileFingerprint(const nlohmann::json& profile,
-                                  const std::string& sourceFingerprint)
+                                  const std::string& sourceFingerprint,
+                                  const fs::path& profilePath = {})
 {
     static constexpr std::string_view roles[] = {
         "sceneRoot", "motionRoot", "hips", "spine", "chest", "upperChest",
@@ -188,8 +190,44 @@ std::string rigProfileFingerprint(const nlohmann::json& profile,
         "rightLittleIntermediate", "rightLittleDistal",
     };
     const auto profileRoles = profile.value("roles", nlohmann::json::object());
+    const std::string kind = profile.value("kind", std::string{"mapping"});
+    const auto target = profile.value("target", nlohmann::json::object());
+    const auto targetRoles = target.value("roles", nlohmann::json::object());
+    const auto output = profile.value("output", nlohmann::json::object());
+    const auto corrections = profile.value(
+        "corrections", nlohmann::json::object());
+    fs::path targetPath;
+    if (kind == "retarget") {
+        targetPath = target.value("skeleton", std::string{});
+        if (targetPath.is_relative()) targetPath = profilePath.parent_path() / targetPath;
+        targetPath = fs::absolute(targetPath).lexically_normal();
+    }
     std::string canonical = "v1|" + sourceFingerprint + "|native="
-        + (profile.value("native", false) ? "1" : "0");
+        + (profile.value("native", false) ? "1" : "0")
+        + "|custom="
+        + (profile.value("strategy", std::string{}) == "custom" ? "1" : "0")
+        + "|kind=" + kind + "|target=" + targetPath.generic_string()
+        + "|targetFingerprint=" + skeletonFingerprint(targetPath)
+        + "|outputMode=" + (kind == "retarget"
+            ? output.value("mode", std::string{"BakeToTarget"})
+            : "SemanticNormalize")
+        + "|platform=" + (kind == "retarget"
+            ? output.value("platform", std::string{"default"}) : "");
+    const auto appendQuaternion = [&canonical](const nlohmann::json& value) {
+        std::array<float, 4> quaternion{0, 0, 0, 1};
+        if (value.is_array() && value.size() == 4u) {
+            for (std::size_t index = 0; index < 4u; ++index) {
+                if (value[index].is_number()) {
+                    quaternion[index] = value[index].get<float>();
+                }
+            }
+        }
+        std::ostringstream encoded;
+        encoded << std::setprecision(9) << quaternion[0] << ","
+            << quaternion[1] << "," << quaternion[2] << ","
+            << quaternion[3];
+        canonical += "|" + encoded.str();
+    };
     for (const std::string_view role : roles) {
         canonical += "|";
         canonical += role;
@@ -197,6 +235,21 @@ std::string rigProfileFingerprint(const nlohmann::json& profile,
         const auto value = profileRoles.find(std::string(role));
         canonical += value != profileRoles.end() && value->is_object()
             ? value->value("bonePath", std::string{"-"}) : "-";
+        canonical += "->";
+        const auto targetValue = targetRoles.find(std::string(role));
+        canonical += targetValue != targetRoles.end()
+            && targetValue->is_object()
+            ? targetValue->value("bonePath", std::string{"-"}) : "-";
+        const auto correction = corrections.find(std::string(role));
+        const nlohmann::json empty = nlohmann::json::object();
+        const auto& correctionValue = correction != corrections.end()
+            && correction->is_object() ? *correction : empty;
+        appendQuaternion(correctionValue.value(
+            "sourceReferenceOffset", nlohmann::json::array()));
+        appendQuaternion(correctionValue.value(
+            "targetReferenceOffset", nlohmann::json::array()));
+        appendQuaternion(correctionValue.value(
+            "axisCorrection", nlohmann::json::array()));
     }
     constexpr std::uint64_t offset = 14695981039346656037ull;
     constexpr std::uint64_t prime = 1099511628211ull;
@@ -208,6 +261,20 @@ std::string rigProfileFingerprint(const nlohmann::json& profile,
     std::ostringstream text;
     text << "rig-input-" << std::hex << std::setfill('0')
          << std::setw(16) << hash;
+    return text.str();
+}
+
+std::string scopedFnv(const char* prefix, const std::string& value)
+{
+    constexpr std::uint64_t offset = 14695981039346656037ull;
+    constexpr std::uint64_t prime = 1099511628211ull;
+    std::uint64_t hash = offset;
+    for (const unsigned char byte : value) {
+        hash ^= byte;
+        hash *= prime;
+    }
+    std::ostringstream text;
+    text << prefix << std::hex << std::setfill('0') << std::setw(16) << hash;
     return text.str();
 }
 
@@ -498,28 +565,65 @@ TEST_CASE(skeleton_release_gate_packages_only_verified_baked_outputs)
     const fs::path character = cleanup.root / "Assets/Characters";
     const fs::path skeleton = character / "hero.ayskel";
     const fs::path animation = character / "walk.ayanm";
+    const fs::path mesh = character / "hero.aymesh";
+    const fs::path mask = character / "upper.aymask";
     const fs::path bakedSkeleton = character / "Baked/hero.baked.ayskel";
     const fs::path bakedAnimation = character / "Baked/walk.baked.ayanm";
+    const fs::path bakedMesh = character / "Baked/hero.baked.aymesh";
+    const fs::path bakedMask = character / "Baked/upper.baked.aymask";
+    const fs::path staleAnimation = character / "Baked/old.baked.ayanm";
     CHECK(writeText(skeleton, "source-skeleton"));
     CHECK(writeText(animation, "source-animation"));
+    CHECK(writeText(mesh, "source-mesh"));
+    CHECK(writeText(mask, "source-mask"));
     CHECK(writeText(bakedSkeleton, "cleaned-skeleton"));
     CHECK(writeText(bakedAnimation, "rewritten-animation"));
+    CHECK(writeText(bakedMesh, "rewritten-mesh"));
+    CHECK(writeText(bakedMask, "rewritten-mask"));
+    CHECK(writeText(staleAnimation, "stale-animation"));
     const std::string fingerprint = skeletonFingerprint(skeleton);
     const nlohmann::json mapping = rigProfile(fingerprint);
     CHECK(writeText(character / "hero.ayrig", mapping.dump(2)));
     CHECK(writeText(character / "hero.aysmap", "legacy-mapping"));
     nlohmann::json receipt = {
-        {"type", "SkeletonBakeResult"}, {"version", 1}, {"generation", 1},
+        {"type", "SkeletonBakeResult"}, {"version", 2}, {"generation", 1},
         {"sourceFingerprint", fingerprint},
         {"profileFingerprint", rigProfileFingerprint(mapping, fingerprint)},
+        {"outputMode", "SemanticNormalize"}, {"platform", ""}, {"scope", ""},
         {"outputs", nlohmann::json::array({
             fs::absolute(bakedSkeleton).lexically_normal().generic_string(),
             fs::absolute(bakedAnimation).lexically_normal().generic_string(),
+            fs::absolute(bakedMesh).lexically_normal().generic_string(),
+            fs::absolute(bakedMask).lexically_normal().generic_string(),
+        })},
+        {"artifacts", nlohmann::json::array({
+            {{"kind", "skeleton"},
+             {"source", fs::absolute(skeleton).lexically_normal().generic_string()},
+             {"sourceFingerprint", skeletonFingerprint(skeleton)},
+             {"output", fs::absolute(bakedSkeleton).lexically_normal().generic_string()}},
+            {{"kind", "animation"},
+             {"source", fs::absolute(animation).lexically_normal().generic_string()},
+             {"sourceFingerprint", skeletonFingerprint(animation)},
+             {"output", fs::absolute(bakedAnimation).lexically_normal().generic_string()}},
+            {{"kind", "mesh"},
+             {"source", fs::absolute(mesh).lexically_normal().generic_string()},
+             {"sourceFingerprint", skeletonFingerprint(mesh)},
+             {"output", fs::absolute(bakedMesh).lexically_normal().generic_string()}},
+            {{"kind", "skeletonMask"},
+             {"source", fs::absolute(mask).lexically_normal().generic_string()},
+             {"sourceFingerprint", skeletonFingerprint(mask)},
+             {"output", fs::absolute(bakedMask).lexically_normal().generic_string()}},
         })},
         {"dryRun", {
             {"dependencies", nlohmann::json::array({{
                 {"kind", "animation"}, {"impact", "affected"},
                 {"path", fs::absolute(animation).lexically_normal().generic_string()},
+            }, {
+                {"kind", "mesh"}, {"impact", "affected"},
+                {"path", fs::absolute(mesh).lexically_normal().generic_string()},
+            }, {
+                {"kind", "skeletonMask"}, {"impact", "affected"},
+                {"path", fs::absolute(mask).lexically_normal().generic_string()},
             }})},
         }},
     };
@@ -550,12 +654,22 @@ TEST_CASE(skeleton_release_gate_packages_only_verified_baked_outputs)
         == ProjectAssetTransform::Exclude);
     CHECK(transformOf("Characters/walk.ayanm")
         == ProjectAssetTransform::Exclude);
+    CHECK(transformOf("Characters/hero.aymesh")
+        == ProjectAssetTransform::Exclude);
+    CHECK(transformOf("Characters/upper.aymask")
+        == ProjectAssetTransform::Exclude);
     CHECK(transformOf("Characters/Baked/hero.bake-result.json")
         == ProjectAssetTransform::Exclude);
     CHECK(transformOf("Characters/Baked/hero.baked.ayskel")
         == ProjectAssetTransform::Raw);
     CHECK(transformOf("Characters/Baked/walk.baked.ayanm")
         == ProjectAssetTransform::Raw);
+    CHECK(transformOf("Characters/Baked/hero.baked.aymesh")
+        == ProjectAssetTransform::Raw);
+    CHECK(transformOf("Characters/Baked/upper.baked.aymask")
+        == ProjectAssetTransform::Raw);
+    CHECK(transformOf("Characters/Baked/old.baked.ayanm")
+        == ProjectAssetTransform::Exclude);
 
     const ProjectBuildResult built = ProjectBuildExecutor::execute(plan);
     if (!built.ok) {
@@ -566,10 +680,16 @@ TEST_CASE(skeleton_release_gate_packages_only_verified_baked_outputs)
         / "out/package/test/Content/Characters/Baked/hero.baked.ayskel"));
     CHECK(fs::is_regular_file(cleanup.root
         / "out/package/test/Content/Characters/Baked/walk.baked.ayanm"));
+    CHECK(fs::is_regular_file(cleanup.root
+        / "out/package/test/Content/Characters/Baked/hero.baked.aymesh"));
+    CHECK(fs::is_regular_file(cleanup.root
+        / "out/package/test/Content/Characters/Baked/upper.baked.aymask"));
     CHECK_FALSE(fs::exists(cleanup.root
         / "out/package/test/Content/Characters/hero.ayskel"));
     CHECK_FALSE(fs::exists(cleanup.root
         / "out/package/test/Content/Characters/walk.ayanm"));
+    CHECK_FALSE(fs::exists(cleanup.root
+        / "out/package/test/Content/Characters/Baked/old.baked.ayanm"));
 }
 
 TEST_CASE(skeleton_release_gate_rechecks_source_at_execution_time)
@@ -584,12 +704,19 @@ TEST_CASE(skeleton_release_gate_rechecks_source_at_execution_time)
     const nlohmann::json mapping = rigProfile(fingerprint);
     CHECK(writeText(character / "hero.ayrig", mapping.dump(2)));
     nlohmann::json receipt = {
-        {"type", "SkeletonBakeResult"}, {"version", 1},
+        {"type", "SkeletonBakeResult"}, {"version", 2},
         {"sourceFingerprint", fingerprint},
         {"profileFingerprint", rigProfileFingerprint(mapping, fingerprint)},
+        {"outputMode", "SemanticNormalize"}, {"platform", ""}, {"scope", ""},
         {"outputs", nlohmann::json::array({
             fs::absolute(bakedSkeleton).lexically_normal().generic_string(),
         })},
+        {"artifacts", nlohmann::json::array({{
+            {"kind", "skeleton"},
+            {"source", fs::absolute(skeleton).lexically_normal().generic_string()},
+            {"sourceFingerprint", skeletonFingerprint(skeleton)},
+            {"output", fs::absolute(bakedSkeleton).lexically_normal().generic_string()},
+        }})},
         {"dryRun", {{"dependencies", nlohmann::json::array()}}},
     };
     CHECK(writeText(character / "Baked/hero.bake-result.json",
@@ -608,6 +735,67 @@ TEST_CASE(skeleton_release_gate_rechecks_source_at_execution_time)
     CHECK(built.error.find("Skeleton release gate") != std::string::npos);
 }
 
+TEST_CASE(skeleton_release_gate_accepts_scoped_retarget_receipt)
+{
+    ProjectBuildCleanup cleanup{"ayproject_build_skeleton_retarget_test"};
+    const fs::path character = cleanup.root / "Assets/Characters";
+    const fs::path skeleton = character / "hero.ayskel";
+    const fs::path target = cleanup.root / "Fixtures/target.ayskel";
+    CHECK(writeText(skeleton, "source-skeleton"));
+    CHECK(writeText(target, "target-skeleton"));
+    const std::string fingerprint = skeletonFingerprint(skeleton);
+    nlohmann::json profile = rigProfile(fingerprint);
+    profile["kind"] = "retarget";
+    profile["target"] = {
+        {"skeleton", fs::relative(target, character).generic_string()},
+        {"fingerprint", skeletonFingerprint(target)},
+        {"roles", requiredSkeletonRoles()},
+    };
+    profile["output"] = {{"mode", "BakeToTarget"}, {"platform", "test"}};
+    const fs::path profilePath = character / "hero.ayrig";
+    CHECK(writeText(profilePath, profile.dump(2)));
+    const std::string scope = scopedFnv("rt-",
+        fs::absolute(target).lexically_normal().generic_string()
+            + "|BakeToTarget|test");
+    const fs::path bakedSkeleton = character / "Baked"
+        / ("hero." + scope + ".baked.ayskel");
+    const fs::path receiptPath = character / "Baked"
+        / ("hero." + scope + ".bake-result.json");
+    CHECK(writeText(bakedSkeleton, "retargeted-skeleton"));
+    const nlohmann::json receipt = {
+        {"type", "SkeletonBakeResult"}, {"version", 2},
+        {"sourceFingerprint", fingerprint},
+        {"profileFingerprint", rigProfileFingerprint(
+            profile, fingerprint, profilePath)},
+        {"targetSkeleton", fs::absolute(target).lexically_normal().generic_string()},
+        {"outputMode", "BakeToTarget"}, {"platform", "test"},
+        {"scope", scope},
+        {"outputs", nlohmann::json::array({
+            fs::absolute(bakedSkeleton).lexically_normal().generic_string(),
+        })},
+        {"artifacts", nlohmann::json::array({{
+            {"kind", "skeleton"},
+            {"source", fs::absolute(skeleton).lexically_normal().generic_string()},
+            {"sourceFingerprint", skeletonFingerprint(skeleton)},
+            {"output", fs::absolute(bakedSkeleton).lexically_normal().generic_string()},
+        }})},
+        {"dryRun", {{"dependencies", nlohmann::json::array()}}},
+    };
+    CHECK(writeText(receiptPath, receipt.dump(2)));
+    CHECK(writeText(cleanup.root / "BuildProfiles/test.aybuild.json",
+                    profileJson()));
+    std::string error;
+    const ProjectBuildProfile buildProfile = ProjectBuildProfile::load(
+        (cleanup.root / "BuildProfiles/test.aybuild.json").string(), &error);
+    const ProjectBuildPlan plan = ProjectBuildPlanner::create(
+        buildProfile, cleanup.root.string());
+    CHECK(plan.valid());
+    const ProjectBuildResult built = ProjectBuildExecutor::execute(plan);
+    CHECK(built.ok);
+    CHECK(fs::is_regular_file(cleanup.root / "out/package/test/Content"
+        / fs::relative(bakedSkeleton, cleanup.root / "Assets")));
+}
+
 TEST_CASE(skeleton_release_gate_rechecks_rig_profile_at_execution_time)
 {
     ProjectBuildCleanup cleanup{"ayproject_build_rig_profile_stale_test"};
@@ -620,12 +808,19 @@ TEST_CASE(skeleton_release_gate_rechecks_rig_profile_at_execution_time)
     nlohmann::json mapping = rigProfile(fingerprint);
     CHECK(writeText(character / "hero.ayrig", mapping.dump(2)));
     const nlohmann::json receipt = {
-        {"type", "SkeletonBakeResult"}, {"version", 1},
+        {"type", "SkeletonBakeResult"}, {"version", 2},
         {"sourceFingerprint", fingerprint},
         {"profileFingerprint", rigProfileFingerprint(mapping, fingerprint)},
+        {"outputMode", "SemanticNormalize"}, {"platform", ""}, {"scope", ""},
         {"outputs", nlohmann::json::array({
             fs::absolute(bakedSkeleton).lexically_normal().generic_string(),
         })},
+        {"artifacts", nlohmann::json::array({{
+            {"kind", "skeleton"},
+            {"source", fs::absolute(skeleton).lexically_normal().generic_string()},
+            {"sourceFingerprint", skeletonFingerprint(skeleton)},
+            {"output", fs::absolute(bakedSkeleton).lexically_normal().generic_string()},
+        }})},
         {"dryRun", {{"dependencies", nlohmann::json::array()}}},
     };
     CHECK(writeText(character / "Baked/hero.bake-result.json",
@@ -641,6 +836,61 @@ TEST_CASE(skeleton_release_gate_rechecks_rig_profile_at_execution_time)
 
     mapping["roles"]["head"]["bonePath"] = "root/reassignedHead";
     CHECK(writeText(character / "hero.ayrig", mapping.dump(2)));
+    const ProjectBuildResult built = ProjectBuildExecutor::execute(plan);
+    CHECK_FALSE(built.ok);
+    CHECK(built.error.find("Skeleton release gate") != std::string::npos);
+}
+
+TEST_CASE(skeleton_release_gate_rechecks_dependency_closure_at_execution_time)
+{
+    ProjectBuildCleanup cleanup{"ayproject_build_skeleton_dependency_stale_test"};
+    const fs::path character = cleanup.root / "Assets/Characters";
+    const fs::path skeleton = character / "hero.ayskel";
+    const fs::path animation = character / "walk.ayanm";
+    const fs::path bakedSkeleton = character / "Baked/hero.baked.ayskel";
+    const fs::path bakedAnimation = character / "Baked/walk.baked.ayanm";
+    CHECK(writeText(skeleton, "source-skeleton"));
+    CHECK(writeText(animation, "source-animation"));
+    CHECK(writeText(bakedSkeleton, "cleaned-skeleton"));
+    CHECK(writeText(bakedAnimation, "rewritten-animation"));
+    const std::string fingerprint = skeletonFingerprint(skeleton);
+    const nlohmann::json mapping = rigProfile(fingerprint);
+    CHECK(writeText(character / "hero.ayrig", mapping.dump(2)));
+    const nlohmann::json receipt = {
+        {"type", "SkeletonBakeResult"}, {"version", 2},
+        {"sourceFingerprint", fingerprint},
+        {"profileFingerprint", rigProfileFingerprint(mapping, fingerprint)},
+        {"outputMode", "SemanticNormalize"}, {"platform", ""}, {"scope", ""},
+        {"outputs", nlohmann::json::array({
+            fs::absolute(bakedSkeleton).lexically_normal().generic_string(),
+            fs::absolute(bakedAnimation).lexically_normal().generic_string(),
+        })},
+        {"artifacts", nlohmann::json::array({
+            {{"kind", "skeleton"},
+             {"source", fs::absolute(skeleton).lexically_normal().generic_string()},
+             {"sourceFingerprint", skeletonFingerprint(skeleton)},
+             {"output", fs::absolute(bakedSkeleton).lexically_normal().generic_string()}},
+            {{"kind", "animation"},
+             {"source", fs::absolute(animation).lexically_normal().generic_string()},
+             {"sourceFingerprint", skeletonFingerprint(animation)},
+             {"output", fs::absolute(bakedAnimation).lexically_normal().generic_string()}},
+        })},
+        {"dryRun", {{"dependencies", nlohmann::json::array({{
+            {"kind", "animation"}, {"impact", "affected"},
+            {"path", fs::absolute(animation).lexically_normal().generic_string()},
+        }})}}},
+    };
+    CHECK(writeText(character / "Baked/hero.bake-result.json",
+                    receipt.dump(2)));
+    CHECK(writeText(cleanup.root / "BuildProfiles/test.aybuild.json",
+                    profileJson()));
+    std::string error;
+    const ProjectBuildProfile profile = ProjectBuildProfile::load(
+        (cleanup.root / "BuildProfiles/test.aybuild.json").string(), &error);
+    const ProjectBuildPlan plan = ProjectBuildPlanner::create(
+        profile, cleanup.root.string());
+    CHECK(plan.valid());
+    CHECK(writeText(animation, "source-animation-changed"));
     const ProjectBuildResult built = ProjectBuildExecutor::execute(plan);
     CHECK_FALSE(built.ok);
     CHECK(built.error.find("Skeleton release gate") != std::string::npos);
