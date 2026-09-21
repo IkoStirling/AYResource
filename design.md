@@ -729,13 +729,18 @@ Source: `interface/AYResource/assetsDefs/IAnimation.h`
 
 ```cpp
 enum class AnimTrackType : UInt8 { Vector3, Quaternion, Float };
+enum class AnimInterpolation : UInt8 { Linear, Step, CubicHermite };
 
 struct AnimTrack {
     std::string  nodeName;          // == skeleton bone name (or node name)
     std::string  property;          // "position" | "rotation" | "scale"
     AnimTrackType valueType;
-    std::vector<Float32> times;     // seconds
+    AnimBlendMode blendMode;
+    AnimInterpolation interpolation;
+    std::vector<Float32> times;     // source ticks
     std::vector<Float32> values;    // interpret per valueType
+    std::vector<Float32> inTangents;  // optional; value units / second
+    std::vector<Float32> outTangents; // optional; value units / second
 };
 
 class IAnimation : public IResource {
@@ -754,11 +759,19 @@ public:
     virtual const FVector3*    getTrackVector3Values(UInt32) const = 0;
     virtual const FQuaternion* getTrackQuaternionValues(UInt32) const = 0;
     virtual const Float32*     getTrackFloatValues(UInt32) const = 0;
+    virtual AnimInterpolation getTrackInterpolation(UInt32) const = 0;
+    virtual const Float32* getTrackInTangents(UInt32) const = 0;
+    virtual const Float32* getTrackOutTangents(UInt32) const = 0;
 
-    static constexpr UInt32 VERSION = 1;
+    static constexpr UInt32 VERSION = 5;
     static constexpr UInt32 MAGIC   = 0x4E4D5941;   // 'AYNM'
 };
 ```
+
+`.ayanm` v5 adds one interpolation byte and two optional tangent arrays per
+track. v1–v4 readers remain supported and produce `Linear` tracks with empty
+tangents. Cubic arrays, when present, must exactly match the flattened value
+array; malformed sizes are rejected on read and write rather than truncated.
 
 ### 7.4 `IAYMaterial`
 

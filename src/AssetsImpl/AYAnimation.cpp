@@ -45,8 +45,11 @@ size_t Animation::sizeInBytes() const {
         // here MUST match saveToBinary() exactly or the written-bytes guard
         // at the bottom of saveToBinary trips and outData is discarded.
         size += sizeof(UInt8); // blendMode
+        size += sizeof(UInt8); // interpolation
         size += sizeof(UInt32) + track.times.size() * sizeof(Float32);
         size += sizeof(UInt32) + track.values.size() * sizeof(Float32);
+        size += sizeof(UInt32) + track.inTangents.size() * sizeof(Float32);
+        size += sizeof(UInt32) + track.outTangents.size() * sizeof(Float32);
     }
     // Phase 1.5: anim notify block (Phase 1.5 VERSION=2 only).
     // Layout: [count:UInt32] { [nameLen:UInt32 + nameBytes] [time:Float32] [payload:Float32] } * count
@@ -80,6 +83,25 @@ AnimTrackType Animation::getTrackType(UInt32 trackIndex) const {
 AnimBlendMode Animation::getTrackBlendMode(UInt32 trackIndex) const {
     if (trackIndex >= _tracks.size()) return AnimBlendMode::Override;
     return _tracks[trackIndex].blendMode;
+}
+
+AnimInterpolation Animation::getTrackInterpolation(UInt32 trackIndex) const {
+    if (trackIndex >= _tracks.size()) return AnimInterpolation::Linear;
+    return _tracks[trackIndex].interpolation;
+}
+
+const Float32* Animation::getTrackInTangents(UInt32 trackIndex) const {
+    if (trackIndex >= _tracks.size() || _tracks[trackIndex].inTangents.empty()) {
+        return nullptr;
+    }
+    return _tracks[trackIndex].inTangents.data();
+}
+
+const Float32* Animation::getTrackOutTangents(UInt32 trackIndex) const {
+    if (trackIndex >= _tracks.size() || _tracks[trackIndex].outTangents.empty()) {
+        return nullptr;
+    }
+    return _tracks[trackIndex].outTangents.data();
 }
 
 UInt32 Animation::getTrackKeyframeCount(UInt32 trackIndex) const {
@@ -190,7 +212,7 @@ bool Animation::loadFromBinary(const void* data, size_t size) {
     //   v3 binaries read both blocks (plus per-track blendMode byte);
     //   v4 binaries are byte-identical to v3 (forward-compat reservation
     //   for Cross-Fade Layer 2 additive-source semantics — no new bytes).
-    // Any future version > VERSION (5+) is rejected so a binary that
+    // Any future version > VERSION (6+) is rejected so a binary that
     // adds new bytes is caught loudly rather than silently mis-parsed.
     if (version < 1 || version > IAnimation::VERSION) return false;
 
@@ -275,6 +297,18 @@ bool Animation::loadFromBinary(const void* data, size_t size) {
         }
         // else: v1/v2 — no byte, blendMode stays at its struct default.
 
+        if (version >= 5 && version <= IAnimation::VERSION) {
+            if (!need(sizeof(UInt8))) return false;
+            UInt8 interpolation = 0;
+            memcpy(&interpolation, ptr, sizeof(UInt8));
+            ptr += sizeof(UInt8);
+            remaining -= sizeof(UInt8);
+            _tracks[i].interpolation = interpolation == 1u
+                ? AnimInterpolation::Step
+                : interpolation == 2u ? AnimInterpolation::CubicHermite
+                                      : AnimInterpolation::Linear;
+        }
+
         // times
         if (!need(sizeof(UInt32))) return false;
         UInt32 timeCount;
@@ -300,6 +334,29 @@ bool Animation::loadFromBinary(const void* data, size_t size) {
         memcpy(_tracks[i].values.data(), ptr, valueCount * sizeof(Float32));
         ptr += valueCount * sizeof(Float32);
         remaining -= valueCount * sizeof(Float32);
+
+        if (version >= 5 && version <= IAnimation::VERSION) {
+            auto readTangents = [&](std::vector<Float32>& tangents) -> bool {
+                if (!need(sizeof(UInt32))) return false;
+                UInt32 count = 0u;
+                memcpy(&count, ptr, sizeof(UInt32));
+                ptr += sizeof(UInt32);
+                remaining -= sizeof(UInt32);
+                if (!needArray(count, sizeof(Float32))) return false;
+                tangents.resize(count);
+                memcpy(tangents.data(), ptr, count * sizeof(Float32));
+                ptr += count * sizeof(Float32);
+                remaining -= count * sizeof(Float32);
+                return true;
+            };
+            if (!readTangents(_tracks[i].inTangents)
+                || !readTangents(_tracks[i].outTangents)) return false;
+            const bool validIn = _tracks[i].inTangents.empty()
+                || _tracks[i].inTangents.size() == _tracks[i].values.size();
+            const bool validOut = _tracks[i].outTangents.empty()
+                || _tracks[i].outTangents.size() == _tracks[i].values.size();
+            if (!validIn || !validOut) return false;
+        }
     }
 
     // ===== Anim Notify markers (Phase 1.5) — optional trailing block =====
@@ -348,6 +405,15 @@ bool Animation::loadFromBinary(const void* data, size_t size) {
 }
 
 bool Animation::saveToBinary(std::vector<UInt8>& outData) const {
+    for (const auto& track : _tracks) {
+        if ((!track.inTangents.empty()
+                && track.inTangents.size() != track.values.size())
+            || (!track.outTangents.empty()
+                && track.outTangents.size() != track.values.size())) {
+            outData.clear();
+            return false;
+        }
+    }
     // 计算总大小
     size_t totalSize = sizeInBytes();
     outData.resize(totalSize);
@@ -407,6 +473,11 @@ bool Animation::saveToBinary(std::vector<UInt8>& outData) const {
         memcpy(ptr, &bm, sizeof(UInt8));
         ptr += sizeof(UInt8);
 
+        UInt8 interpolation = track.interpolation == AnimInterpolation::Step
+            ? 1u : track.interpolation == AnimInterpolation::CubicHermite ? 2u : 0u;
+        memcpy(ptr, &interpolation, sizeof(UInt8));
+        ptr += sizeof(UInt8);
+
         // times
         UInt32 timeCount = static_cast<UInt32>(track.times.size());
         memcpy(ptr, &timeCount, sizeof(UInt32));
@@ -420,6 +491,18 @@ bool Animation::saveToBinary(std::vector<UInt8>& outData) const {
         ptr += sizeof(UInt32);
         memcpy(ptr, track.values.data(), valueCount * sizeof(Float32));
         ptr += valueCount * sizeof(Float32);
+
+        UInt32 inTangentCount = static_cast<UInt32>(track.inTangents.size());
+        memcpy(ptr, &inTangentCount, sizeof(UInt32));
+        ptr += sizeof(UInt32);
+        memcpy(ptr, track.inTangents.data(), inTangentCount * sizeof(Float32));
+        ptr += inTangentCount * sizeof(Float32);
+
+        UInt32 outTangentCount = static_cast<UInt32>(track.outTangents.size());
+        memcpy(ptr, &outTangentCount, sizeof(UInt32));
+        ptr += sizeof(UInt32);
+        memcpy(ptr, track.outTangents.data(), outTangentCount * sizeof(Float32));
+        ptr += outTangentCount * sizeof(Float32);
     }
 
     // ===== Anim Notify markers (Phase 1.5) — trailing block =====

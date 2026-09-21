@@ -42,6 +42,14 @@ enum class AnimBlendMode : UInt8 {
     Additive = 1,
 };
 
+// Per-track interpolation used between adjacent keys. CubicHermite tangents
+// are stored as value-units per second, one tuple per key and component.
+enum class AnimInterpolation : UInt8 {
+    Linear = 0,
+    Step = 1,
+    CubicHermite = 2,
+};
+
 // ===== 动画轨道数据 =====
 struct AnimTrack {
     std::string nodeName;        // 目标节点/骨骼名称
@@ -51,9 +59,12 @@ struct AnimTrack {
     // behavior. The byte is written by IAnimation::VERSION=3 saveToBinary;
     // v1/v2 loaders ignore it (no byte exists at this slot in their format).
     AnimBlendMode blendMode = AnimBlendMode::Override;
+    AnimInterpolation interpolation = AnimInterpolation::Linear;
 
     std::vector<Float32> times;  // 时间点
     std::vector<Float32> values; // 值 (根据 valueType 解释)
+    std::vector<Float32> inTangents;  // optional, same shape as values
+    std::vector<Float32> outTangents; // optional, same shape as values
 };
 
 // ===== 动画通知 (Anim Notify marker) =====
@@ -113,6 +124,9 @@ public:
     //               it on top of the bone's base local TRS weighted by the
     //               player's additiveWeight scalar (0..1).
     virtual AnimBlendMode getTrackBlendMode(UInt32 trackIndex) const = 0;
+    virtual AnimInterpolation getTrackInterpolation(UInt32 trackIndex) const = 0;
+    virtual const Float32* getTrackInTangents(UInt32 trackIndex) const = 0;
+    virtual const Float32* getTrackOutTangents(UInt32 trackIndex) const = 0;
 
     // ===== Anim Notify markers (Phase 1.5) =====
     //
@@ -144,11 +158,13 @@ public:
     //       (no byte in the v2 format).
     //   v3 binaries read both blocks.
     //   v4 binaries read both blocks (same as v3) — no extra bytes.
+    // v5 adds interpolation plus optional incoming/outgoing tangent arrays
+    //     to every track. v1-v4 load as Linear with empty tangent arrays.
     // Forward compat:
-    //   loadFromBinary returns false for any version > VERSION (5, 6, …)
+    //   loadFromBinary returns false for any version > VERSION (6, 7, …)
     //   so a future binary that adds new bytes is caught loudly rather
     //   than silently mis-parsed.
-    static constexpr UInt32 VERSION = 4;
+    static constexpr UInt32 VERSION = 5;
     static constexpr UInt32 MAGIC = 0x4E4D5941; // 'AYNM'
 };
 

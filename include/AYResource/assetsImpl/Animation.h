@@ -45,6 +45,9 @@ public:
     // AnimBlendMode::Override on out-of-range indices so legacy code paths
     // and v2 binary loads behave bit-identically to pre-P1.2.
     AnimBlendMode getTrackBlendMode(UInt32 trackIndex) const override;
+    AnimInterpolation getTrackInterpolation(UInt32 trackIndex) const override;
+    const Float32* getTrackInTangents(UInt32 trackIndex) const override;
+    const Float32* getTrackOutTangents(UInt32 trackIndex) const override;
 
     // ===== Anim Notify markers (Phase 1.5) — IAnimation overrides =====
     UInt32      getNotifyCount()                     const override;

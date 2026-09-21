@@ -262,6 +262,38 @@ TEST_SUITE(AnimationLoaderTests)
         CHECK(loaded.getTrackCount() == anim.getTrackCount());
     }
 
+    TEST_CASE(CubicTrackTangentsRoundTripInVersion5) {
+        Animation animation;
+        animation.setName("curve");
+        animation.setDuration(1.0f);
+        animation.setTicksPerSecond(1.0f);
+        AnimTrack track;
+        track.nodeName = "parameter";
+        track.property = "value";
+        track.valueType = AnimTrackType::Float;
+        track.interpolation = AnimInterpolation::CubicHermite;
+        track.times = {0.0f, 1.0f};
+        track.values = {0.0f, 1.0f};
+        track.inTangents = {0.0f, 2.0f};
+        track.outTangents = {2.0f, 0.0f};
+        animation.addTrack(track);
+
+        std::vector<UInt8> bytes;
+        CHECK(animation.saveToBinary(bytes));
+        Animation loaded;
+        CHECK(loaded.loadFromBinary(bytes.data(), bytes.size()));
+        CHECK(loaded.getTrackInterpolation(0) == AnimInterpolation::CubicHermite);
+        CHECK(loaded.getTrackInTangents(0) != nullptr);
+        CHECK(loaded.getTrackOutTangents(0) != nullptr);
+        CHECK(loaded.getTrackInTangents(0)[1] == 2.0f);
+        CHECK(loaded.getTrackOutTangents(0)[0] == 2.0f);
+
+        track.inTangents = {1.0f};
+        Animation invalid;
+        invalid.addTrack(track);
+        CHECK_FALSE(invalid.saveToBinary(bytes));
+    }
+
     // Phase 1.5: out-of-bounds notify index returns safe defaults.
     TEST_CASE(NotifyAccessors_OutOfRangeReturnsSafeDefaults) {
         Animation anim;
@@ -275,16 +307,16 @@ TEST_SUITE(AnimationLoaderTests)
     }
 
     // P1.3 — forward-compat tripwire. loadFromBinary must reject any
-    // version > IAnimation::VERSION (currently 4) so a future binary that
+    // version > IAnimation::VERSION (currently 5) so a future binary that
     // adds new bytes is caught loudly rather than silently mis-parsed
     // and writing corrupted skin matrices downstream.
     //
     // Hand-craft a 16-byte header (magic + version) + minimal name to
     // reach the version check; we don't need real track data — the
     // check happens BEFORE any track/notify reads.
-    TEST_CASE(LoadFromBinary_RejectsVersionAbove4) {
-        // Build a minimal valid-v4 buffer first, then mutate only the
-        // version UInt32 to 5. The other bytes stay coherent so the
+    TEST_CASE(LoadFromBinary_RejectsVersionAbove5) {
+        // Build a minimal valid-v5 buffer first, then mutate only the
+        // version UInt32 to 6. The other bytes stay coherent so the
         // tripwire fires at the version guard, not at some later
         // length-mismatch guard.
         Animation ref;
@@ -293,9 +325,9 @@ TEST_SUITE(AnimationLoaderTests)
         CHECK(ref.saveToBinary(good) == true);
         CHECK(good.size() >= sizeof(UInt32) * 2);
 
-        // Copy + patch version=5 (one above VERSION=4).
+        // Copy + patch version=6 (one above VERSION=5).
         std::vector<UInt8> bad = good;
-        UInt32 futureVersion = 5u;
+        UInt32 futureVersion = 6u;
         std::memcpy(bad.data() + sizeof(UInt32), &futureVersion, sizeof(UInt32));
 
         Animation loaded;
@@ -303,7 +335,7 @@ TEST_SUITE(AnimationLoaderTests)
         // a too-new binary instead of silently dropping or munging
         // track data.
         CHECK(loaded.loadFromBinary(bad.data(), bad.size()) == false);
-        // A v4 binary (the current VERSION) must still load — pin
+        // A v5 binary (the current VERSION) must still load — pin
         // the non-tripwire path explicitly so a future regression
         // that broke both branches is caught.
         CHECK(ref.loadFromBinary(good.data(), good.size()) == true);
