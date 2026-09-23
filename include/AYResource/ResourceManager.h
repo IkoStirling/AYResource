@@ -78,6 +78,23 @@ public:
     static ResourceManager& instance();
 
     // ===== Synchronous loading =====
+    /**
+     * @brief Resolves, loads, caches, and type-checks one resource synchronously.
+     * @tparam T Requested resource interface or concrete type.
+     * @param filepath Project-relative loose or cooked resource path.
+     * @return Shared ownership of the cached resource, or nullptr when the path
+     * is invalid, loading fails, or the loaded resource is not compatible with T.
+     * @ownership
+     * The returned shared_ptr keeps the CPU resource alive independently of
+     * cache residency. Renderer/GPU objects have a separate lifetime.
+     * @threading
+     * The call blocks its caller while loaders and dependencies run. Do not
+     * issue a re-entrant or concurrent load of the same path; use loadAsync for
+     * scheduled background work.
+     * @failure
+     * A cached placeholder can still be returned for a path whose state is
+     * Failed. Use getLoadState() or hasLoadFailed() when failure matters.
+     */
     template<typename T, typename... Args>
     std::shared_ptr<T> load(const std::string& filepath, Args&&...) {
         auto resource = _loadInternal(filepath);
@@ -85,6 +102,25 @@ public:
     }
 
     // ===== Async loading with progress (P3: no extra cast thread) =====
+    /**
+     * @brief Schedules a typed resource load on the configured task scheduler.
+     * @tparam T Requested resource interface or concrete type.
+     * @param filepath Project-relative loose or cooked resource path.
+     * @param callback Optional completion callback receiving the typed result.
+     * @param onProgress Optional progress callback receiving values from queued
+     * through completion.
+     * @return Shared future that is always satisfied with a resource or nullptr.
+     * @ownership
+     * The future, callback, and cache share ownership of the resulting CPU
+     * resource; GPU-side lifetime remains the renderer's responsibility.
+     * @threading
+     * The initial progress notification runs on the calling thread. Loading,
+     * later progress notifications, and completion run on a scheduler worker;
+     * marshal engine-state mutations back to their owning Host phase.
+     * @failure
+     * Cancellation, load failure, and type mismatch complete with nullptr.
+     * Inspect getLoadState() when a cached placeholder must be distinguished.
+     */
     template<typename T, typename... Args>
     std::shared_future<std::shared_ptr<T>> loadAsync(
         const std::string& filepath,
