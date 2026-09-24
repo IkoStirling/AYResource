@@ -74,6 +74,12 @@ rules are first-match-wins and use `*`, `?`, and `**` glob syntax.
 }
 ```
 
+The supported authoring schema is exposed as
+`ayt::resource::kProjectBuildProfileSchemaVersion`. Loaders reject future
+versions instead of interpreting or rewriting them. Project-wide migration and
+Project Doctor use this same production parser; no Build Profile migration is
+currently needed because schema 1 remains current.
+
 ## Cook cache
 
 Cook objects live under `.cookCache/objects/<prefix>/<sha256>`. The key covers

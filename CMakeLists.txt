@@ -133,6 +133,7 @@ target_link_libraries(${MODULE_NAME}
         AYEventSystem
     PRIVATE
         AYLog
+        nlohmann_json::nlohmann_json
 )
 
 if(AY_BUILD_RESOURCE_AUTHORING)

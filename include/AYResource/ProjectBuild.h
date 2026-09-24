@@ -8,6 +8,8 @@
 
 namespace ayt::resource {
 
+inline constexpr std::uint32_t kProjectBuildProfileSchemaVersion = 1u;
+
 enum class ProjectAssetTransform : std::uint8_t {
     Auto,
     Raw,
