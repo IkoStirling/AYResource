@@ -876,6 +876,58 @@ bool copyFile(const fs::path& source, const fs::path& destination,
     return true;
 }
 
+bool isRuntimeLibrary(const fs::path& path, std::string_view platform)
+{
+    const std::string filename = lower(path.filename().string());
+    const std::string extension = lower(path.extension().string());
+    const std::string target = lower(std::string(platform));
+    if (target == "windows") return extension == ".dll";
+    if (target == "macos" || target == "mac" || target == "darwin") {
+        return extension == ".dylib";
+    }
+    if (target == "linux") {
+        return filename.ends_with(".so")
+            || filename.find(".so.") != std::string::npos;
+    }
+    return false;
+}
+
+bool stageAdjacentRuntimeLibraries(const fs::path& artifact,
+                                   std::string_view platform,
+                                   const fs::path& staging,
+                                   std::vector<std::string>& stagedNames,
+                                   std::string& error)
+{
+    std::error_code fileError;
+    std::vector<fs::path> libraries;
+    for (fs::directory_iterator it(artifact.parent_path(), fileError), end;
+         it != end && !fileError; it.increment(fileError)) {
+        if (it->is_regular_file(fileError)
+            && !fileError
+            && isRuntimeLibrary(it->path(), platform)) {
+            libraries.push_back(it->path());
+        }
+    }
+    if (fileError) {
+        error = "Could not inspect runtime dependencies next to '"
+            + artifact.string() + "': " + fileError.message();
+        return false;
+    }
+    std::sort(libraries.begin(), libraries.end(),
+        [](const fs::path& left, const fs::path& right) {
+            return left.filename().generic_string()
+                < right.filename().generic_string();
+        });
+    for (const fs::path& library : libraries) {
+        const std::string filename = library.filename().generic_string();
+        if (!copyFile(library, staging / library.filename(), error)) {
+            return false;
+        }
+        stagedNames.push_back(filename);
+    }
+    return true;
+}
+
 struct StagedFile {
     fs::path diskPath;
     std::string logicalPath;
@@ -1178,6 +1230,7 @@ ProjectBuildResult ProjectBuildExecutor::execute(
     }
 
     fs::path builtArtifact;
+    std::vector<std::string> runtimeFiles;
     if (plan.profile.code.enabled) {
         const fs::path sourceDirectory =
             projectRoot / plan.profile.code.sourceDirectory;
@@ -1215,6 +1268,11 @@ ProjectBuildResult ProjectBuildExecutor::execute(
         }
         if (!copyFile(builtArtifact, staging / builtArtifact.filename(),
                       result.error)) {
+            return result;
+        }
+        if (!stageAdjacentRuntimeLibraries(
+                builtArtifact, plan.profile.platform, staging,
+                runtimeFiles, result.error)) {
             return result;
         }
         result.executable = (output / builtArtifact.filename()).string();
@@ -1349,6 +1407,7 @@ ProjectBuildResult ProjectBuildExecutor::execute(
         {"configuration", plan.profile.configuration},
         {"executable", result.executable.empty()
             ? std::string{} : fs::path(result.executable).filename().string()},
+        {"runtimeFiles", runtimeFiles},
         {"files", Json::array()},
     };
     for (const StagedFile& file : staged) {

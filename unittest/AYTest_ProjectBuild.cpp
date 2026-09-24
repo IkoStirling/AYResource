@@ -455,6 +455,8 @@ TEST_CASE(existing_code_artifact_is_staged_and_published_for_editor_run)
     ProjectBuildCleanup cleanup{"ayproject_build_artifact_test"};
     CHECK(writeText(cleanup.root / "Assets/Data/settings.txt", "test=true\n"));
     CHECK(writeText(cleanup.root / "out/build/Game.exe", "placeholder"));
+    CHECK(writeText(cleanup.root / "out/build/runtime.dll", "runtime"));
+    CHECK(writeText(cleanup.root / "out/build/debug.pdb", "symbols"));
 
     nlohmann::json profile = nlohmann::json::parse(profileJson());
     profile["code"] = {
@@ -484,8 +486,18 @@ TEST_CASE(existing_code_artifact_is_staged_and_published_for_editor_run)
     CHECK(built.ok);
     CHECK(fs::is_regular_file(cleanup.root
         / "out/package/test/Game.exe"));
+    CHECK(fs::is_regular_file(cleanup.root
+        / "out/package/test/runtime.dll"));
+    CHECK_FALSE(fs::exists(cleanup.root
+        / "out/package/test/debug.pdb"));
     CHECK(fs::is_directory(cleanup.root
         / "out/package/test/Content"));
+
+    std::ifstream manifestInput(cleanup.root
+        / "out/package/test/build-manifest.json", std::ios::binary);
+    nlohmann::json manifest;
+    manifestInput >> manifest;
+    CHECK(manifest["runtimeFiles"] == nlohmann::json::array({"runtime.dll"}));
 
     std::ifstream stateInput(cleanup.root
         / ".ayeditor/builds/last-success.json", std::ios::binary);

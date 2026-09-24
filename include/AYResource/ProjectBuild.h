@@ -180,9 +180,12 @@ struct ProjectBuildResult {
     std::string error;
 };
 
-// Executes one immutable plan. Successful publication writes both a package
-// manifest and `.ayeditor/builds/last-success.json`, allowing Project Run to
-// consume the exact artifact instead of guessing a build directory.
+// Executes one immutable plan. A code artifact also stages adjacent platform
+// runtime libraries (DLL/.so/.dylib) so the published directory is runnable
+// without reaching back into its build tree. Successful publication writes
+// both a package manifest and `.ayeditor/builds/last-success.json`, allowing
+// Project Run to consume the exact artifact instead of guessing a build
+// directory.
 class ProjectBuildExecutor final {
 public:
     static ProjectBuildResult execute(

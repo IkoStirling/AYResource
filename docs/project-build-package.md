@@ -4,7 +4,8 @@
 `AYImportJob`, converters, `AYStorage`, and runtime `ResourceManager`.
 It deliberately keeps four decisions separate:
 
-1. **Code build** — optional CMake configure/build and one explicit artifact.
+1. **Code build** — optional CMake configure/build and one explicit artifact;
+   adjacent platform runtime libraries are staged beside it.
 2. **Representation** — `raw`, `cook`, `auto`, or `exclude` per ordered rule.
 3. **Storage** — `loose` or `pak:<chunk>`, independent of representation.
 4. **Publication** — build into a sibling staging directory, then replace the
@@ -103,6 +104,13 @@ warning; keep UI/Flow/Scene JSON loose until their consumers use a package VFS.
 Successful code builds write `.ayeditor/builds/last-success.json`. AYEditor
 Project Run resolves an explicit `.ayeditor/run.json` first, then this exact
 build state, then the shared project descriptor and conventional fallbacks.
+
+When a code artifact is enabled, publication also copies runtime libraries
+found beside that artifact (`.dll` on Windows, `.so` on Linux, `.dylib` on
+macOS). CMake/vcpkg app-local deployment remains responsible for placing the
+exact dependency closure beside the built executable. The package manifest
+records the copied names in `runtimeFiles`; debug symbols and unrelated
+executables are not copied.
 
 ## CLI
 
