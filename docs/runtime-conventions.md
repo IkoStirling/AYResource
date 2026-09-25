@@ -40,7 +40,9 @@ Names must match Phoskia property / uniform / texture declarations.
 resolveAssetPath(basePath, refPath):
   - refPath absolute → use as-is
   - else join directory(basePath) with refPath, normalize
-  - optional global asset root (setAssetRoot) for bare refs
+  - contract virtual paths (`textures/`, `tilemaps/`, `meshes/`, etc.) resolve
+    from the mounted asset root
+  - standalone `runGameProject` mounts `GameProject::assetRoot` for the run
 ```
 
 Examples:

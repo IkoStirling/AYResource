@@ -55,6 +55,7 @@ bool isRootRelativeVirtualPath(const std::string& refPath)
         "meshes/",    "meshes\\",
         "skeletons/", "skeletons\\",
         "animations/","animations\\",
+        "tilemaps/",  "tilemaps\\",
         "shaders/",   "shaders\\",
         "Scripts/",   "Scripts\\",
         "scripts/",   "scripts\\",

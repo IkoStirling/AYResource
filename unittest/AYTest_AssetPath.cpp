@@ -48,6 +48,16 @@ TEST_CASE(resolve_with_asset_root)
     setAssetRoot("");
 }
 
+TEST_CASE(resolve_tilemap_virtual_path_uses_asset_root)
+{
+    setAssetRoot("content");
+    const std::string resolved =
+        resolveAssetPath({}, "tilemaps/restaurant.aytilemap");
+    CHECK(resolved == "content/tilemaps/restaurant.aytilemap"
+          || resolved == "content\\tilemaps\\restaurant.aytilemap");
+    setAssetRoot("");
+}
+
 TEST_CASE(resolve_virtual_path_searches_layered_roots_in_order)
 {
     namespace fs = std::filesystem;
