@@ -7,6 +7,7 @@
 
 #include <AYCrypto.h>
 #include <AYIO/File.h>
+#include <AYIO/FileTransaction.h>
 #include <AYIO/PathSafety.h>
 #include <AYStorage/IPackageWriter.h>
 #include <AYStorage/IStorageDatabase.h>
@@ -1526,72 +1527,22 @@ ProjectBuildResult ProjectBuildExecutor::execute(
 
     report(progress, ProjectBuildStage::Publish, 0.95f,
            "publishing package transaction");
-    const fs::path previous = fs::path(output.string() + ".previous");
-    auto notice = [&](const std::string& phase) {
-        return [&, phase](std::size_t nextAttempt, const std::error_code& error) {
+    const auto publication = ayt::io::publishDirectory(staging, output,
+        [&](const std::string& phase, std::size_t nextAttempt, const std::error_code& error) {
             report(progress, ProjectBuildStage::Publish, 0.95f,
                 "Retrying " + phase + " (attempt " + std::to_string(nextAttempt)
                 + "; error=" + std::to_string(error.value()) + ")");
-        };
-    };
-    auto renamePackage = [&](const fs::path& source, const fs::path& target,
-                             const std::string& phase) {
-        const auto attempt = detail::retryPublishFileOperation(
-            [&](std::error_code& error) { fs::rename(source, target, error); }, notice(phase));
-        if (!attempt.error && attempt.attempts > 1) {
-            diagnostic(result.diagnostics, ProjectBuildDiagnostic::Severity::Info, {},
-                phase + " succeeded after " + std::to_string(attempt.attempts) + " attempts.");
-        }
-        return attempt;
-    };
-    auto removePrevious = [&] {
-        return detail::retryPublishFileOperation(
-            [&](std::error_code& error) { fs::remove_all(previous, error); },
-            notice("clean previous package"));
-    };
-    // A failed rollback leaves the only old package in .previous. Recover it
-    // before considering obsolete-backup cleanup; never silently delete it.
-    if (!fs::exists(output) && fs::exists(previous)) {
-        const auto restored = renamePackage(previous, output, "recover previous package");
-        if (restored.error) {
-            result.error = detail::publishFileError("recover previous package", previous, output, restored);
-            return result;
-        }
-    }
-    const auto cleared = removePrevious();
-    if (cleared.error) {
-        result.error = detail::publishFileError("clean previous package", previous, {}, cleared);
+        }, "package");
+    for (const auto& message : publication.recoveries)
+        diagnostic(result.diagnostics, ProjectBuildDiagnostic::Severity::Info, {}, message);
+    for (const auto& message : publication.warnings)
+        diagnostic(result.diagnostics, ProjectBuildDiagnostic::Severity::Warning, {}, message);
+    if (!publication.committed) {
+        result.error = publication.error;
+        if (!publication.retainedBackup.empty())
+            diagnostic(result.diagnostics, ProjectBuildDiagnostic::Severity::Error,
+                publication.retainedBackup.generic_string(), result.error + "; old package retained for recovery.");
         return result;
-    }
-    bool retired = false;
-    if (fs::exists(output)) {
-        const auto retirement = renamePackage(output, previous, "retire previous package");
-        if (retirement.error) {
-            result.error = detail::publishFileError("retire previous package", output, previous, retirement);
-            return result;
-        }
-        retired = true;
-    }
-    const auto publication = renamePackage(staging, output, "publish package");
-    if (publication.error) {
-        result.error = detail::publishFileError("publish package", staging, output, publication);
-        if (retired) {
-            const auto rollback = renamePackage(previous, output, "restore previous package");
-            if (rollback.error) {
-                const std::string failure = detail::publishFileError("restore previous package", previous, output, rollback);
-                result.error += "; rollback failed: " + failure;
-                diagnostic(result.diagnostics, ProjectBuildDiagnostic::Severity::Error,
-                    previous.generic_string(), failure + "; old package retained for recovery.");
-            }
-        }
-        return result;
-    }
-    const auto cleaned = removePrevious();
-    if (cleaned.error) {
-        // Publication is already committed. A retained backup is not a failed
-        // publication, but cleanup failure must no longer disappear silently.
-        diagnostic(result.diagnostics, ProjectBuildDiagnostic::Severity::Warning, {},
-            detail::publishFileError("clean previous package", previous, {}, cleaned));
     }
 
     result.manifestPath = (output / kPackageManifest).string();
