@@ -9,6 +9,7 @@
 #include <AYIO/File.h>
 #include <AYIO/FileTransaction.h>
 #include <AYIO/PathSafety.h>
+#include <AYPlatform/ChildProcess.h>
 #include <AYStorage/IPackageWriter.h>
 #include <AYStorage/IStorageDatabase.h>
 #include <nlohmann/json.hpp>
@@ -762,86 +763,16 @@ ayt::storage::CompressionAlgo compressionOf(const std::string& value)
     return ayt::storage::CompressionAlgo::Zstd;
 }
 
-std::wstring wide(const std::string& value)
-{
-#if defined(_WIN32)
-    if (value.empty()) return {};
-    const int count = MultiByteToWideChar(CP_UTF8, 0, value.data(),
-        static_cast<int>(value.size()), nullptr, 0);
-    if (count <= 0) return std::wstring(value.begin(), value.end());
-    std::wstring result(static_cast<std::size_t>(count), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, value.data(),
-        static_cast<int>(value.size()), result.data(), count);
-    return result;
-#else
-    return std::wstring(value.begin(), value.end());
-#endif
-}
-
-std::wstring quote(std::wstring value)
-{
-    if (value.find_first_of(L" \t\"") == std::wstring::npos) return value;
-    std::wstring output = L"\"";
-    std::size_t slashes = 0;
-    for (wchar_t character : value) {
-        if (character == L'\\') { ++slashes; continue; }
-        if (character == L'\"') {
-            output.append(slashes * 2 + 1, L'\\');
-            output.push_back(character);
-        } else {
-            output.append(slashes, L'\\');
-            output.push_back(character);
-        }
-        slashes = 0;
-    }
-    output.append(slashes * 2, L'\\');
-    output.push_back(L'\"');
-    return output;
-}
-
-int runProcess(const std::vector<std::string>& arguments,
+ayt::platform::ProcessResult runProcess(const std::vector<std::string>& arguments,
                const fs::path& workingDirectory)
 {
-    if (arguments.empty()) return -1;
-#if defined(_WIN32)
-    std::wstring command;
-    for (const std::string& argument : arguments) {
-        if (!command.empty()) command.push_back(L' ');
-        command += quote(wide(argument));
-    }
-    std::vector<wchar_t> mutableCommand(command.begin(), command.end());
-    mutableCommand.push_back(L'\0');
-    STARTUPINFOW startup{};
-    startup.cb = sizeof(startup);
-    PROCESS_INFORMATION process{};
-    const std::wstring working = workingDirectory.wstring();
-    if (!CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr,
-            TRUE, 0, nullptr, working.c_str(), &startup, &process)) {
-        return -static_cast<int>(GetLastError());
-    }
-    WaitForSingleObject(process.hProcess, INFINITE);
-    DWORD exitCode = 1;
-    GetExitCodeProcess(process.hProcess, &exitCode);
-    CloseHandle(process.hThread);
-    CloseHandle(process.hProcess);
-    return static_cast<int>(exitCode);
-#else
-    std::string command;
-    for (const std::string& argument : arguments) {
-        if (!command.empty()) command.push_back(' ');
-        command.push_back('\'');
-        for (char ch : argument) {
-            if (ch == '\'') command += "'\\''";
-            else command.push_back(ch);
-        }
-        command.push_back('\'');
-    }
-    const fs::path previous = fs::current_path();
-    fs::current_path(workingDirectory);
-    const int code = std::system(command.c_str());
-    fs::current_path(previous);
-    return code;
-#endif
+    if (arguments.empty()) { ayt::platform::ProcessResult failed; failed.error = "Empty process command"; return failed; }
+    ayt::platform::ProcessOptions options;
+    options.executable = fs::u8path(arguments.front());
+    options.arguments.assign(arguments.begin() + 1, arguments.end());
+    options.workingDirectory = workingDirectory;
+    options.captureOutput = false;
+    return ayt::platform::runProcess(options);
 }
 
 void report(const ProjectBuildProgressFn& progress, ProjectBuildStage stage,
@@ -1243,26 +1174,26 @@ ProjectBuildResult ProjectBuildExecutor::execute(
         if (!options.skipCode) {
             report(progress, ProjectBuildStage::ConfigureCode, 0.02f,
                    "configuring CMake project");
-            const int configure = runProcess({
+            const auto configure = runProcess({
                 plan.profile.code.cmakeExecutable,
                 "--preset", plan.profile.code.configurePreset,
                 "-S", sourceDirectory.string(),
             }, projectRoot);
-            if (configure != 0) {
+            if (configure.exitCode != 0 || !configure.error.empty()) {
                 result.error = "CMake configure failed with exit code "
-                    + std::to_string(configure) + ".";
+                    + std::to_string(configure.exitCode) + ". " + configure.error;
                 return result;
             }
             report(progress, ProjectBuildStage::BuildCode, 0.08f,
                    "building CMake target " + plan.profile.code.target);
-            const int build = runProcess({
+            const auto build = runProcess({
                 plan.profile.code.cmakeExecutable,
                 "--build", "--preset", plan.profile.code.buildPreset,
                 "--target", plan.profile.code.target,
             }, projectRoot);
-            if (build != 0) {
+            if (build.exitCode != 0 || !build.error.empty()) {
                 result.error = "CMake build failed with exit code "
-                    + std::to_string(build) + ".";
+                    + std::to_string(build.exitCode) + ". " + build.error;
                 return result;
             }
         }
