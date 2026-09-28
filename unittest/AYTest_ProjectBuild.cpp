@@ -16,6 +16,11 @@
 #include <string_view>
 #include <vector>
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#endif
+
 using namespace ayt::resource;
 
 namespace {
@@ -30,6 +35,30 @@ struct ProjectBuildCleanup {
         fs::remove_all(root, error);
     }
 };
+
+#if defined(_WIN32)
+struct PublicationReadHandle {
+    HANDLE value = INVALID_HANDLE_VALUE;
+    PublicationReadHandle() = default;
+    PublicationReadHandle(const PublicationReadHandle&) = delete;
+    PublicationReadHandle& operator=(const PublicationReadHandle&) = delete;
+    ~PublicationReadHandle() { close(); }
+    void close() {
+        if (value != INVALID_HANDLE_VALUE) CloseHandle(value);
+        value = INVALID_HANDLE_VALUE;
+    }
+    bool open(const fs::path& path, bool shareDelete = true) {
+        close();
+        // Attribute-only handles reproduce parent rename contention, but their
+        // sharing flags do not enforce a child-file deletion conflict. Use a
+        // data-read handle for the distinct backup-cleanup fixture.
+        value = CreateFileW(fs::absolute(path).c_str(), shareDelete ? FILE_READ_ATTRIBUTES : GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | (shareDelete ? FILE_SHARE_DELETE : 0), nullptr,
+            OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        return value != INVALID_HANDLE_VALUE;
+    }
+};
+#endif
 
 bool writeText(const fs::path& path, const std::string& text)
 {
@@ -122,6 +151,27 @@ std::string profileJson(const std::string& output = "out/package/test")
     };
     return profile.dump(2);
 }
+
+#if defined(_WIN32)
+ProjectBuildPlan publicationFixture(const fs::path& root, bool oldPackage)
+{
+    CHECK(writeText(root / "Assets/Data/value.txt", "new"));
+    CHECK(writeText(root / "BuildProfiles/test.aybuild.json", profileJson()));
+    if (oldPackage) CHECK(writeText(root / "out/package/test/Content/Data/value.txt", "old"));
+    std::string error;
+    const auto profile = ProjectBuildProfile::load((root / "BuildProfiles/test.aybuild.json").string(), &error);
+    CHECK_MSG(static_cast<bool>(profile), error.c_str());
+    auto plan = ProjectBuildPlanner::create(profile, root.string());
+    CHECK(plan.valid());
+    return plan;
+}
+
+std::string publicationText(const fs::path& path)
+{
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+#endif
 
 std::string skeletonFingerprint(const fs::path& path)
 {
@@ -281,6 +331,189 @@ std::string scopedFnv(const char* prefix, const std::string& value)
 } // namespace
 
 TEST_SUITE(ProjectBuildTests)
+
+TEST_CASE(publish_retries_after_a_staged_child_file_is_released)
+{
+#if defined(_WIN32)
+    ProjectBuildCleanup cleanup{"publish_transient"};
+    const auto plan = publicationFixture(cleanup.root, true);
+    PublicationReadHandle held;
+    int retries = 0;
+    const auto built = ProjectBuildExecutor::execute(plan, {}, [&](const ProjectBuildProgress& p) {
+        if (p.message == "publishing package transaction")
+            CHECK(held.open(cleanup.root / "out/package/test.staging/Content/resources.db"));
+        if (p.message.find("Retrying publish package") == 0) { ++retries; held.close(); }
+    });
+    CHECK_MSG(built.ok, built.error.c_str());
+    CHECK(retries > 0);
+    CHECK(publicationText(cleanup.root / "out/package/test/Content/Data/value.txt") == "new");
+    CHECK_FALSE(fs::exists(cleanup.root / "out/package/test.previous"));
+    CHECK_FALSE(fs::exists(cleanup.root / "out/package/test.staging"));
+#else
+    SKIP_TEST("Windows directory contention fixture");
+#endif
+}
+
+TEST_CASE(retirement_retries_after_an_old_child_file_is_released)
+{
+#if defined(_WIN32)
+    ProjectBuildCleanup cleanup{"retire_transient"};
+    const auto plan = publicationFixture(cleanup.root, true);
+    PublicationReadHandle held;
+    int retries = 0;
+    const auto built = ProjectBuildExecutor::execute(plan, {}, [&](const ProjectBuildProgress& p) {
+        if (p.message == "publishing package transaction")
+            CHECK(held.open(cleanup.root / "out/package/test/Content/Data/value.txt"));
+        if (p.message.find("Retrying retire previous package") == 0) { ++retries; held.close(); }
+    });
+    CHECK_MSG(built.ok, built.error.c_str());
+    CHECK(retries > 0);
+    CHECK(publicationText(cleanup.root / "out/package/test/Content/Data/value.txt") == "new");
+#else
+    SKIP_TEST("Windows directory contention fixture");
+#endif
+}
+
+TEST_CASE(persistent_publish_contention_times_out_and_restores_the_old_package)
+{
+#if defined(_WIN32)
+    ProjectBuildCleanup cleanup{"publish_persistent"};
+    const auto plan = publicationFixture(cleanup.root, true);
+    PublicationReadHandle held;
+    int retries = 0;
+    const auto built = ProjectBuildExecutor::execute(plan, {}, [&](const ProjectBuildProgress& p) {
+        if (p.message == "publishing package transaction")
+            CHECK(held.open(cleanup.root / "out/package/test.staging/Content/resources.db"));
+        if (p.message.find("Retrying publish package") == 0) ++retries;
+    });
+    CHECK_FALSE(built.ok); CHECK(retries > 0);
+    CHECK(built.error.find("Could not publish package") != std::string::npos);
+    CHECK(built.error.find("retry budget exhausted") != std::string::npos);
+    CHECK(built.error.find("source=") != std::string::npos);
+    CHECK(built.error.find("target=") != std::string::npos);
+    CHECK(built.error.find("attempts=") != std::string::npos);
+    CHECK(built.error.find("rollback failed") == std::string::npos);
+    CHECK(publicationText(cleanup.root / "out/package/test/Content/Data/value.txt") == "old");
+    CHECK_FALSE(fs::exists(cleanup.root / "out/package/test.previous"));
+#else
+    SKIP_TEST("Windows directory contention fixture");
+#endif
+}
+
+TEST_CASE(persistent_retirement_contention_preserves_the_published_package)
+{
+#if defined(_WIN32)
+    ProjectBuildCleanup cleanup{"retire_persistent"};
+    const auto plan = publicationFixture(cleanup.root, true);
+    PublicationReadHandle held;
+    const auto built = ProjectBuildExecutor::execute(plan, {}, [&](const ProjectBuildProgress& p) {
+        if (p.message == "publishing package transaction")
+            CHECK(held.open(cleanup.root / "out/package/test/Content/Data/value.txt"));
+    });
+    CHECK_FALSE(built.ok);
+    CHECK(built.error.find("Could not retire previous package") != std::string::npos);
+    CHECK(built.error.find("retry budget exhausted") != std::string::npos);
+    CHECK(publicationText(cleanup.root / "out/package/test/Content/Data/value.txt") == "old");
+    CHECK_FALSE(fs::exists(cleanup.root / "out/package/test.previous"));
+#else
+    SKIP_TEST("Windows directory contention fixture");
+#endif
+}
+
+TEST_CASE(failed_rollback_preserves_the_backup_and_a_later_build_recovers_it)
+{
+#if defined(_WIN32)
+    ProjectBuildCleanup cleanup{"rollback_persistent"};
+    const auto plan = publicationFixture(cleanup.root, true);
+    PublicationReadHandle staged, previous;
+    const auto failed = ProjectBuildExecutor::execute(plan, {}, [&](const ProjectBuildProgress& p) {
+        if (p.message == "publishing package transaction")
+            CHECK(staged.open(cleanup.root / "out/package/test.staging/Content/resources.db"));
+        if (p.message.find("Retrying publish package") == 0 && previous.value == INVALID_HANDLE_VALUE)
+            CHECK(previous.open(cleanup.root / "out/package/test.previous/Content/Data/value.txt"));
+    });
+    CHECK_FALSE(failed.ok);
+    CHECK(failed.error.find("rollback failed") != std::string::npos);
+    CHECK(failed.error.find("Could not restore previous package") != std::string::npos);
+    CHECK(publicationText(cleanup.root / "out/package/test.previous/Content/Data/value.txt") == "old");
+    CHECK_FALSE(fs::exists(cleanup.root / "out/package/test"));
+    staged.close();
+    const auto blockedRecovery = ProjectBuildExecutor::execute(plan);
+    CHECK_FALSE(blockedRecovery.ok);
+    CHECK(blockedRecovery.error.find("Could not recover previous package") != std::string::npos);
+    CHECK(publicationText(cleanup.root / "out/package/test.previous/Content/Data/value.txt") == "old");
+    CHECK_FALSE(fs::exists(cleanup.root / "out/package/test"));
+    previous.close();
+    // Recovery must restore the old package BEFORE a second failed publication.
+    const auto second = ProjectBuildExecutor::execute(plan, {}, [&](const ProjectBuildProgress& p) {
+        if (p.message == "publishing package transaction")
+            CHECK(staged.open(cleanup.root / "out/package/test.staging/Content/resources.db"));
+    });
+    CHECK_FALSE(second.ok);
+    CHECK(second.error.find("rollback failed") == std::string::npos);
+    CHECK(publicationText(cleanup.root / "out/package/test/Content/Data/value.txt") == "old");
+    staged.close();
+    const auto final = ProjectBuildExecutor::execute(plan);
+    CHECK_MSG(final.ok, final.error.c_str());
+    CHECK(publicationText(cleanup.root / "out/package/test/Content/Data/value.txt") == "new");
+    CHECK_FALSE(fs::exists(cleanup.root / "out/package/test.previous"));
+#else
+    SKIP_TEST("Windows directory contention fixture");
+#endif
+}
+
+TEST_CASE(rollback_retries_after_the_old_backup_child_is_released)
+{
+#if defined(_WIN32)
+    ProjectBuildCleanup cleanup{"rollback_transient"};
+    const auto plan = publicationFixture(cleanup.root, true);
+    PublicationReadHandle staged, previous;
+    int rollbackRetries = 0;
+    const auto built = ProjectBuildExecutor::execute(plan, {}, [&](const ProjectBuildProgress& p) {
+        if (p.message == "publishing package transaction")
+            CHECK(staged.open(cleanup.root / "out/package/test.staging/Content/resources.db"));
+        if (p.message.find("Retrying publish package") == 0 && previous.value == INVALID_HANDLE_VALUE)
+            CHECK(previous.open(cleanup.root / "out/package/test.previous/Content/Data/value.txt"));
+        if (p.message.find("Retrying restore previous package") == 0) {
+            ++rollbackRetries; previous.close();
+        }
+    });
+    CHECK_FALSE(built.ok); CHECK(rollbackRetries > 0);
+    CHECK(built.error.find("rollback failed") == std::string::npos);
+    CHECK(publicationText(cleanup.root / "out/package/test/Content/Data/value.txt") == "old");
+    CHECK_FALSE(fs::exists(cleanup.root / "out/package/test.previous"));
+#else
+    SKIP_TEST("Windows directory contention fixture");
+#endif
+}
+
+TEST_CASE(committed_package_remains_successful_with_a_backup_cleanup_warning)
+{
+#if defined(_WIN32)
+    ProjectBuildCleanup cleanup{"backup_cleanup_locked"};
+    const auto plan = publicationFixture(cleanup.root, true);
+    PublicationReadHandle staged, previous;
+    const auto built = ProjectBuildExecutor::execute(plan, {}, [&](const ProjectBuildProgress& p) {
+        if (p.message == "publishing package transaction")
+            CHECK(staged.open(cleanup.root / "out/package/test.staging/Content/resources.db"));
+        if (p.message.find("Retrying publish package") == 0 && previous.value == INVALID_HANDLE_VALUE) {
+            CHECK(previous.open(cleanup.root / "out/package/test.previous/Content/Data/value.txt", false));
+            staged.close();
+        }
+    });
+    CHECK_MSG(built.ok, built.error.c_str());
+    CHECK(built.error.empty());
+    CHECK(publicationText(cleanup.root / "out/package/test/Content/Data/value.txt") == "new");
+    CHECK(publicationText(cleanup.root / "out/package/test.previous/Content/Data/value.txt") == "old");
+    CHECK(std::any_of(built.diagnostics.begin(), built.diagnostics.end(), [](const auto& d) {
+        return d.severity == ProjectBuildDiagnostic::Severity::Warning
+            && d.message.find("Could not clean previous package") != std::string::npos
+            && d.message.find("retry budget exhausted") != std::string::npos;
+    }));
+#else
+    SKIP_TEST("Windows backup cleanup fixture");
+#endif
+}
 
 TEST_CASE(profile_round_trip_uses_canonical_serialization)
 {

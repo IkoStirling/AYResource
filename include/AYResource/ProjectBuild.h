@@ -180,12 +180,17 @@ struct ProjectBuildResult {
     std::string error;
 };
 
-// Executes one immutable plan. A code artifact also stages adjacent platform
-// runtime libraries (DLL/.so/.dylib) so the published directory is runnable
-// without reaching back into its build tree. Successful publication writes
-// both a package manifest and `.ayeditor/builds/last-success.json`, allowing
-// Project Run to consume the exact artifact instead of guessing a build
-// directory.
+/// Executes one immutable plan. A code artifact also stages adjacent platform
+/// runtime libraries (DLL/.so/.dylib) so the published directory is runnable
+/// without reaching back into its build tree. Successful publication writes
+/// both a package manifest and `.ayeditor/builds/last-success.json`, allowing
+/// Project Run to consume the exact artifact instead of guessing a build
+/// directory.
+/// Windows publication/retirement/rollback retry short-lived directory
+/// contention with a 250 ms retry scheduling budget and at most 26 attempts
+/// per operation; in-flight filesystem calls cannot be interrupted by it.
+/// Final failures retain phase, paths and OS error; a failed rollback preserves
+/// .previous for recovery by a later build. No non-atomic fallback is used.
 class ProjectBuildExecutor final {
 public:
     static ProjectBuildResult execute(

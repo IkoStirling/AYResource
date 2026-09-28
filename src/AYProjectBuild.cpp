@@ -1,4 +1,5 @@
 #include "AYResource/ProjectBuild.h"
+#include "ProjectPublishRetry.h"
 
 #include "AYResource/ImportJob.h"
 #include "AYResource/ResourceBootstrap.h"
@@ -981,10 +982,15 @@ bool publishCacheObject(const fs::path& temporary,
         return false;
     }
     if (fs::exists(objectRoot)) fs::remove_all(objectRoot, fileError);
-    fileError.clear();
-    fs::rename(temporary, objectRoot, fileError);
     if (fileError) {
-        error = "Could not publish cook cache object: " + fileError.message();
+        error = "Could not clear cook cache object: " + fileError.message();
+        return false;
+    }
+    const auto publication = detail::retryPublishFileOperation(
+        [&](std::error_code& ec) { fs::rename(temporary, objectRoot, ec); },
+        [](std::size_t, const std::error_code&) {});
+    if (publication.error) {
+        error = detail::publishFileError("publish cook cache object", temporary, objectRoot, publication);
         return false;
     }
     return true;
@@ -1221,8 +1227,16 @@ ProjectBuildResult ProjectBuildExecutor::execute(
     }
 
     std::error_code fileError;
-    if (fs::exists(staging)) fs::remove_all(staging, fileError);
-    fileError.clear();
+    const auto clearStaging = detail::retryPublishFileOperation(
+        [&](std::error_code& error) { fs::remove_all(staging, error); },
+        [&](std::size_t attempt, const std::error_code&) {
+            report(progress, ProjectBuildStage::Stage, 0.1f,
+                "Retrying clear staging directory (attempt " + std::to_string(attempt) + ")");
+        });
+    if (clearStaging.error) {
+        result.error = detail::publishFileError("clear staging directory", staging, {}, clearStaging);
+        return result;
+    }
     fs::create_directories(contentRoot, fileError);
     if (fileError) {
         result.error = "Could not create staging directory: " + fileError.message();
@@ -1522,26 +1536,72 @@ ProjectBuildResult ProjectBuildExecutor::execute(
     report(progress, ProjectBuildStage::Publish, 0.95f,
            "publishing package transaction");
     const fs::path previous = fs::path(output.string() + ".previous");
-    if (fs::exists(previous)) fs::remove_all(previous, fileError);
-    fileError.clear();
-    if (fs::exists(output)) {
-        fs::rename(output, previous, fileError);
-        if (fileError) {
-            result.error = "Could not retire previous package: "
-                + fileError.message();
+    auto notice = [&](const std::string& phase) {
+        return [&, phase](std::size_t nextAttempt, const std::error_code& error) {
+            report(progress, ProjectBuildStage::Publish, 0.95f,
+                "Retrying " + phase + " (attempt " + std::to_string(nextAttempt)
+                + "; error=" + std::to_string(error.value()) + ")");
+        };
+    };
+    auto renamePackage = [&](const fs::path& source, const fs::path& target,
+                             const std::string& phase) {
+        const auto attempt = detail::retryPublishFileOperation(
+            [&](std::error_code& error) { fs::rename(source, target, error); }, notice(phase));
+        if (!attempt.error && attempt.attempts > 1) {
+            diagnostic(result.diagnostics, ProjectBuildDiagnostic::Severity::Info, {},
+                phase + " succeeded after " + std::to_string(attempt.attempts) + " attempts.");
+        }
+        return attempt;
+    };
+    auto removePrevious = [&] {
+        return detail::retryPublishFileOperation(
+            [&](std::error_code& error) { fs::remove_all(previous, error); },
+            notice("clean previous package"));
+    };
+    // A failed rollback leaves the only old package in .previous. Recover it
+    // before considering obsolete-backup cleanup; never silently delete it.
+    if (!fs::exists(output) && fs::exists(previous)) {
+        const auto restored = renamePackage(previous, output, "recover previous package");
+        if (restored.error) {
+            result.error = detail::publishFileError("recover previous package", previous, output, restored);
             return result;
         }
     }
-    fs::rename(staging, output, fileError);
-    if (fileError) {
-        if (fs::exists(previous)) {
-            std::error_code restoreError;
-            fs::rename(previous, output, restoreError);
-        }
-        result.error = "Could not publish package: " + fileError.message();
+    const auto cleared = removePrevious();
+    if (cleared.error) {
+        result.error = detail::publishFileError("clean previous package", previous, {}, cleared);
         return result;
     }
-    if (fs::exists(previous)) fs::remove_all(previous, fileError);
+    bool retired = false;
+    if (fs::exists(output)) {
+        const auto retirement = renamePackage(output, previous, "retire previous package");
+        if (retirement.error) {
+            result.error = detail::publishFileError("retire previous package", output, previous, retirement);
+            return result;
+        }
+        retired = true;
+    }
+    const auto publication = renamePackage(staging, output, "publish package");
+    if (publication.error) {
+        result.error = detail::publishFileError("publish package", staging, output, publication);
+        if (retired) {
+            const auto rollback = renamePackage(previous, output, "restore previous package");
+            if (rollback.error) {
+                const std::string failure = detail::publishFileError("restore previous package", previous, output, rollback);
+                result.error += "; rollback failed: " + failure;
+                diagnostic(result.diagnostics, ProjectBuildDiagnostic::Severity::Error,
+                    previous.generic_string(), failure + "; old package retained for recovery.");
+            }
+        }
+        return result;
+    }
+    const auto cleaned = removePrevious();
+    if (cleaned.error) {
+        // Publication is already committed. A retained backup is not a failed
+        // publication, but cleanup failure must no longer disappear silently.
+        diagnostic(result.diagnostics, ProjectBuildDiagnostic::Severity::Warning, {},
+            detail::publishFileError("clean previous package", previous, {}, cleaned));
+    }
 
     result.manifestPath = (output / kPackageManifest).string();
     if (!result.executable.empty()) {

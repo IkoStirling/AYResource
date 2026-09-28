@@ -19,6 +19,7 @@ add_executable(${MODULE_NAME}
     AYTest_ResourcePipelineP5.cpp
     AYTest_ResourcePipelineP6.cpp
     AYTest_ProjectBuild.cpp
+    AYTest_ProjectPublishRetry.cpp
     AYTest_MaterialFile.cpp
     AYTest_AssetPath.cpp
     AYTest_MeshLoader.cpp
