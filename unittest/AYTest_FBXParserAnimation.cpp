@@ -96,11 +96,11 @@ TEST_SUITE(FBXParserAnimationTests)
         const char* runSmoke = std::getenv("AY_RUN_SOUR_IMPORT_SMOKE");
         if (runSmoke == nullptr || std::string(runSmoke) != "1") {
             printf("    [SKIP] set AY_RUN_SOUR_IMPORT_SMOKE=1 to run the Sour FBX regression\n");
-            return;
+            SKIP_TEST("Optional external FBX fixture unavailable or opt-in disabled; see preceding diagnostic");
         }
         if (!fileExists(kSourFbx)) {
             printf("    [SKIP] %s not found\n", kSourFbx);
-            return;
+            SKIP_TEST("Optional external FBX fixture unavailable or opt-in disabled; see preceding diagnostic");
         }
         FBXParser parser;
         parser.setLoadOption(IConverter::LoadOption::Full);
@@ -117,11 +117,11 @@ TEST_SUITE(FBXParserAnimationTests)
         const char* runSmoke = std::getenv("AY_RUN_SOUR_IMPORT_SMOKE");
         if (runSmoke == nullptr || std::string(runSmoke) != "1") {
             printf("    [SKIP] set AY_RUN_SOUR_IMPORT_SMOKE=1 to run the Sour hierarchy regression\n");
-            return;
+            SKIP_TEST("Optional external FBX fixture unavailable or opt-in disabled; see preceding diagnostic");
         }
         if (!fileExists(kSourFixFbx) || !fileExists(kSourAnimFbx)) {
             printf("    [SKIP] Sour_fix.fbx or SourWithAnim.fbx not found\n");
-            return;
+            SKIP_TEST("Optional external FBX fixture unavailable or opt-in disabled; see preceding diagnostic");
         }
 
         FBXParser modelParser;
@@ -265,7 +265,7 @@ TEST_SUITE(FBXParserAnimationTests)
     TEST_CASE(StaticCubeFbxHasNoAnimations) {
         if (!fileExists(kCubeFbx)) {
             printf("    [SKIP] %s not found\n", kCubeFbx);
-            return;
+            SKIP_TEST("Optional external FBX fixture unavailable or opt-in disabled; see preceding diagnostic");
         }
         FBXParser parser;
         parser.setLoadOption(IConverter::LoadOption::Full);
@@ -281,7 +281,7 @@ TEST_SUITE(FBXParserAnimationTests)
     TEST_CASE(SpiderFbxProducesAnimations) {
         if (!fileExists(kSpiderFbx)) {
             printf("    [SKIP] %s not found\n", kSpiderFbx);
-            return;
+            SKIP_TEST("Optional external FBX fixture unavailable or opt-in disabled; see preceding diagnostic");
         }
         FBXParser parser;
         parser.setLoadOption(IConverter::LoadOption::Full);
@@ -332,7 +332,7 @@ TEST_SUITE(FBXParserAnimationTests)
     TEST_CASE(AnimationWithSkeletonFbxProducesAnimations) {
         if (!fileExists(kAnimSkelFbx)) {
             printf("    [SKIP] %s not found\n", kAnimSkelFbx);
-            return;
+            SKIP_TEST("Optional external FBX fixture unavailable or opt-in disabled; see preceding diagnostic");
         }
         FBXParser parser;
         parser.setLoadOption(IConverter::LoadOption::Full);
@@ -355,7 +355,7 @@ TEST_SUITE(FBXParserAnimationTests)
     TEST_CASE(HuesitosFbxMayOrMayNotHaveAnimations) {
         if (!fileExists(kHuesitosFbx)) {
             printf("    [SKIP] %s not found\n", kHuesitosFbx);
-            return;
+            SKIP_TEST("Optional external FBX fixture unavailable or opt-in disabled; see preceding diagnostic");
         }
         FBXParser parser;
         parser.setLoadOption(IConverter::LoadOption::Full);
@@ -369,7 +369,7 @@ TEST_SUITE(FBXParserAnimationTests)
     TEST_CASE(MeshOnlySkipsAnimations) {
         if (!fileExists(kSpiderFbx)) {
             printf("    [SKIP] %s not found\n", kSpiderFbx);
-            return;
+            SKIP_TEST("Optional external FBX fixture unavailable or opt-in disabled; see preceding diagnostic");
         }
         FBXParser parser;
         parser.setLoadOption(IConverter::LoadOption::MeshOnly);
@@ -382,7 +382,7 @@ TEST_SUITE(FBXParserAnimationTests)
     TEST_CASE(AnimationOnlySkipsRenderAssets) {
         if (!fileExists(kSpiderFbx)) {
             printf("    [SKIP] %s not found\n", kSpiderFbx);
-            return;
+            SKIP_TEST("Optional external FBX fixture unavailable or opt-in disabled; see preceding diagnostic");
         }
         FBXParser parser;
         parser.setLoadOption(IConverter::LoadOption::AnimationOnly);
@@ -400,7 +400,7 @@ TEST_SUITE(FBXParserAnimationTests)
     TEST_CASE(SkeletonLocalPoseDecomposed) {
         if (!fileExists(kSpiderFbx)) {
             printf("    [SKIP] %s not found\n", kSpiderFbx);
-            return;
+            SKIP_TEST("Optional external FBX fixture unavailable or opt-in disabled; see preceding diagnostic");
         }
         FBXParser parser;
         parser.setLoadOption(IConverter::LoadOption::Full);
@@ -409,11 +409,11 @@ TEST_SUITE(FBXParserAnimationTests)
         CHECK(asset != nullptr);
         if (asset->skeletons.empty()) {
             printf("    [SKIP] spider.fbx has no skeleton\n");
-            return;
+            SKIP_TEST("Optional external FBX fixture unavailable or opt-in disabled; see preceding diagnostic");
         }
         if (asset->skeletons[0].bones.empty()) {
             printf("    [SKIP] spider.fbx skeleton has no bones\n");
-            return;
+            SKIP_TEST("Optional external FBX fixture unavailable or opt-in disabled; see preceding diagnostic");
         }
 
         // root bone 应有非单位 quaternion 概率大;若为单位 quat,至少 position 有偏移

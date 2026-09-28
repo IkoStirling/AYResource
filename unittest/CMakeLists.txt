@@ -69,4 +69,11 @@ target_compile_definitions(${MODULE_NAME} PRIVATE
     AY_RUNTIME_ROOT="${_ay_runtime_root}"
 )
 
-ay_add_test(${MODULE_NAME})
+ay_add_test_tiers(${MODULE_NAME} PREFIX resource TIMEOUT 180
+    INTEGRATION_SUITES HotReloadWatcherTests ResourceManagerPhase2Tests
+        ResourcePipelineP1Tests ResourcePipelineP2Tests ResourcePipelineP3Tests
+        ResourcePipelineP4Tests ResourcePipelineP5Tests ResourcePipelineP6Tests
+        ProjectBuildTests FBXConverterTests FBXMaterialConverterTests UvContractTests
+        FBXParserAnimationTests AnimationConverterTests TextureConverterTests
+        TextureIntegrationTests TextureLoaderLooseTests MaterialConverterTests
+        TilemapConverterTests UvContractCacheTests)

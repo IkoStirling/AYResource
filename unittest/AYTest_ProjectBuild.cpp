@@ -369,7 +369,7 @@ TEST_CASE(raw_files_can_be_mixed_between_loose_and_pak_storage)
     if (!built.ok) {
         std::fprintf(stderr, "[ProjectBuildTests] %s\n", built.error.c_str());
     }
-    CHECK(built.ok);
+    CHECK_MSG(built.ok, built.error.c_str());
     CHECK(built.rawCount == 2u);
     CHECK(built.cookedCount == 0u);
     CHECK(built.pakFileCount == 1u);
@@ -435,7 +435,7 @@ TEST_CASE(repeated_build_reuses_content_addressed_cook_result)
     if (!first.ok) {
         std::fprintf(stderr, "[ProjectBuildTests] %s\n", first.error.c_str());
     }
-    CHECK(first.ok);
+    CHECK_MSG(first.ok, first.error.c_str());
     CHECK(first.cookedCount == 1u);
     CHECK(first.cacheHitCount == 0u);
     CHECK(fs::is_regular_file(cleanup.root
@@ -445,7 +445,7 @@ TEST_CASE(repeated_build_reuses_content_addressed_cook_result)
     if (!second.ok) {
         std::fprintf(stderr, "[ProjectBuildTests] %s\n", second.error.c_str());
     }
-    CHECK(second.ok);
+    CHECK_MSG(second.ok, second.error.c_str());
     CHECK(second.cookedCount == 1u);
     CHECK(second.cacheHitCount == 1u);
 }
@@ -483,7 +483,7 @@ TEST_CASE(existing_code_artifact_is_staged_and_published_for_editor_run)
     if (!built.ok) {
         std::fprintf(stderr, "[ProjectBuildTests] %s\n", built.error.c_str());
     }
-    CHECK(built.ok);
+    CHECK_MSG(built.ok, built.error.c_str());
     CHECK(fs::is_regular_file(cleanup.root
         / "out/package/test/Game.exe"));
     CHECK(fs::is_regular_file(cleanup.root
@@ -687,7 +687,7 @@ TEST_CASE(skeleton_release_gate_packages_only_verified_baked_outputs)
     if (!built.ok) {
         std::fprintf(stderr, "[SkeletonReleaseGate] %s\n", built.error.c_str());
     }
-    CHECK(built.ok);
+    CHECK_MSG(built.ok, built.error.c_str());
     CHECK(fs::is_regular_file(cleanup.root
         / "out/package/test/Content/Characters/Baked/hero.baked.ayskel"));
     CHECK(fs::is_regular_file(cleanup.root
@@ -803,7 +803,7 @@ TEST_CASE(skeleton_release_gate_accepts_scoped_retarget_receipt)
         buildProfile, cleanup.root.string());
     CHECK(plan.valid());
     const ProjectBuildResult built = ProjectBuildExecutor::execute(plan);
-    CHECK(built.ok);
+    CHECK_MSG(built.ok, built.error.c_str());
     CHECK(fs::is_regular_file(cleanup.root / "out/package/test/Content"
         / fs::relative(bakedSkeleton, cleanup.root / "Assets")));
 }

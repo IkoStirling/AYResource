@@ -646,7 +646,7 @@ TEST_CASE(FileValide) {
         std::string fbxPath = "D:/Projects/suzanne.fbx";
         if (!fileExists(fbxPath)) {
             printf("    [SKIP] %s not found\n", fbxPath.c_str());
-            return;
+            SKIP_TEST("Optional external FBX fixture unavailable or opt-in disabled; see preceding diagnostic");
         }
 
         FBXConverter converter(fbxPath);
@@ -671,7 +671,7 @@ TEST_CASE(FileValide) {
         std::string fbxPath = "D:/Projects/AliyatRenderer/assets/core/models/cube.fbx";
         if (!fileExists(fbxPath)) {
             printf("    [SKIP] %s not found\n", fbxPath.c_str());
-            return;
+            SKIP_TEST("Optional external FBX fixture unavailable or opt-in disabled; see preceding diagnostic");
         }
 
         FBXConverter converter(fbxPath);
@@ -977,7 +977,7 @@ TEST_CASE(FileValide) {
         std::string fbxPath = "D:/Projects/AliyatRenderer/assets/core/models/cube.fbx";
         if (!fileExists(fbxPath)) {
             printf("    [SKIP] %s not found\n", fbxPath.c_str());
-            return;
+            SKIP_TEST("Optional external FBX fixture unavailable or opt-in disabled; see preceding diagnostic");
         }
         FBXConverter converter(fbxPath);
         converter.setLoadOption(IConverter::LoadOption::Full);

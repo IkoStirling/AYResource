@@ -24,3 +24,5 @@ AYResource 是资产注册、导入、加载、缓存、热重载与 Cook/Ship �
 - 内部：AYLog、Assimp、stb、libsquish、basisu
 
 资产格式、导入/Cook 和缓存契约见 [design.md](design.md)。
+
+测试筛选入口、fast/integration 分层及已知发布问题见[统一测试契约](../../AYDocs/testing.md)。
