@@ -7,6 +7,7 @@
 
 #include <AYCrypto.h>
 #include <AYIO/File.h>
+#include <AYIO/PathSafety.h>
 #include <AYStorage/IPackageWriter.h>
 #include <AYStorage/IStorageDatabase.h>
 #include <nlohmann/json.hpp>
@@ -84,19 +85,9 @@ bool safeChunkName(const std::string& value)
 
 bool isUnder(const fs::path& root, const fs::path& candidate)
 {
-    std::error_code rootError;
-    std::error_code candidateError;
-    fs::path normalizedRoot = fs::weakly_canonical(root, rootError);
-    fs::path normalizedCandidate = fs::weakly_canonical(
-        candidate, candidateError);
-    if (rootError) normalizedRoot = fs::absolute(root).lexically_normal();
-    if (candidateError) {
-        normalizedCandidate = fs::absolute(candidate).lexically_normal();
-    }
-    const fs::path relative = normalizedCandidate.lexically_relative(
-        normalizedRoot);
-    return !relative.empty() && !relative.is_absolute()
-        && *relative.begin() != "..";
+    fs::path resolved;
+    std::string error;
+    return ayt::io::path::resolveWithinRoot(root, candidate, resolved, error);
 }
 
 const char* transformName(ProjectAssetTransform value)
