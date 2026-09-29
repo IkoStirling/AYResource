@@ -70,6 +70,9 @@ public:
     // ===== Getters =====
     const ayt::math::FGuid& getGuid() const { return _guid; }
     const std::vector<AnimNotifyMarker>& getNotifies() const { return _notifies; }
+    /// Read-only storage view for bounded snapshot validation. Invalid manually
+    /// built clips can have mismatched arrays; validate shape before raw getters.
+    const std::vector<AnimTrack>& getTracks() const { return _tracks; }
 
     // ===== 创建测试数据 =====
     void createTestAnimation();
