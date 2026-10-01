@@ -1,4 +1,5 @@
 #include "AYResource/Converter/VideoConverter.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/Loader/VideoLoader.h"
 #include <AYIO/File.h>
 #include <AYStorage/Guid.h>
@@ -111,7 +112,8 @@ std::vector<ConversionResult::ConvertedResource> VideoConverter::convertAll(
         }
 
         // 生成虚拟路径: video/{name}.ayvideo
-        std::string outputName = video.getName() + std::string(".ayvideo");
+        std::string outputName = ayt::asset_format::appendSuffix(
+            video.getName(), ayt::asset_format::Id::Video);
         std::string virtualPath = "video/" + outputName;
 
         // 写入输出目录

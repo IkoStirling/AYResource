@@ -1,11 +1,18 @@
 #include "AYResource/ImportJob.h"
 
 #include <AYIO/File.h>
+#include <AYResource/LooseDependency.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <stdexcept>
+#if defined(AY_RESOURCE_HAS_PARTICLE)
+#include "AYResource/Converter/ParticleConverter.h"
+#endif
+#if defined(AY_RESOURCE_HAS_STATS)
+#include "AYResource/Converter/StatsConverter.h"
+#endif
 
 namespace ayt::resource
 {
@@ -192,7 +199,13 @@ std::string importExtensionOf(const std::string& path)
 
 bool isImportSupportedExtension(const std::string& sourcePath)
 {
+#if defined(AY_RESOURCE_HAS_STATS)
+    if(toLowerCopy(sourcePath).ends_with(".aystats.json")) return true;
+#endif
     const std::string ext = importExtensionOf(sourcePath);
+#if defined(AY_RESOURCE_HAS_PARTICLE)
+    if (ext == "ayparticle") return true;
+#endif
     return ext == "fbx"
         || ext == "gltf" || ext == "glb"
         || ext == "png" || ext == "bmp"
@@ -240,7 +253,13 @@ ImportResult importAsset(const ImportOptions& options,
     }
 
     report(progress, ImportStage::CheckCache, 0.1f, "checking cache");
-    if (!options.force) {
+    // Particle closure includes external textures; source mtime alone cannot
+    // validate it. ProjectBuild owns the content-addressed closure cache.
+    if (!options.force && importExtensionOf(options.sourcePath) != "ayparticle"
+#if defined(AY_RESOURCE_HAS_STATS)
+        && !toLowerCopy(options.sourcePath).ends_with(".aystats.json")
+#endif
+    ) {
         ConversionResult cached;
         std::string depPath;
         if (tryLoadCachedConversion(options, cached, depPath)) {
@@ -288,6 +307,14 @@ ImportResult importAsset(const ImportOptions& options,
         converter->setOutputDir(options.outputDir);
         converter->setLoadOption(options.loadOption);
         converter->setCookTextures(options.cookTextures);
+#if defined(AY_RESOURCE_HAS_PARTICLE)
+        if(auto* particle=dynamic_cast<ParticleConverter*>(converter.get()))
+            particle->setAssetRoot(options.sourceAssetRoot);
+#endif
+#if defined(AY_RESOURCE_HAS_STATS)
+        if(auto* stats=dynamic_cast<StatsConverter*>(converter.get()))
+            stats->setAssetRoot(options.sourceAssetRoot);
+#endif
         converter->setMaterialImportPolicy(options.materialPolicy);
         converter->setSourceCoordinatePolicy(options.sourceCoordinates);
         r.conversion = converter->convert();
@@ -326,6 +353,16 @@ ImportResult importAsset(const ImportOptions& options,
     r.ok = true;
     r.usedCache = false;
     r.depSidecarPath = joinDirFile(options.outputDir, stemOf(options.sourcePath) + ".aydep.json");
+#if defined(AY_RESOURCE_HAS_PARTICLE)
+    if (dynamic_cast<ParticleConverter*>(converter.get())) {
+        for (const auto& resource : r.conversion.resources) {
+            if (resource.type == "ParticleEffect") {
+                r.depSidecarPath = looseDependencySidecarPath(joinDirFile(options.outputDir, resource.path));
+                break;
+            }
+        }
+    }
+#endif
     report(progress, ImportStage::Done, 1.0f,
            "done (converted " + std::to_string(r.conversion.resources.size()) + " resources)");
     return r;

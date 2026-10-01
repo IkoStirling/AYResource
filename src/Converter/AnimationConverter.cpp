@@ -1,4 +1,5 @@
 #include "AYResource/Converter/AnimationConverter.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/assetsImpl/Animation.h"
 #include "AYIO/File.h"
 #include <AYStorage/Guid.h>
@@ -58,12 +59,15 @@ static std::string makeUniquePath(const std::string& baseName,
     std::string take = sanitizedTake.empty()
         ? ("take_" + std::to_string(takeIndex))
         : sanitizedTake;
-    std::string candidate = baseName + "_" + take + ".ayanm";
+    std::string candidate = ayt::asset_format::appendSuffix(
+        baseName + "_" + take, ayt::asset_format::Id::Animation);
     std::string vp = "animations/" + candidate;
     if (used.insert(vp).second) return vp;
     // collision: _dup2 / _dup3 / ...
     for (int n = 2; ; ++n) {
-        candidate = baseName + "_" + take + "_dup" + std::to_string(n) + ".ayanm";
+        candidate = ayt::asset_format::appendSuffix(
+            baseName + "_" + take + "_dup" + std::to_string(n),
+            ayt::asset_format::Id::Animation);
         vp = "animations/" + candidate;
         if (used.insert(vp).second) return vp;
     }

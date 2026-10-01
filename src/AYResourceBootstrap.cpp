@@ -14,6 +14,7 @@
 #include "AYResource/Loader/TilemapLoader.h"
 #include "AYResource/Loader/AtlasLoader.h"
 #include "AYResource/ResourceRegistry.h"
+#include <AYAssetFormat/AssetFormat.h>
 
 #include <atomic>
 #include <memory>
@@ -38,9 +39,10 @@ std::unique_ptr<IResourceLoader> createLoaderInstance()
 }
 
 template<typename LoaderT>
-bool registerLoaderType(const char* typeName, const char* extension)
+bool registerLoaderType(const char* typeName, ayt::asset_format::Id format)
 {
-    ResourceRegistry::registerExtension(extension, typeName);
+    ResourceRegistry::registerExtension(
+        std::string(ayt::asset_format::suffix(format)), typeName);
     return ResourceRegistry::registerLoader(typeName, &createLoaderInstance<LoaderT>);
 }
 
@@ -49,24 +51,34 @@ bool registerLoaderType(const char* typeName, const char* extension)
 bool initializeLoaders()
 {
     std::call_once(g_loadersOnce, []() {
-        const bool ok = registerLoaderType<MeshLoader>("Mesh", ".aymesh")
-                     && registerLoaderType<MaterialLoader>("Material", ".aymat")
-                     && registerLoaderType<TextureLoader>("Texture", ".aytex")
-                     && registerLoaderType<SkeletonLoader>("Skeleton", ".ayskel")
-                     && registerLoaderType<SkeletonMaskLoader>("SkeletonMask", ".aymask")
-                     && registerLoaderType<AnimationLoader>("Animation", ".ayanm")
-                     && registerLoaderType<AudioLoader>("Audio", ".ayaudio")
-                     && registerLoaderType<VideoLoader>("Video", ".ayvideo")
-                     && registerLoaderType<FontLoader>("Font", ".ayfont")
-                     && registerLoaderType<ScriptLoader>("Script", ".ayscript")
-                     && registerLoaderType<PhysicsLoader>("Physics", ".ayphys")
-                     && registerLoaderType<TilemapLoader>("Tilemap", ".aytilemap")
-                     && registerLoaderType<AtlasLoader>("Atlas", ".ayatlas");
+        using ayt::asset_format::Id;
+        const bool ok = registerLoaderType<MeshLoader>("Mesh", Id::Mesh)
+                     && registerLoaderType<MaterialLoader>("Material", Id::Material)
+                     && registerLoaderType<TextureLoader>("Texture", Id::Texture)
+                     && registerLoaderType<SkeletonLoader>("Skeleton", Id::Skeleton)
+                     && registerLoaderType<SkeletonMaskLoader>("SkeletonMask", Id::SkeletonMask)
+                     && registerLoaderType<AnimationLoader>("Animation", Id::Animation)
+                     && registerLoaderType<AudioLoader>("Audio", Id::Audio)
+                     && registerLoaderType<VideoLoader>("Video", Id::Video)
+                     && registerLoaderType<FontLoader>("Font", Id::Font)
+                     && registerLoaderType<ScriptLoader>("Script", Id::ScriptBlob)
+                     && registerLoaderType<PhysicsLoader>("Physics", Id::Physics)
+                     && registerLoaderType<TilemapLoader>("Tilemap", Id::Tilemap)
+                     && registerLoaderType<AtlasLoader>("Atlas", Id::Atlas);
 #if defined(AY_AUDIO_LOOSE_FORMATS)
         // Dev/Editor: same Audio loader also owns loose authoring formats.
         ResourceRegistry::registerExtension(".wav", "Audio");
         ResourceRegistry::registerExtension(".mp3", "Audio");
         ResourceRegistry::registerExtension(".ogg", "Audio");
+        // Metadata only: the optional AYParticleResources adapter owns its loader.
+#if defined(AY_RESOURCE_HAS_PARTICLE)
+        ResourceRegistry::registerExtension(
+            std::string(ayt::asset_format::suffix(Id::ParticleEffect)), "ParticleEffect");
+#endif
+#endif
+#if defined(AY_RESOURCE_HAS_STATS)
+        ResourceRegistry::registerExtension(
+            std::string(ayt::asset_format::suffix(Id::StatsRecipes)), "StatsRecipes");
 #endif
 #if defined(AY_TEXTURE_LOOSE_FORMATS)
         // Dev/Editor: same Texture loader also owns loose authoring formats

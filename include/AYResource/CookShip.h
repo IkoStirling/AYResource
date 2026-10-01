@@ -34,7 +34,9 @@ struct CookShipResult {
     std::string error;
 };
 
-/// Build pak + StorageDatabase from an already-cooked asset tree.
+/// Build pak + StorageDatabase from an already-cooked asset tree. With particle
+/// authoring enabled, validate .ayparticle + root-relative .aytex closure before
+/// replacing ship files; record texture edges even without an import sidecar.
 CookShipResult cookShipPackage(const CookShipOptions& options);
 
 } // namespace ayt::resource

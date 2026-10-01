@@ -1,4 +1,5 @@
 #include "AYResource/Converter/MeshConverter.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/Loader/MeshLoader.h"
 #include "AYResource/assetsImpl/Mesh.h"
 #include "AYResource/MeshMorphContract.h"
@@ -353,8 +354,10 @@ std::vector<ConversionResult::ConvertedResource> MeshConverter::convertAll(
         while ((pos = safeName.find('\\')) != std::string::npos) safeName.replace(pos, 1, "_");
 
         std::string name = safeName.empty()
-            ? baseName + "_" + std::to_string(i) + ".aymesh"
-            : baseName + "_" + safeName + ".aymesh";
+            ? ayt::asset_format::appendSuffix(
+                  baseName + "_" + std::to_string(i), ayt::asset_format::Id::Mesh)
+            : ayt::asset_format::appendSuffix(
+                  baseName + "_" + safeName, ayt::asset_format::Id::Mesh);
 
         virtualPath = "meshes/" + name;
 

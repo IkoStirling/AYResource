@@ -133,6 +133,8 @@ struct ProjectBuildPlan {
 
 class ProjectBuildPlanner final {
 public:
+    /// Particle-enabled authoring validates effect/scene references and hashes
+    /// every referenced texture in the owning effect's cook identity.
     static ProjectBuildPlan create(const ProjectBuildProfile& profile,
                                    const std::string& projectRoot);
 };

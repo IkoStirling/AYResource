@@ -4,6 +4,7 @@
 #include "AYResource/ImportJob.h"
 #include "AYResource/ResourceBootstrap.h"
 #include "AYResource/ResourceRegistry.h"
+#include <AYAssetFormat/AssetFormat.h>
 
 #include <AYCrypto.h>
 #include <AYIO/File.h>
@@ -13,6 +14,12 @@
 #include <AYStorage/IPackageWriter.h>
 #include <AYStorage/IStorageDatabase.h>
 #include <nlohmann/json.hpp>
+#if defined(AY_RESOURCE_HAS_PARTICLE)
+#include <AYParticle/EffectPackaging.h>
+#endif
+#if defined(AY_RESOURCE_HAS_STATS)
+#include <AYStats/RecipeAsset.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -20,6 +27,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <map>
 #include <regex>
@@ -219,7 +227,8 @@ bool isBakedSkeletonArtifact(const fs::path& path)
     const std::string extension = lower(path.extension().string());
     return filename.find(".baked.") != std::string::npos
         && (extension == ".ayskel" || extension == ".ayanm"
-            || extension == ".aymesh" || extension == ".aymask");
+            || ayt::asset_format::isCanonicalPath(path.string(), ayt::asset_format::Id::Mesh)
+            || extension == ".aymask");
 }
 
 bool isSkeletonAuthoringMetadata(const fs::path& path)
@@ -632,7 +641,7 @@ SkeletonReleaseGateResult validateSkeletonReleaseGate(
         const std::string extension = lower(output.extension().string());
         const bool extensionMatches =
             (kind == "animation" && extension == ".ayanm")
-            || (kind == "mesh" && extension == ".aymesh")
+            || (kind == "mesh" && ayt::asset_format::isCanonicalPath(output.string(), ayt::asset_format::Id::Mesh))
             || (kind == "skeletonMask" && extension == ".aymask");
         if (required == requiredDependencies.end() || !extensionMatches
             || !isBakedSkeletonArtifact(output)) {
@@ -711,10 +720,32 @@ std::string hashFiles(const std::vector<fs::path>& paths,
     return result;
 }
 
-std::vector<fs::path> sourceClosure(const fs::path& source)
+std::vector<fs::path> sourceClosure(const fs::path& source, const fs::path& assetRoot)
 {
     std::vector<fs::path> paths{source};
     const std::string extension = lower(source.extension().string());
+#if defined(AY_RESOURCE_HAS_STATS)
+    if(lower(source.filename().string()).ends_with(".aystats.json")) {
+        auto inspected=stats::inspectRecipeAssetSource(source,assetRoot);
+        if(!inspected) return {};
+        paths.push_back(inspected->targetDefinitions);
+        if(!inspected->sourceDefinitions.empty()) paths.push_back(inspected->sourceDefinitions);
+        paths.push_back(inspected->recipeBook);
+        std::sort(paths.begin(),paths.end());
+        paths.erase(std::unique(paths.begin(),paths.end()),paths.end());
+        return paths;
+    }
+#endif
+#if defined(AY_RESOURCE_HAS_PARTICLE)
+    if(extension == ".ayparticle") {
+        particle::EffectSource effect;
+        if(!particle::inspectEffectSource(source,assetRoot,effect)) return {};
+        for(const auto& texture:effect.textures) if(!texture.empty()) paths.push_back(texture);
+        std::sort(paths.begin(),paths.end());
+        paths.erase(std::unique(paths.begin(),paths.end()),paths.end());
+        return paths;
+    }
+#endif
     if (extension != ".fbx" && extension != ".gltf" && extension != ".glb") {
         return paths;
     }
@@ -745,14 +776,321 @@ std::string cacheDiscriminator(const ProjectBuildProfile& profile,
         {"cookTextures", asset.cookTextures},
         {"fbxImporterContract", std::string(kFbxImporterContractTag)},
     };
+    if(lower(fs::path(asset.sourcePath).extension().string())==".ayparticle")
+        value["particleImporterContract"]="particle-closure-rgba8-v3";
+#if defined(AY_RESOURCE_HAS_STATS)
+    if(lower(asset.sourcePath).ends_with(".aystats.json"))
+        value["statsImporterContract"]="stats-recipe-asset-v1";
+#endif
     return value.dump();
 }
 
 std::string computeCacheKey(const ProjectBuildProfile& profile,
                             const ProjectBuildAsset& asset)
 {
-    return hashFiles(sourceClosure(asset.sourcePath),
+    auto root=fs::path(asset.sourcePath);
+    for(const auto& part:fs::path(asset.logicalPath)) { (void)part; root=root.parent_path(); }
+    const auto closure=sourceClosure(asset.sourcePath,root);
+    if(closure.empty()) return {};
+    return hashFiles(closure,
                      cacheDiscriminator(profile, asset));
+}
+
+#if defined(AY_RESOURCE_HAS_STATS)
+void validateStatsContent(const ProjectBuildPlan& plan,
+                          std::vector<ProjectBuildDiagnostic>& diagnostics) {
+    try {
+        const auto root=fs::canonical(fs::path(plan.projectRoot)/plan.profile.content.assetRoot);
+        std::map<fs::path,const ProjectBuildAsset*> entries;
+        for(const auto& asset:plan.assets) entries.emplace(fs::weakly_canonical(asset.sourcePath),&asset);
+        std::set<std::string> available;
+        for(const auto& asset:plan.assets) {
+            if(asset.transform==ProjectAssetTransform::Exclude) continue;
+            if(lower(asset.sourcePath).ends_with(".aystats.json") && asset.transform==ProjectAssetTransform::Cook) {
+                auto name=asset.logicalPath;
+                name.resize(name.size()-5);
+                available.insert(name);
+            } else if(lower(fs::path(asset.sourcePath).extension().string())==".aystats") {
+                available.insert(asset.logicalPath);
+            }
+        }
+        for(const auto& asset:plan.assets) {
+            if(asset.transform!=ProjectAssetTransform::Exclude && lower(fs::path(asset.sourcePath).extension().string())==".aystats") {
+                auto decoded=stats::decodeRecipeAsset(io::File::readAllText(asset.sourcePath));
+                if(!decoded)
+                    diagnostic(diagnostics,ProjectBuildDiagnostic::Severity::Error,asset.logicalPath,
+                               "Invalid cooked stats asset: "+decoded.error().message);
+            }
+            if(asset.transform!=ProjectAssetTransform::Exclude && ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::Scene)) {
+                Json scene=Json::parse(io::File::readAllText(asset.sourcePath),nullptr,false);
+                if(!scene.is_discarded()) {
+                    auto inspect=[&](auto&& self,const Json& node)->void {
+                        if(node.is_object()) {
+                            const auto type=node.find("$type");
+                            if(type!=node.end() && *type=="StatsRecipeComponent") {
+                                const auto path=node.find("assetPath");
+                                if(path!=node.end() && path->is_string() && !path->get<std::string>().empty()) {
+                                    const auto reference=path->get<std::string>();
+                                    if(!portableRelative(reference) || !reference.ends_with(".aystats") || !available.contains(fs::path(reference).generic_string()))
+                                        diagnostic(diagnostics,ProjectBuildDiagnostic::Severity::Error,asset.logicalPath,
+                                                   "Missing or invalid StatsRecipeComponent asset: "+reference);
+                                }
+                                if(asset.storage==ProjectAssetStorage::Pak)
+                                    diagnostic(diagnostics,ProjectBuildDiagnostic::Severity::Error,asset.logicalPath,
+                                               "Stats recipe scenes must be loose: SceneSerializer reads scene files from disk.");
+                            }
+                            for(const auto& item:node.items())self(self,item.value());
+                        } else if(node.is_array())for(const auto& item:node)self(self,item);
+                    };
+                    inspect(inspect,scene);
+                }
+            }
+            if(asset.transform==ProjectAssetTransform::Exclude || !lower(asset.sourcePath).ends_with(".aystats.json")) continue;
+            auto source=stats::inspectRecipeAssetSource(asset.sourcePath,root);
+            if(!source) {
+                diagnostic(diagnostics,ProjectBuildDiagnostic::Severity::Error,asset.logicalPath,source.error().message);
+                continue;
+            }
+            if(asset.transform!=ProjectAssetTransform::Cook) {
+                diagnostic(diagnostics,ProjectBuildDiagnostic::Severity::Error,asset.logicalPath,
+                           "Stats source manifests must be cooked to .aystats.");
+            }
+            for(const auto& path:{source->targetDefinitions,source->sourceDefinitions,source->recipeBook}) {
+                if(path.empty()) continue;
+                auto found=entries.find(path);
+                if(found==entries.end() || found->second->transform==ProjectAssetTransform::Exclude)
+                    diagnostic(diagnostics,ProjectBuildDiagnostic::Severity::Error,asset.logicalPath,
+                               "Missing or excluded stats dependency: "+path.generic_string());
+            }
+        }
+    } catch(const std::exception& error) {
+        diagnostic(diagnostics,ProjectBuildDiagnostic::Severity::Error,"stats content",error.what());
+    }
+}
+#endif
+
+#if defined(AY_RESOURCE_HAS_PARTICLE)
+// Typed effects are checked before any publication. Scene inspection only
+// traverses the two particle component contracts; unrelated schemas stay opaque.
+void validateParticleContent(const ProjectBuildPlan& plan,
+                             std::vector<ProjectBuildDiagnostic>& diagnostics) {
+    try {
+    const auto root=fs::canonical(fs::path(plan.projectRoot)/plan.profile.content.assetRoot);
+    std::map<fs::path,const ProjectBuildAsset*> entries;
+    for(const auto& asset:plan.assets) entries.emplace(fs::weakly_canonical(asset.sourcePath),&asset);
+    auto fail=[&](const ProjectBuildAsset& asset,const std::string& message) {
+        diagnostic(diagnostics,ProjectBuildDiagnostic::Severity::Error,asset.logicalPath,message);
+    };
+    auto reference=[&](const ProjectBuildAsset& owner,const std::string& value)->const ProjectBuildAsset* {
+        if(value.empty()) return nullptr;
+        auto text=value; std::replace(text.begin(),text.end(),'\\','/');
+        fs::path ref(text);
+        if(ref.is_absolute() || ref.has_root_name() || text.find(':')!=std::string::npos) {
+            fail(owner,"Particle reference must be asset-relative: "+value); return nullptr;
+        }
+        auto target=root/ref;
+        if(!fs::is_regular_file(target)) target=fs::path(owner.sourcePath).parent_path()/ref;
+        if(!fs::is_regular_file(target)) {
+            fail(owner,"Missing particle dependency: "+value); return nullptr;
+        }
+        auto found=entries.find(fs::weakly_canonical(target));
+        if(found==entries.end() || found->second->transform==ProjectAssetTransform::Exclude) {
+            fail(owner,"Missing or excluded particle dependency: "+value); return nullptr;
+        }
+        return found->second;
+    };
+    for(const auto& asset:plan.assets) {
+        if(asset.transform==ProjectAssetTransform::Exclude) continue;
+        const auto extension=lower(fs::path(asset.sourcePath).extension().string());
+        if(extension==".ayparticle") {
+            particle::EffectSource effect; std::string error;
+            if(!particle::inspectEffectSource(asset.sourcePath,root,effect,&error)) { fail(asset,error); continue; }
+            for(size_t index=0; index<effect.textures.size(); ++index) {
+                if(effect.textures[index].empty()) continue;
+                const auto found=entries.find(effect.textures[index]);
+                if(found==entries.end() || found->second->transform==ProjectAssetTransform::Exclude) {
+                    fail(asset,"Missing or excluded particle dependency: "+effect.asset.emitters[index].effect.texturePath); continue;
+                }
+                const auto* texture=found->second;
+                if(texture && asset.transform==ProjectAssetTransform::Raw && texture->transform==ProjectAssetTransform::Cook)
+                    fail(asset,"Raw particle references a transformed texture; cook the particle effect too.");
+                if(asset.transform==ProjectAssetTransform::Raw && texture->storage==ProjectAssetStorage::Pak) {
+                    auto authored=effect.asset.emitters[index].effect.texturePath;
+                    std::replace(authored.begin(),authored.end(),'\\','/');
+                    if(fs::path(authored).lexically_normal().generic_string()!=texture->logicalPath)
+                        fail(asset,"Cook owner-relative particle references before publishing their textures to Pak.");
+                }
+            }
+        } else if(ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::Scene)) {
+            Json scene=Json::parse(io::File::readAllText(asset.sourcePath),nullptr,false);
+            if(scene.is_discarded()) continue; // The scene validator owns unrelated malformed scenes.
+            auto inspect=[&](auto&& self,const Json& node)->void {
+                if(node.is_object()) {
+                    const auto type=node.find("$type");
+                    if(type!=node.end() && type->is_string()) {
+                        const bool effect=*type=="ParticleEffectComponent";
+                        const bool emitter=*type=="ParticleEmitterComponent";
+                        if(effect || emitter) {
+                            const auto field=node.find(effect?"effectPath":"texturePath");
+                            if(field!=node.end() && field->is_string() && !field->get<std::string>().empty()) {
+                                const auto* dependency=reference(asset,field->get<std::string>());
+                                if(effect && dependency && lower(fs::path(dependency->sourcePath).extension().string())!=".ayparticle")
+                                    fail(asset,"ParticleEffectComponent must reference a .ayparticle asset.");
+                                if(emitter && dependency && dependency->transform==ProjectAssetTransform::Cook)
+                                    fail(asset,"Inline particle texture changes path during cook; use a reusable .ayparticle effect or final .aytex.");
+                            }
+                            if(asset.storage==ProjectAssetStorage::Pak)
+                                fail(asset,"Particle showcase scenes must be loose: SceneSerializer reads scene files from disk.");
+                        }
+                    }
+                    for(const auto& item:node.items()) self(self,item.value());
+                } else if(node.is_array()) for(const auto& item:node) self(self,item);
+            };
+            inspect(inspect,scene);
+        }
+    }
+    } catch(const std::exception& error) {
+        diagnostic(diagnostics,ProjectBuildDiagnostic::Severity::Error,"particle content",error.what());
+    }
+}
+#endif
+
+void validateActorContent(const ProjectBuildPlan& plan,
+                          std::vector<ProjectBuildDiagnostic>& diagnostics)
+{
+    const fs::path root = fs::path(plan.projectRoot) / plan.profile.content.assetRoot;
+    std::unordered_map<std::string, const ProjectBuildAsset*> entries;
+    for (const auto& asset : plan.assets) entries.emplace(asset.logicalPath, &asset);
+    std::unordered_map<std::string, std::string> parents;
+    auto fail = [&](const ProjectBuildAsset& owner, const std::string& message) {
+        diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Error,
+                   owner.logicalPath, message);
+    };
+    auto reference = [&](const ProjectBuildAsset& owner,
+                         const std::string& path,
+                         const std::string& extension) -> const ProjectBuildAsset* {
+        const fs::path relative(path);
+        if (!portableRelative(path) || path.find('\\') != std::string::npos
+            || path.find(':') != std::string::npos
+            || relative.lexically_normal().generic_string() != path
+            || lower(relative.extension().string()) != extension
+            || !isUnder(root, root / relative)) {
+            fail(owner, "Invalid Actor reference: " + path);
+            return nullptr;
+        }
+        const auto found = entries.find(path);
+        if (found == entries.end() || found->second->transform == ProjectAssetTransform::Exclude) {
+            fail(owner, "Missing or excluded Actor dependency: " + path);
+            return nullptr;
+        }
+        const auto* target = found->second;
+        if (!fs::is_regular_file(target->sourcePath)) {
+            fail(owner, "Actor dependency disappeared after planning: " + path);
+            return nullptr;
+        }
+        if (target->transform != ProjectAssetTransform::Raw
+            || target->storage != ProjectAssetStorage::Loose) {
+            fail(owner, "Actor dependency must be raw and loose: " + path);
+            return nullptr;
+        }
+        return target;
+    };
+    for (const auto& asset : plan.assets) {
+        if (asset.transform == ProjectAssetTransform::Exclude) continue;
+        const auto extension = lower(fs::path(asset.sourcePath).extension().string());
+        if (extension != ".ayactor" && !ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::Scene)) continue;
+        try {
+            if (extension == ".ayactor") {
+                if (asset.transform != ProjectAssetTransform::Raw
+                    || asset.storage != ProjectAssetStorage::Loose) {
+                    fail(asset, "Actor class must be raw and loose for runtime loading.");
+                }
+                std::error_code sizeError;
+                if (fs::file_size(asset.sourcePath, sizeError) > 1024u * 1024u || sizeError) {
+                    fail(asset, "Actor class exceeds 1 MiB or is unreadable.");
+                    continue;
+                }
+                const Json doc = Json::parse(io::File::readAllText(asset.sourcePath));
+                if (!doc.is_object() || doc.value("type", std::string{}) != "ay.actorClass"
+                    || (doc.value("schemaVersion", 0) != 1
+                        && doc.value("schemaVersion", 0) != 2)
+                    || !doc.contains("id") || !doc["id"].is_string()) {
+                    fail(asset, "Invalid Actor class type, id or schema.");
+                    continue;
+                }
+                const auto script = doc.value("script", std::string{});
+                if (!script.empty()) reference(asset, script, ".logia");
+                if (doc.value("schemaVersion", 0) == 2) {
+                    const auto parent = doc.value("parent", std::string{});
+                    if (!parent.empty() && reference(asset, parent, ".ayactor"))
+                        parents[asset.logicalPath] = parent;
+                }
+                const Json properties = doc.value("properties", Json::object());
+                if (!properties.is_object()) fail(asset, "Actor properties must be an object.");
+                else for (auto it = properties.begin(); it != properties.end(); ++it) {
+                    if (!(it.value().is_boolean() || it.value().is_number()
+                          || it.value().is_string())) {
+                        fail(asset, "Actor property must be primitive: " + it.key());
+                    }
+                }
+                const Json components = doc.value("components", Json::array());
+                if (!components.is_array()) fail(asset, "Actor components must be an array.");
+                else {
+                    std::unordered_set<std::string> seen;
+                    for (const Json& item : components) {
+                        if (!item.is_object() || !item.contains("$type")
+                            || !item["$type"].is_string()
+                            || !seen.insert(item["$type"].get<std::string>()).second) {
+                            fail(asset, "Actor component has missing or duplicate $type.");
+                        }
+                    }
+                }
+            } else {
+                const Json scene = Json::parse(io::File::readAllText(asset.sourcePath),
+                                               nullptr, false);
+                if (scene.is_discarded()) continue; // Scene validation owns syntax errors.
+                bool hasActor = false;
+                auto inspect = [&](auto&& self, const Json& node) -> void {
+                    if (node.is_object()) {
+                        const auto type = node.find("$type");
+                        if (type != node.end() && *type == "ActorInstanceComponent") {
+                            hasActor = true;
+                            const auto path = node.find("classPath");
+                            if (path == node.end() || !path->is_string()
+                                || path->get<std::string>().empty()) {
+                                fail(asset, "Actor instance has no classPath.");
+                            } else reference(asset, path->get<std::string>(), ".ayactor");
+                        }
+                        for (const auto& item : node.items()) self(self, item.value());
+                    } else if (node.is_array()) {
+                        for (const auto& item : node) self(self, item);
+                    }
+                };
+                inspect(inspect, scene);
+                if (hasActor && (asset.transform != ProjectAssetTransform::Raw
+                                 || asset.storage != ProjectAssetStorage::Loose)) {
+                    fail(asset, "Scene with Actor instances must be raw and loose.");
+                }
+            }
+        } catch (const std::exception& ex) {
+            fail(asset, std::string("Invalid Actor content: ") + ex.what());
+        }
+    }
+    std::unordered_set<std::string> active;
+    std::unordered_set<std::string> done;
+    std::function<void(const std::string&)> checkCycle = [&](const std::string& path) {
+        if (done.contains(path)) return;
+        if (!active.insert(path).second) {
+            if (const auto found = entries.find(path); found != entries.end())
+                fail(*found->second, "Actor inheritance cycle: " + path);
+            return;
+        }
+        if (const auto found = parents.find(path); found != parents.end())
+            checkCycle(found->second);
+        active.erase(path);
+        done.insert(path);
+    };
+    for (const auto& entry : parents) checkCycle(entry.first);
 }
 
 ayt::storage::CompressionAlgo compressionOf(const std::string& value)
@@ -1091,6 +1429,13 @@ ProjectBuildPlan ProjectBuildPlanner::create(
         }
         plan.assets.push_back(std::move(asset));
     }
+#if defined(AY_RESOURCE_HAS_PARTICLE)
+    validateParticleContent(plan,plan.diagnostics);
+#endif
+#if defined(AY_RESOURCE_HAS_STATS)
+    validateStatsContent(plan,plan.diagnostics);
+#endif
+    validateActorContent(plan, plan.diagnostics);
     return plan;
 }
 
@@ -1109,6 +1454,51 @@ ProjectBuildResult ProjectBuildExecutor::execute(
     const fs::path releaseAssetsRoot = fs::path(plan.projectRoot)
         / plan.profile.content.assetRoot;
     std::vector<ProjectBuildDiagnostic> releaseDiagnostics;
+    validateActorContent(plan, releaseDiagnostics);
+    if (std::any_of(releaseDiagnostics.begin(), releaseDiagnostics.end(),
+            [](const auto& item) {
+                return item.severity == ProjectBuildDiagnostic::Severity::Error;
+            })) {
+        result.diagnostics.insert(result.diagnostics.end(),
+            releaseDiagnostics.begin(), releaseDiagnostics.end());
+        result.error = "Actor content validation rejected the project build.";
+        return result;
+    }
+#if defined(AY_RESOURCE_HAS_PARTICLE)
+    validateParticleContent(plan,releaseDiagnostics);
+    if(std::any_of(releaseDiagnostics.begin(),releaseDiagnostics.end(),[](const auto& item) {
+        return item.severity==ProjectBuildDiagnostic::Severity::Error;
+    })) {
+        result.diagnostics.insert(result.diagnostics.end(),releaseDiagnostics.begin(),releaseDiagnostics.end());
+        result.error="Particle content validation rejected the project build.";
+        return result;
+    }
+    for(const auto& asset:plan.assets) {
+        if(asset.transform==ProjectAssetTransform::Cook
+           && lower(fs::path(asset.sourcePath).extension().string())==".ayparticle"
+           && asset.cacheKey!=computeCacheKey(plan.profile,asset)) {
+            result.error="Particle inputs changed after planning; create a fresh build plan.";
+            return result;
+        }
+    }
+#endif
+#if defined(AY_RESOURCE_HAS_STATS)
+    validateStatsContent(plan,releaseDiagnostics);
+    if(std::any_of(releaseDiagnostics.begin(),releaseDiagnostics.end(),[](const auto& item) {
+        return item.severity==ProjectBuildDiagnostic::Severity::Error;
+    })) {
+        result.diagnostics.insert(result.diagnostics.end(),releaseDiagnostics.begin(),releaseDiagnostics.end());
+        result.error="Stats content validation rejected the project build.";
+        return result;
+    }
+    for(const auto& asset:plan.assets) {
+        if(asset.transform==ProjectAssetTransform::Cook && lower(asset.sourcePath).ends_with(".aystats.json")
+           && asset.cacheKey!=computeCacheKey(plan.profile,asset)) {
+            result.error="Stats inputs changed after planning; create a fresh build plan.";
+            return result;
+        }
+    }
+#endif
     for (const ProjectBuildAsset& asset : plan.assets) {
         const fs::path source(asset.sourcePath);
         if (lower(source.extension().string()) != ".ayskel"
@@ -1275,6 +1665,7 @@ ProjectBuildResult ProjectBuildExecutor::execute(
             import.force = true;
             import.requireCharacterAssets = false;
             import.cookTextures = asset.cookTextures;
+            import.sourceAssetRoot = releaseAssetsRoot.string();
             ImportResult imported = importAsset(import);
             if (!imported.ok || imported.conversion.resources.empty()) {
                 result.error = "Cook failed for '" + asset.logicalPath + "': "
@@ -1316,7 +1707,13 @@ ProjectBuildResult ProjectBuildExecutor::execute(
     });
     for (std::size_t index = 1; index < staged.size(); ++index) {
         if (staged[index - 1].logicalPath == staged[index].logicalPath
-            && staged[index - 1].diskPath != staged[index].diskPath) {
+            && staged[index - 1].diskPath != staged[index].diskPath
+            && (staged[index].type != "Texture"
+                || staged[index-1].type != staged[index].type
+                || staged[index-1].storage != staged[index].storage
+                || staged[index-1].chunk != staged[index].chunk
+                || hashFiles({staged[index-1].diskPath},"shared-output")
+                    != hashFiles({staged[index].diskPath},"shared-output"))) {
             result.error = "Multiple sources publish the same logical asset: "
                 + staged[index].logicalPath;
             return result;
@@ -1326,6 +1723,31 @@ ProjectBuildResult ProjectBuildExecutor::execute(
         [](const StagedFile& a, const StagedFile& b) {
             return a.logicalPath == b.logicalPath;
         }), staged.end());
+
+#if defined(AY_RESOURCE_HAS_PARTICLE)
+    // The converter graph and actual payload must both close over staged files.
+    std::set<std::string> stagedPaths;
+    for(const auto& file:staged) stagedPaths.insert(file.logicalPath);
+    for(auto& file:staged) if(file.type=="ParticleEffect" || lower(fs::path(file.logicalPath).extension().string())==".ayparticle") {
+        particle::EffectAsset effect; std::string error;
+        if(!particle::loadEffectAsset(file.diskPath.string(),effect,&error)) { result.error=error; return result; }
+        file.type="ParticleEffect";
+        for(const auto& emitter:effect.emitters) if(!emitter.effect.texturePath.empty()) {
+            auto path=fs::path(emitter.effect.texturePath).lexically_normal().generic_string();
+            if(!stagedPaths.contains(path)) path=(fs::path(file.logicalPath).parent_path()/path).lexically_normal().generic_string();
+            if(!stagedPaths.contains(path)) { result.error="Unpublished particle texture: "+emitter.effect.texturePath; return result; }
+            auto authored=emitter.effect.texturePath;
+            std::replace(authored.begin(),authored.end(),'\\','/');
+            if(file.storage==ProjectAssetStorage::Pak && fs::path(authored).lexically_normal().generic_string()!=path) {
+                result.error="Cook owner-relative particle texture references before Pak storage: "+authored; return result;
+            }
+            if(file.storage==ProjectAssetStorage::Pak && !ayt::asset_format::isCanonicalPath(path, ayt::asset_format::Id::Texture)) {
+                result.error="Packaged particle textures must be cooked .aytex: "+path; return result;
+            }
+            file.dependencies.push_back({file.logicalPath,path});
+        }
+    }
+#endif
 
     report(progress, ProjectBuildStage::Stage, 0.78f, "staging content");
     auto database = ayt::storage::IStorageDatabase::create(

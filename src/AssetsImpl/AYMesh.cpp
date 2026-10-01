@@ -1,4 +1,5 @@
 #include "AYResource/assetsImpl/Mesh.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYIO.h"
 #include "AYMath/MathTypes.h"
 #include "AYMath/MathUtils.h"
@@ -754,7 +755,8 @@ void Mesh::createCube(Float32 size) {
     _submeshes.resize(1);
     _submeshes[0] = { 0, 36, 0 };
     _materialSlots.resize(1);
-    _materialSlots[0] = "default.aymat";
+    _materialSlots[0] = ayt::asset_format::appendSuffix(
+        "default", ayt::asset_format::Id::Material);
 
     _vertexData.resize(_vertexCount * _vertexStride);
     _indices.resize(_indexCount);
@@ -834,7 +836,8 @@ void Mesh::createSphere(Float32 radius, UInt32 segments) {
     _submeshes.resize(1);
     _submeshes[0] = { 0, _indexCount, 0 };
     _materialSlots.resize(1);
-    _materialSlots[0] = "default.aymat";
+    _materialSlots[0] = ayt::asset_format::appendSuffix(
+        "default", ayt::asset_format::Id::Material);
 
     _vertexData.resize(_vertexCount * _vertexStride);
     _indices.resize(_indexCount);

@@ -1,4 +1,5 @@
 #include "AYResource/Loader/MeshLoader.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/IResourceLoader.h"
 #include "AYResource/assetsImpl/Mesh.h"
 #include <AYMath/MathTypes.h>
@@ -12,10 +13,7 @@ namespace ayt::resource
 // ===== MeshLoader =====
 
 bool MeshLoader::canLoad(const std::string& path) const {
-    if (path.size() < 7) {
-        return false;
-    }
-    return path.compare(path.size() - 7, 7, EXTENSION) == 0;
+    return ayt::asset_format::matchesPath(path, ayt::asset_format::Id::Mesh);
 }
 
 std::shared_ptr<IResource> MeshLoader::load(const std::string& path) {

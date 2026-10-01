@@ -625,6 +625,45 @@ TEST_CASE(raw_files_can_be_mixed_between_loose_and_pak_storage)
     CHECK(manifest["files"].size() == 2u);
 }
 
+TEST_CASE(actor_classes_and_scripts_form_a_checked_loose_release_closure)
+{
+    ProjectBuildCleanup cleanup{"ayproject_build_actor_closure_test"};
+    CHECK(writeText(cleanup.root / "Assets/actors/Base.ayactor",
+        R"({"type":"ay.actorClass","schemaVersion":2,"id":"Base","script":"actors/Base.logia","properties":{},"components":[]})"));
+    CHECK(writeText(cleanup.root / "Assets/actors/Child.ayactor",
+        R"({"type":"ay.actorClass","schemaVersion":2,"id":"Child","parent":"actors/Base.ayactor","script":"","properties":{},"components":[]})"));
+    CHECK(writeText(cleanup.root / "Assets/actors/Base.logia",
+        "script Base { on_start() {} }\n"));
+    CHECK(writeText(cleanup.root / "Assets/worlds/Main.ayscene",
+        R"({"entities":[{"components":[{"$type":"ActorInstanceComponent","classPath":"actors/Child.ayactor"}]}]})"));
+    CHECK(writeText(cleanup.root / "BuildProfiles/test.aybuild.json", profileJson()));
+    std::string error;
+    auto profile = ProjectBuildProfile::load(
+        (cleanup.root / "BuildProfiles/test.aybuild.json").string(), &error);
+    auto plan = ProjectBuildPlanner::create(profile, cleanup.root.string());
+    CHECK(plan.valid());
+    const auto built = ProjectBuildExecutor::execute(plan);
+    CHECK_MSG(built.ok, built.error.c_str());
+    CHECK(fs::is_regular_file(cleanup.root
+        / "out/package/test/Content/actors/Child.ayactor"));
+    CHECK(fs::is_regular_file(cleanup.root
+        / "out/package/test/Content/actors/Base.logia"));
+
+    CHECK(writeText(cleanup.root / "Assets/actors/Base.ayactor",
+        R"({"type":"ay.actorClass","schemaVersion":2,"id":"Base","parent":"actors/Child.ayactor","script":"actors/Base.logia","properties":{},"components":[]})"));
+    plan = ProjectBuildPlanner::create(profile, cleanup.root.string());
+    CHECK_FALSE(plan.valid());
+    CHECK(writeText(cleanup.root / "Assets/actors/Base.ayactor",
+        R"({"type":"ay.actorClass","schemaVersion":2,"id":"Base","script":"actors/Base.logia","properties":{},"components":[]})"));
+    plan = ProjectBuildPlanner::create(profile, cleanup.root.string());
+    CHECK(plan.valid());
+    std::error_code ignored;
+    fs::remove(cleanup.root / "Assets/actors/Base.logia", ignored);
+    const auto stale = ProjectBuildExecutor::execute(plan);
+    CHECK_FALSE(stale.ok);
+    CHECK(stale.error.find("Actor content") != std::string::npos);
+}
+
 TEST_CASE(cache_only_policy_rejects_missing_cooked_object)
 {
     ProjectBuildCleanup cleanup{"ayproject_build_cache_only_test"};

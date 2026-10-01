@@ -1,4 +1,5 @@
 #include "AYResource/IConverter.h"
+#include <AYAssetFormat/AssetFormat.h>
 #if defined(AY_RESOURCE_BUILD_CONVERTER_FACTORY)
 #include "AYResource/Converter/FBXConverter.h"
 #include "AYResource/Converter/GLTFConverter.h"
@@ -6,6 +7,12 @@
 #include "AYResource/Converter/TilemapConverter.h"
 #include "AYResource/Converter/AtlasConverter.h"
 #include "AYResource/Converter/AudioConverter.h"
+#if defined(AY_RESOURCE_HAS_PARTICLE)
+#include "AYResource/Converter/ParticleConverter.h"
+#endif
+#if defined(AY_RESOURCE_HAS_STATS)
+#include "AYResource/Converter/StatsConverter.h"
+#endif
 #include <cctype>
 #else
 #include <cstdlib>
@@ -119,34 +126,15 @@ std::string sourceCoordinatePolicyCacheTag(const SourceCoordinatePolicy& policy)
 
 #else
 std::unique_ptr<IConverter> IConverter::create(const std::string& sourcePath) {
-    // CM-2: .aytilemap.json MUST be dispatched before the generic
-    // extension check — its last extension is "json" and the check below
-    // would silently return nullptr. Case-insensitive suffix match.
-    {
-        const std::string lower = sourcePath;
-        std::string suffix;
-        if (lower.size() >= 15) {
-            suffix = lower.substr(lower.size() - 15);
-        }
-        for (auto& c : suffix) {
-            c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
-        }
-        if (suffix == ".aytilemap.json") {
-            return std::make_unique<TilemapConverter>(sourcePath);
-        }
-    }
-    {
-        std::string suffix;
-        if (sourcePath.size() >= 13) {
-            suffix = sourcePath.substr(sourcePath.size() - 13);
-        }
-        for (auto& c : suffix) {
-            c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
-        }
-        if (suffix == ".ayatlas.json") {
-            return std::make_unique<AtlasConverter>(sourcePath);
-        }
-    }
+    const auto format = ayt::asset_format::matchPath(sourcePath);
+#if defined(AY_RESOURCE_HAS_STATS)
+    if (format && format->descriptor->id == ayt::asset_format::Id::StatsSource)
+        return std::make_unique<StatsConverter>(sourcePath);
+#endif
+    if (format && format->descriptor->id == ayt::asset_format::Id::TilemapSource)
+        return std::make_unique<TilemapConverter>(sourcePath);
+    if (format && format->descriptor->id == ayt::asset_format::Id::AtlasSource)
+        return std::make_unique<AtlasConverter>(sourcePath);
 
     // 根据扩展名判断类型
     size_t dotPos = sourcePath.find_last_of('.');
@@ -155,6 +143,10 @@ std::unique_ptr<IConverter> IConverter::create(const std::string& sourcePath) {
     // 转小写
     for (auto& c : ext) c = static_cast<char>(tolower(c));
 
+#if defined(AY_RESOURCE_HAS_PARTICLE)
+    if (format && format->descriptor->id == ayt::asset_format::Id::ParticleEffect)
+        return std::make_unique<ParticleConverter>(sourcePath);
+#endif
     if (ext == "fbx") {
         return std::make_unique<FBXConverter>(sourcePath);
     } else if (ext == "gltf" || ext == "glb") {

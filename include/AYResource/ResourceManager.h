@@ -217,6 +217,8 @@ public:
 
     // Expose storage database (includes dependency management)
     ayt::storage::IStorageDatabase& storage() { return *_db; }
+    /// Internal resolver metadata query; safe when no database is mounted.
+    bool hasDatabaseResource(const std::string& logicalPath) const;
 
     // ===== Database injection (for testing) =====
     void setDatabase(std::unique_ptr<ayt::storage::IStorageDatabase> db);

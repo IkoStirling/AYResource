@@ -1,4 +1,5 @@
 #include "AYResource/Converter/GLTFConverter.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include <AYResource/Loader/MeshLoader.h>
 #include "AYResource/assetsImpl/Mesh.h"
 #include "AYIO/File.h"
@@ -73,7 +74,8 @@ ConversionResult GLTFConverter::convert() {
 
     // 生成输出文件名
     std::string sourceFileName = getFileName(sourcePath);
-    std::string outputFileName = replaceExt(sourceFileName, ".aymesh");
+    std::string outputFileName = replaceExt(sourceFileName,
+        std::string(ayt::asset_format::suffix(ayt::asset_format::Id::Mesh)));
     std::string virtualPath = "meshes/" + outputFileName;
 
     // 写入输出目录

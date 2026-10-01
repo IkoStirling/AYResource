@@ -9,6 +9,7 @@
 #include <cctype>
 #include <cstddef>
 #include <string>
+#include <AYAssetFormat/AssetFormat.h>
 
 namespace ayt::resource {
 
@@ -19,8 +20,9 @@ inline constexpr const char* kDefaultDiffuseUsageSuffix = "_d";
 // materials/{baseName}_material_{index}.aymat
 inline std::string makeMaterialVirtualPath(const std::string& baseName,
                                            std::size_t index) {
-    return "materials/" + baseName + "_material_" + std::to_string(index)
-        + ".aymat";
+    return ayt::asset_format::appendSuffix(
+        "materials/" + baseName + "_material_" + std::to_string(index),
+        ayt::asset_format::Id::Material);
 }
 
 // Strip drive / directory / extension and flatten one trailing folder
@@ -64,7 +66,8 @@ inline std::string makeTextureVirtualPath(
 inline std::string makeTextureVirtualPath(
     const std::string& stem,
     const std::string& usageSuffix = kDefaultDiffuseUsageSuffix) {
-    return makeTextureVirtualPath(stem, usageSuffix, ".aytex");
+    return ayt::asset_format::appendSuffix(
+        "textures/" + stem + usageSuffix, ayt::asset_format::Id::Texture);
 }
 
 inline std::string makeTextureVirtualPathFromSource(
@@ -78,7 +81,8 @@ inline std::string makeTextureVirtualPathFromSource(
 inline std::string makeTextureVirtualPathFromSource(
     const std::string& sourcePath,
     const std::string& usageSuffix = kDefaultDiffuseUsageSuffix) {
-    return makeTextureVirtualPathFromSource(sourcePath, usageSuffix, ".aytex");
+    return makeTextureVirtualPath(makeTextureStemFromSourcePath(sourcePath),
+                                  usageSuffix);
 }
 
 // Extension for a dev raw-reference texture virtual path: the lower-cased
@@ -90,14 +94,16 @@ inline std::string makeTextureVirtualPathFromSource(
 inline std::string textureDevExtensionOf(const std::string& sourcePath) {
     const size_t dot = sourcePath.find_last_of('.');
     if (dot == std::string::npos || dot + 1 >= sourcePath.size()) {
-        return ".aytex";
+        return std::string(ayt::asset_format::suffix(
+            ayt::asset_format::Id::Texture));
     }
     std::string e = sourcePath.substr(dot);
     for (char& c : e) {
         c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
     }
-    if (e == ".dds" || e == ".aytex") {
-        return ".aytex";
+    if (e == ".dds" || ayt::asset_format::matchesPath(sourcePath, ayt::asset_format::Id::Texture)) {
+        return std::string(ayt::asset_format::suffix(
+            ayt::asset_format::Id::Texture));
     }
     return e;
 }
@@ -106,12 +112,14 @@ inline std::string textureDevExtensionOf(const std::string& sourcePath) {
 // TilemapConverter output and TilemapLoader input; do not invent a
 // parallel one in cook tools or tests.
 inline std::string makeTilemapVirtualPath(const std::string& baseName) {
-    return "tilemaps/" + baseName + ".aytilemap";
+    return ayt::asset_format::appendSuffix(
+        "tilemaps/" + baseName, ayt::asset_format::Id::Tilemap);
 }
 
 // atlases/{baseName}.ayatlas — formal 2D atlas metadata asset.
 inline std::string makeAtlasVirtualPath(const std::string& baseName) {
-    return "atlases/" + baseName + ".ayatlas";
+    return ayt::asset_format::appendSuffix(
+        "atlases/" + baseName, ayt::asset_format::Id::Atlas);
 }
 
 } // namespace ayt::resource

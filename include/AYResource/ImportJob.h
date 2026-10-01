@@ -48,6 +48,8 @@ struct ImportCancelToken {
 struct ImportOptions {
     std::string sourcePath;                 ///< Source file (.fbx / .gltf / .png / …)
     std::string outputDir;                  ///< Cooked assets root (e.g. ayeditor_cache/assets/)
+    /// Optional particle dependency boundary; empty discovers nearest Assets.
+    std::string sourceAssetRoot;
     IConverter::LoadOption loadOption = IConverter::LoadOption::Full;
     bool force = false;                     ///< Skip .aydep.json cache reuse
     /// For .fbx/.gltf/.glb cache hits: require Mesh + Skeleton entries (Editor character path).

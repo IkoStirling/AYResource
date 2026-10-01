@@ -1,4 +1,5 @@
 #include "AYResource/Converter/TextureConverter.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/Converter/TextureCompressor.h"
 #include "AYResource/Loader/TextureLoader.h"
 #include "AYIO/File.h"
@@ -420,7 +421,8 @@ ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
     }
 
     // 构建输出路径 — 虚拟路径始终为 .aytex（与 aymat 引用契约一致）。
-    std::string outputFileName = textureName + effectiveUsageSuffix + ".aytex";
+    std::string outputFileName = ayt::asset_format::appendSuffix(
+        textureName + effectiveUsageSuffix, ayt::asset_format::Id::Texture);
     std::string virtualPath = "textures/" + outputFileName;
     std::string fullOutputPath;
     if (!outputDir.empty()) {
@@ -482,7 +484,11 @@ ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
     TextureFormat format = TextureFormat::RGBA8;
 
     bool loaded = false;
-    if (ext == "bmp") {
+    // RGBA8 cook requires four channels in RGBA order. The legacy BMP/TGA
+    // helpers return BGR/RGB24 storage; stb also handles origin and RLE correctly.
+    if (outputFormat == TextureFormat::RGBA8 && (ext == "bmp" || ext == "tga")) {
+        loaded = loadImage(fullPath, pixels, width, height, format);
+    } else if (ext == "bmp") {
         loaded = loadBMP(fullPath, pixels, width, height, format);
     } else if (ext == "tga") {
         loaded = loadTGA(fullPath, pixels, width, height, format);
@@ -546,14 +552,15 @@ ConversionResult TextureConverter::convertFromPath(const std::string& imagePath,
     std::vector<UInt32> mipOffsets(mipCount);
     std::vector<UInt32> mipSizes(mipCount);
 
-    // 创建压缩器
-    TextureCompressor::Format compFormat = (outputFormat == TextureFormat::BC7)
-        ? TextureCompressor::Format::BC7
-        : TextureCompressor::Format::BC3;
-    auto compressor = TextureCompressor::create(compFormat);
-
-    printf("  [INFO] Compressing %ux%u, %u mip levels with %s...\n",
-           width, height, mipCount, compressor->getFormatName());
+    const bool isBC = outputFormat == TextureFormat::BC7 || outputFormat == TextureFormat::BC3
+        || outputFormat == TextureFormat::BC1 || outputFormat == TextureFormat::BC5;
+    std::unique_ptr<ITextureCompressor> compressor;
+    if(isBC) {
+        compressor=TextureCompressor::create(outputFormat==TextureFormat::BC7
+            ?TextureCompressor::Format::BC7:TextureCompressor::Format::BC3);
+        if(!compressor) return result;
+        printf("  [INFO] Compressing %ux%u, %u mip levels with %s...\n",width,height,mipCount,compressor->getFormatName());
+    }
 
     for (UInt32 i = 0; i < mipCount; i++) {
         mipOffsets[i] = static_cast<UInt32>(dstPtr - texture.getImageDataBytes());
@@ -614,7 +621,8 @@ ConversionResult TextureConverter::convert() {
     // 构建输出路径 — stem 必须剥离扩展名（dev raw 分支与 cook 分支
     // 同一命名契约 textures/{stem}{suffix}.{ext}）。
     std::string baseName = getBaseName(sourcePath);
-    std::string outputFileName = baseName + usageSuffix + ".aytex";
+    std::string outputFileName = ayt::asset_format::appendSuffix(
+        baseName + usageSuffix, ayt::asset_format::Id::Texture);
     std::string virtualPath = "textures/" + outputFileName;
     std::string fullOutputPath;
     if (!outputDir.empty()) {
@@ -816,8 +824,12 @@ std::vector<ConversionResult::ConvertedResource> TextureConverter::convertAll(
     for (size_t i = 0; i < textures.size(); i++) {
         const auto& texData = textures[i];
         std::string name = texData.name.empty()
-            ? baseName + "_" + std::to_string(i) + "_" + texData.usage + ".aytex"
-            : baseName + "_" + texData.name + texData.usage + ".aytex";
+            ? ayt::asset_format::appendSuffix(
+                  baseName + "_" + std::to_string(i) + "_" + texData.usage,
+                  ayt::asset_format::Id::Texture)
+            : ayt::asset_format::appendSuffix(
+                  baseName + "_" + texData.name + texData.usage,
+                  ayt::asset_format::Id::Texture);
 
         std::string virtualPath = "textures/" + name;
         std::string fullOutputPath;

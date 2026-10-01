@@ -18,8 +18,6 @@ public:
     std::shared_ptr<IResource> loadAsync(const std::string& path,
         std::function<void(std::shared_ptr<IResource>)> callback = {}) override;
 
-private:
-    static constexpr const char* EXTENSION = ".aymesh";
 };
 
 } // namespace ayt::resource

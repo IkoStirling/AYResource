@@ -1,4 +1,5 @@
 #include "AYResource/Converter/SkeletonConverter.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/assetsImpl/Skeleton.h"
 #include "AYResource/assetsDefs/ISkeleton.h"
 #include "AYIO/File.h"
@@ -97,7 +98,8 @@ std::vector<ConversionResult::ConvertedResource> SkeletonConverter::convertAll(
 
         // 生成虚拟路径: skeletons/{baseName}_{name}.ayskel
         std::string skelName = skelData.name.empty() ? "Skeleton" : skelData.name;
-        std::string outputName = baseName + "_" + skelName + ".ayskel";
+        std::string outputName = ayt::asset_format::appendSuffix(
+            baseName + "_" + skelName, ayt::asset_format::Id::Skeleton);
         std::string virtualPath = "skeletons/" + outputName;
 
         // 写入输出目录。Always replace — a prior truncated v1 .ayskel

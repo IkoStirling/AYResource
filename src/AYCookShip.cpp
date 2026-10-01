@@ -4,6 +4,7 @@
 #include "AYResource/ResourceRegistry.h"
 #include "AYResource/LooseDependency.h"
 #include "AYResource/IConverter.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYStorage/IStorageDatabase.h"
 #include "AYStorage/IPackageWriter.h"
 
@@ -13,6 +14,12 @@
 #include <cctype>
 #include <filesystem>
 #include <unordered_set>
+#if defined(AY_RESOURCE_HAS_PARTICLE)
+#include <AYParticle/EffectPackaging.h>
+#endif
+#if defined(AY_RESOURCE_HAS_STATS)
+#include <AYStats/RecipeAsset.h>
+#endif
 
 namespace ayt::resource
 {
@@ -43,23 +50,9 @@ std::string makeLogicalPath(const fs::path& root, const fs::path& file)
 
 bool isCookableAsset(const std::string& path)
 {
-    // The editor can register loose source formats (PNG/WAV/etc.) with runtime
-    // loaders for rapid iteration. CookShip's contract is narrower: its input
-    // is an already-cooked tree, so only final `.ay*` artifacts belong in a
-    // shipping package. This also excludes compound authoring/sidecar names
-    // such as `.aytilemap.json` and `.aydep.json`.
-    std::string lowerPath = path;
-    for (char& ch : lowerPath) {
-        ch = static_cast<char>(std::tolower(
-            static_cast<unsigned char>(ch)));
-    }
-    const size_t separator = lowerPath.find_last_of("/\\");
-    const size_t dot = lowerPath.find_last_of('.');
-    if (dot == std::string::npos ||
-        (separator != std::string::npos && dot < separator) ||
-        lowerPath.compare(dot, 3u, ".ay") != 0) {
+    const auto match = ayt::asset_format::matchPath(path);
+    if (!match || match->alias || !match->descriptor->looseCookedPackage)
         return false;
-    }
     const std::string type = ResourceRegistry::getTypeFromPath(path);
     return !type.empty();
 }
@@ -95,7 +88,7 @@ std::string resolveLogicalDep(const std::string& ownerLogical, const std::string
     // aligned with AssetPath's cooked virtual-root contract.
     static const char* kVirtualRoots[] = {
         "materials/", "textures/", "meshes/", "skeletons/",
-        "animations/", "shaders/", "tilemaps/", "scripts/"
+        "animations/", "shaders/", "tilemaps/", "scripts/", "effects/"
     };
     std::string normalized = toForwardSlashes(
         ayt::io::path::normalize(depTo));
@@ -136,6 +129,55 @@ CookShipResult cookShipPackage(const CookShipOptions& options)
     if (!areLoadersInitialized()) {
         initializeLoaders();
     }
+
+#if defined(AY_RESOURCE_HAS_PARTICLE)
+    // Reject a broken closure before touching an earlier ship artifact. CookShip
+    // consumes final assets only; source PNG and owner-relative paths need import.
+    auto validateParticle=[&](const fs::directory_entry& entry) {
+        if(!entry.is_regular_file() || ResourceRegistry::getTypeFromPath(entry.path().string())!="ParticleEffect") return true;
+        particle::EffectSource effect; std::string error;
+        if(!particle::inspectEffectSource(entry.path(),root,effect,&error)) { result.error=error; return false; }
+        for(size_t index=0; index<effect.textures.size(); ++index) {
+            const auto& texture=effect.textures[index];
+            if(texture.empty()) continue;
+            if(!ayt::asset_format::isCanonicalPath(texture.string(), ayt::asset_format::Id::Texture)
+               || texture.lexically_relative(effect.root).generic_string()!=effect.asset.emitters[index].effect.texturePath) {
+                result.error="Cook particle effects and their textures before packing: "+entry.path().string();
+                return false;
+            }
+        }
+        return true;
+    };
+    std::error_code particleScanError;
+    if(options.recursive) {
+        for(const auto& entry:fs::recursive_directory_iterator(root,particleScanError))
+            if(!validateParticle(entry)) return result;
+    } else {
+        for(const auto& entry:fs::directory_iterator(root,particleScanError))
+            if(!validateParticle(entry)) return result;
+    }
+    if(particleScanError) { result.error="Particle input scan failed: "+particleScanError.message(); return result; }
+#endif
+
+#if defined(AY_RESOURCE_HAS_STATS)
+    // Validate final, self-contained recipe assets before replacing a prior package.
+    auto validateStats=[&](const fs::directory_entry& entry) {
+        if(!entry.is_regular_file() || ResourceRegistry::getTypeFromPath(entry.path().string())!="StatsRecipes") return true;
+        auto decoded=stats::decodeRecipeAsset(ayt::io::File::readAllText(entry.path().string()));
+        if(decoded)return true;
+        result.error="Invalid stats recipe asset: "+entry.path().string()+": "+decoded.error().message;
+        return false;
+    };
+    std::error_code statsScanError;
+    if(options.recursive) {
+        for(const auto& entry:fs::recursive_directory_iterator(root,statsScanError))
+            if(!validateStats(entry)) return result;
+    } else {
+        for(const auto& entry:fs::directory_iterator(root,statsScanError))
+            if(!validateStats(entry)) return result;
+    }
+    if(statsScanError) {result.error="Stats input scan failed: "+statsScanError.message();return result;}
+#endif
 
     std::error_code ec;
     fs::create_directories(options.outputDir, ec);
@@ -237,6 +279,18 @@ CookShipResult cookShipPackage(const CookShipOptions& options)
     // Dependencies from per-asset .aydep.json sidecars.
     std::unordered_set<std::string> seenDeps;
     for (const AssetEntry& asset : assets) {
+#if defined(AY_RESOURCE_HAS_PARTICLE)
+        if(asset.type=="ParticleEffect") {
+            particle::EffectAsset effect;
+            if(particle::loadEffectAsset(asset.diskPath,effect)) for(const auto& emitter:effect.emitters) {
+                const auto& texture=emitter.effect.texturePath;
+                if(texture.empty()) continue;
+                const auto logical=ayt::io::path::normalize(texture);
+                if(seenDeps.insert(asset.logicalPath+"->"+logical).second
+                   && db->addDependency(asset.logicalPath,logical)) ++result.dependencyCount;
+            }
+        }
+#endif
         const std::string sidecar = looseDependencySidecarPath(asset.diskPath);
         if (!ayt::io::File::exists(sidecar)) {
             continue;
@@ -250,7 +304,7 @@ CookShipResult cookShipPackage(const CookShipOptions& options)
             if (!pathMatchesLogical(asset.logicalPath, dep.from)) {
                 continue;
             }
-            const std::string toLogical = resolveLogicalDep(asset.logicalPath, dep.to);
+            const std::string toLogical = ayt::io::path::normalize(resolveLogicalDep(asset.logicalPath, dep.to));
             if (toLogical.empty()) {
                 continue;
             }

@@ -1,4 +1,5 @@
 #include "AYResource/Converter/FontConverter.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/Loader/FontLoader.h"
 #include "AYResource/assetsImpl/FontAsset.h"
 #include <AYIO/File.h>
@@ -172,7 +173,8 @@ ConversionResult FontConverter::convert() {
     }
 
     std::string baseName = getBaseName(sourcePath);
-    std::string outputFileName = baseName + ".ayfont";
+    std::string outputFileName = ayt::asset_format::appendSuffix(
+        baseName, ayt::asset_format::Id::Font);
     std::string virtualPath = "fonts/" + outputFileName;
 
     if (!outputDir.empty()) {
@@ -205,8 +207,10 @@ std::vector<ConversionResult::ConvertedResource> FontConverter::convertAll(
     for (size_t i = 0; i < fonts.size(); i++) {
         const auto& fontData = fonts[i];
         std::string name = fontData.name.empty()
-            ? baseName + "_" + std::to_string(i) + ".ayfont"
-            : fontData.name + ".ayfont";
+            ? ayt::asset_format::appendSuffix(
+                  baseName + "_" + std::to_string(i), ayt::asset_format::Id::Font)
+            : ayt::asset_format::appendSuffix(
+                  fontData.name, ayt::asset_format::Id::Font);
 
         std::string virtualPath = "fonts/" + name;
 

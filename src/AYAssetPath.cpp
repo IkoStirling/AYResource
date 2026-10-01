@@ -1,4 +1,5 @@
 #include "AYResource/AssetPath.h"
+#include "AYResource/ResourceManager.h"
 
 #include <AYIO/Path.h>
 #include <AYIO/File.h>
@@ -50,6 +51,7 @@ bool isRootRelativeVirtualPath(const std::string& refPath)
     }
 
     static const char* kPrefixes[] = {
+        "effects/", "effects\\",
         "materials/", "materials\\",
         "textures/",  "textures\\",
         "meshes/",    "meshes\\",
@@ -120,6 +122,11 @@ std::string resolveAssetPath(const std::string& basePath, const std::string& ref
     }
     if (ayt::io::path::isAbsolute(refPath)) {
         return ayt::io::path::normalize(refPath);
+    }
+    if(basePath.empty() || isRootRelativeVirtualPath(refPath)) {
+        auto logical=ayt::io::path::normalize(refPath);
+        std::replace(logical.begin(),logical.end(),'\\','/');
+        if(ResourceManager::instance().hasDatabaseResource(logical)) return logical;
     }
 
     // Contract virtual paths must resolve against the asset root, not the

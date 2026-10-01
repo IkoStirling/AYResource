@@ -1,4 +1,5 @@
 #include "AYResource/Converter/MaterialConverter.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/VirtualAssetPath.h"
 #include "AYIO/File.h"
 #include <AYSerializer.h>
@@ -223,7 +224,8 @@ ConversionResult MaterialConverter::convert() {
 
     // 生成输出文件名
     std::string sourceFileName = getFileName(sourcePath);
-    std::string outputFileName = replaceExt(sourceFileName, ".aymat");
+    std::string outputFileName = replaceExt(sourceFileName,
+        std::string(ayt::asset_format::suffix(ayt::asset_format::Id::Material)));
     std::string virtualPath = "materials/" + outputFileName;
 
     // 写入输出目录

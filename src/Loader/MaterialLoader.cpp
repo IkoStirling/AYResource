@@ -1,4 +1,5 @@
 #include "AYResource/Loader/MaterialLoader.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/IResourceLoader.h"
 #include <AYIO/File.h>
 #include <AYMath/MathTypes.h>
@@ -939,10 +940,7 @@ void Material::createDefault() {
 // ===== MaterialLoader =====
 
 bool MaterialLoader::canLoad(const std::string& path) const {
-    if (path.size() < 6) {
-        return false;
-    }
-    return path.compare(path.size() - 6, 6, EXTENSION) == 0;
+    return ayt::asset_format::matchesPath(path, ayt::asset_format::Id::Material);
 }
 
 std::shared_ptr<IResource> MaterialLoader::load(const std::string& path) {

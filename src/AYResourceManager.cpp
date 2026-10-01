@@ -10,6 +10,7 @@
 #include <AYIO/File.h>
 #include <AYLog.h>
 #include <cassert>
+#include <algorithm>
 #include <cstdio>
 #include <string>
 
@@ -21,6 +22,19 @@ namespace {
 std::string normalizeResourcePath(const std::string& path)
 {
     return path.empty() ? path : ayt::io::path::normalize(path);
+}
+
+// ProjectBuild publishes portable '/' keys; older CookShip databases used
+// native Windows separators. Cache identity stays native, database lookup
+// accepts both representations without falling through to source files.
+auto databaseRecord(ayt::storage::IStorageDatabase& database,std::string path) {
+    auto record=database.getResource(path);
+    if(record) return record;
+    std::replace(path.begin(),path.end(),'\\','/');
+    record=database.getResource(path);
+    if(record) return record;
+    std::replace(path.begin(),path.end(),'/','\\');
+    return database.getResource(path);
 }
 
 } // namespace
@@ -37,6 +51,9 @@ ResourceManager::ResourceManager()
 }
 
 ResourceManager::~ResourceManager() = default;
+bool ResourceManager::hasDatabaseResource(const std::string& logicalPath) const {
+    return _db && _db->isOpen() && databaseRecord(*_db,normalizeResourcePath(logicalPath)).has_value();
+}
 
 void ResourceManager::setDatabase(std::unique_ptr<ayt::storage::IStorageDatabase> db) {
     _db = std::move(db);
@@ -154,7 +171,7 @@ void ResourceManager::preloadResourcesWithTag(const std::string& tag, const std:
 
     auto paths = _db->findByTag(tag, category);
     for (const auto& path : paths) {
-        auto record = _db->getResource(path);
+        auto record = databaseRecord(*_db,path);
         if (record && !record->inPackage.empty()) {
             auto pkg = _getOrOpenPak(record->inPackage);
             if (pkg) {
@@ -172,7 +189,7 @@ std::shared_ptr<IResource> ResourceManager::_loadFromDatabase(const std::string&
     }
 
     const std::string path = normalizeResourcePath(filepath);
-    auto record = _db->getResource(path);
+    auto record = databaseRecord(*_db,path);
     if (!record) {
         return nullptr;
     }
@@ -189,16 +206,16 @@ std::shared_ptr<IResource> ResourceManager::_loadFromDatabase(const std::string&
         if (!pkg) {
             return nullptr;
         }
-        auto data = pkg->read(path);
+        auto data = pkg->read(record->path);
         if (data.empty()) {
             // Try forward-slash entry keys (cross-platform cook artifacts).
-            std::string alt = path;
+            std::string alt = record->path;
             for (char& c : alt) {
                 if (c == '\\') {
                     c = '/';
                 }
             }
-            if (alt != path) {
+            if (alt != record->path) {
                 data = pkg->read(alt);
             }
         }
@@ -207,7 +224,9 @@ std::shared_ptr<IResource> ResourceManager::_loadFromDatabase(const std::string&
         }
         resource = loader->loadFromBinary(data.data(), data.size());
     } else {
-        resource = loader->load(path);
+        const auto diskPath = ayt::io::path::isAbsolute(path) || _dbBaseDir.empty()
+            ? path : ayt::io::path::join(_dbBaseDir, path);
+        resource = loader->load(diskPath);
     }
 
     if (resource) {
@@ -368,9 +387,9 @@ std::shared_ptr<IResource> ResourceManager::_loadInternal(const std::string& fil
     std::shared_ptr<IResource> resource;
 
     if (_db && _db->isOpen()) {
-        auto record = _db->getResource(path);
+        auto record = databaseRecord(*_db,path);
         if (record) {
-            auto deps = _db->getLoadOrder(path);
+            auto deps = _db->getLoadOrder(record->path);
             for (const auto& dep : deps) {
                 const std::string depPath = normalizeResourcePath(dep);
                 bool depInFlight = false;

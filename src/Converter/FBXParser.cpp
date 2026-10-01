@@ -1,4 +1,5 @@
 #include "AYResource/Converter/FBXParser.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/MaterialTextureContract.h"
 #include "AYResource/VirtualAssetPath.h"
 #include "AYResource/assetsDefs/IMesh.h"
@@ -1409,7 +1410,9 @@ void FBXParser::_extractMaterialTextures(const aiMaterial* mat, MaterialData& ma
             // sources stay on .aytex (zero-decode passthrough cook, and
             // .dds is not a registered runtime extension).
             const std::string texExt =
-                _preserveSourceExtension ? textureDevExtensionOf(path) : ".aytex";
+                _preserveSourceExtension ? textureDevExtensionOf(path)
+                    : std::string(ayt::asset_format::suffix(
+                        ayt::asset_format::Id::Texture));
 
             const MaterialTextureContract contract =
                 materialTextureContract(paramName);

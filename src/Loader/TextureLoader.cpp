@@ -1,4 +1,5 @@
 #include "AYResource/Loader/TextureLoader.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/IResourceLoader.h"
 #include "AYMath/MathTypes.h"
 #include "AYMath/MathUtils.h"
@@ -350,7 +351,7 @@ void Texture::createCheckerboard(UInt32 width, UInt32 height, UInt32 checkSize) 
 // ===== TextureLoader =====
 
 bool TextureLoader::canLoad(const std::string& path) const {
-    if (path.size() >= 6 && path.compare(path.size() - 6, 6, EXTENSION) == 0) {
+    if (ayt::asset_format::matchesPath(path, ayt::asset_format::Id::Texture)) {
         return true;
     }
 #if defined(AY_TEXTURE_LOOSE_FORMATS)
@@ -362,7 +363,7 @@ bool TextureLoader::canLoad(const std::string& path) const {
 
 std::shared_ptr<IResource> TextureLoader::load(const std::string& path) {
     const std::string ext = lowerExtensionOf(path);
-    if (ext == ".aytex") {
+    if (ayt::asset_format::matchesPath(path, ayt::asset_format::Id::Texture)) {
         auto texture = std::make_shared<Texture>();
         if (texture->load(path)) {
             return texture;

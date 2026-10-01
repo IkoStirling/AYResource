@@ -42,6 +42,7 @@ set(AYPROJECT_BUILD_SOURCES
 # The runtime build keeps the converter data contract but excludes all
 # authoring implementations and heavy importer SDKs.
 list(REMOVE_ITEM SRC_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/ParticleConverter.cpp
     ${AYRESOURCE_IMPORT_SOURCES}
     ${AYRESOURCE_COOK_SOURCES}
     ${AYPROJECT_BUILD_SOURCES}
@@ -128,6 +129,7 @@ target_link_libraries(${MODULE_NAME}
         AYMath
         AYSerializer
         AYIO
+        AYAssetFormat
         AYStorage
         AYTask
         AYEventSystem

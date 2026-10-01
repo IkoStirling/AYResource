@@ -1,5 +1,6 @@
 #include "AYResource/ResourceRegistry.h"
 #include "AYResource/ResourceBootstrap.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include <algorithm>
 
 namespace ayt::resource
@@ -33,6 +34,11 @@ std::unique_ptr<IResourceLoader> ResourceRegistry::createLoader(const std::strin
 }
 
 std::string ResourceRegistry::getTypeFromPath(const std::string& path) {
+    if (const auto match = ayt::asset_format::matchPath(path)) {
+        const auto& registered = getTypeFromExtension(
+            std::string(match->descriptor->suffix));
+        if (!registered.empty()) return registered;
+    }
     auto ext = path.find_last_of('.');
     if (ext != std::string::npos) {
         std::string extension = path.substr(ext);

@@ -1,4 +1,5 @@
 #include "AYResource/Converter/AudioConverter.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/Converter/AudioDecoder.h"
 #include "AYResource/Loader/AudioLoader.h"
 #include <AYIO/File.h>
@@ -82,7 +83,8 @@ ConversionResult AudioConverter::convert() {
     }
 
     std::string baseName = getBaseName(sourcePath);
-    std::string outputFileName = baseName + ".ayaudio";
+    std::string outputFileName = ayt::asset_format::appendSuffix(
+        baseName, ayt::asset_format::Id::Audio);
     std::string virtualPath = "audio/" + outputFileName;
 
     if (!outputDir.empty()) {
@@ -113,8 +115,10 @@ std::vector<ConversionResult::ConvertedResource> AudioConverter::convertAll(
     for (size_t i = 0; i < audios.size(); i++) {
         const auto& audioData = audios[i];
         std::string name = audioData.name.empty()
-            ? baseName + "_" + std::to_string(i) + ".ayaudio"
-            : baseName + "_" + audioData.name + ".ayaudio";
+            ? ayt::asset_format::appendSuffix(
+                  baseName + "_" + std::to_string(i), ayt::asset_format::Id::Audio)
+            : ayt::asset_format::appendSuffix(
+                  baseName + "_" + audioData.name, ayt::asset_format::Id::Audio);
 
         std::string virtualPath = "audio/" + name;
 

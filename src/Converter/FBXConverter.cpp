@@ -1,4 +1,5 @@
 #include "AYResource/Converter/FBXConverter.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/MaterialTextureContract.h"
 #include "AYResource/MaterialSurfaceClassifier.h"
 #include "AYResource/VirtualAssetPath.h"
@@ -653,9 +654,12 @@ ConversionResult FBXConverter::convert() {
                 const std::string texName = makeTextureStemFromSourcePath(texPath);
 
                 // 去重：同一纹理被多个材质引用时只处理一次
+                const std::string cookedTextureSuffix(ayt::asset_format::suffix(
+                    ayt::asset_format::Id::Texture));
                 const std::string legacyVirtual = makeTextureVirtualPathFromSource(
                     texPath, textureConverter.getUsageSuffix(),
-                    _cookTextures ? ".aytex" : textureDevExtensionOf(texPath).c_str());
+                    _cookTextures ? cookedTextureSuffix.c_str()
+                                  : textureDevExtensionOf(texPath).c_str());
                 if (processedTextures.find(legacyVirtual) != processedTextures.end()) {
                     continue;
                 }
@@ -703,8 +707,10 @@ ConversionResult FBXConverter::convert() {
         while ((pos = safeName.find('/')) != std::string::npos) safeName.replace(pos, 1, "_");
         while ((pos = safeName.find('\\')) != std::string::npos) safeName.replace(pos, 1, "_");
         const std::string name = safeName.empty()
-            ? baseName + "_" + std::to_string(i) + ".aymesh"
-            : baseName + "_" + safeName + ".aymesh";
+            ? ayt::asset_format::appendSuffix(
+                  baseName + "_" + std::to_string(i), ayt::asset_format::Id::Mesh)
+            : ayt::asset_format::appendSuffix(
+                  baseName + "_" + safeName, ayt::asset_format::Id::Mesh);
         return std::string("meshes/") + name;
     };
     for (size_t i = 0; i < asset->meshes.size(); i++) {
@@ -745,7 +751,9 @@ ConversionResult FBXConverter::convert() {
             // Dev mode: same extension spelling as FBXParser's param ref
             // (textureDevExtensionOf), so this fallback dedups against the
             // emitted param path instead of leaking a dead .aytex edge.
-            const char* ext = _cookTextures ? ".aytex" : nullptr;
+            const std::string cookedTextureSuffix(ayt::asset_format::suffix(
+                ayt::asset_format::Id::Texture));
+            const char* ext = _cookTextures ? cookedTextureSuffix.c_str() : nullptr;
             const std::string cooked = makeTextureVirtualPathFromSource(
                 texPath, textureConverter.getUsageSuffix(),
                 ext != nullptr ? ext : textureDevExtensionOf(texPath).c_str());
@@ -765,7 +773,9 @@ ConversionResult FBXConverter::convert() {
     // 用上,但 IntermediateAsset::MeshData 是否暴露 attributeMask?目前保守按"任一 mesh 都加边",
     // runtime looseDependency 会按 from 路径匹配 — 多余的边只会被忽略,不会破坏加载。
     if (!asset->skeletons.empty()) {
-        std::string skelPath = "skeletons/" + baseName + "_Skeleton.ayskel";
+        std::string skelPath = ayt::asset_format::appendSuffix(
+            "skeletons/" + baseName + "_Skeleton",
+            ayt::asset_format::Id::Skeleton);
 
         for (size_t mi = 0; mi < asset->meshes.size(); ++mi) {
             const auto& mesh = asset->meshes[mi];
@@ -798,7 +808,9 @@ ConversionResult FBXConverter::convert() {
 
                 ConversionResult::Dependency dep;
                 dep.from = skelPath;
-                dep.to = "animations/" + baseName + "_" + take + ".ayanm";
+                dep.to = ayt::asset_format::appendSuffix(
+                    "animations/" + baseName + "_" + take,
+                    ayt::asset_format::Id::Animation);
                 result.dependencies.push_back(dep);
             }
         }
@@ -814,7 +826,9 @@ ConversionResult FBXConverter::convert() {
 
     // 8. 写入依赖文件
     if (!outputDir.empty()) {
-        std::string depFilePath = outputDir + "/" + baseName + ".aydep.json";
+        std::string depFilePath = ayt::asset_format::appendSuffix(
+            outputDir + "/" + baseName,
+            ayt::asset_format::Id::ImportDependency);
         std::string jsonContent = result.toJson();
         writeFile(depFilePath, jsonContent.data(), jsonContent.size());
     }
