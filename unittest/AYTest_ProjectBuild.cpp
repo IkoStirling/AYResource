@@ -629,7 +629,7 @@ TEST_CASE(actor_classes_and_scripts_form_a_checked_loose_release_closure)
 {
     ProjectBuildCleanup cleanup{"ayproject_build_actor_closure_test"};
     CHECK(writeText(cleanup.root / "Assets/actors/Base.ayactor",
-        R"({"type":"ay.actorClass","schemaVersion":2,"id":"Base","script":"actors/Base.logia","properties":{},"components":[]})"));
+        R"({"type":"ay.actorClass","schemaVersion":3,"id":"Base","script":"actors/Base.logia","properties":{},"components":[{"$type":"Camera","$instanceId":"11111111111111111111111111111111"},{"$type":"Camera","$instanceId":"22222222222222222222222222222222"}]})"));
     CHECK(writeText(cleanup.root / "Assets/actors/Child.ayactor",
         R"({"type":"ay.actorClass","schemaVersion":2,"id":"Child","parent":"actors/Base.ayactor","script":"","properties":{},"components":[]})"));
     CHECK(writeText(cleanup.root / "Assets/actors/Base.logia",

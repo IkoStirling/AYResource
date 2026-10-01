@@ -1011,16 +1011,16 @@ void validateActorContent(const ProjectBuildPlan& plan,
                     continue;
                 }
                 const Json doc = Json::parse(io::File::readAllText(asset.sourcePath));
+                const int actorSchema = doc.value("schemaVersion", 0);
                 if (!doc.is_object() || doc.value("type", std::string{}) != "ay.actorClass"
-                    || (doc.value("schemaVersion", 0) != 1
-                        && doc.value("schemaVersion", 0) != 2)
+                    || (actorSchema != 1 && actorSchema != 2 && actorSchema != 3)
                     || !doc.contains("id") || !doc["id"].is_string()) {
                     fail(asset, "Invalid Actor class type, id or schema.");
                     continue;
                 }
                 const auto script = doc.value("script", std::string{});
                 if (!script.empty()) reference(asset, script, ".logia");
-                if (doc.value("schemaVersion", 0) == 2) {
+                if (actorSchema >= 2) {
                     const auto parent = doc.value("parent", std::string{});
                     if (!parent.empty() && reference(asset, parent, ".ayactor"))
                         parents[asset.logicalPath] = parent;
@@ -1039,9 +1039,23 @@ void validateActorContent(const ProjectBuildPlan& plan,
                     std::unordered_set<std::string> seen;
                     for (const Json& item : components) {
                         if (!item.is_object() || !item.contains("$type")
-                            || !item["$type"].is_string()
-                            || !seen.insert(item["$type"].get<std::string>()).second) {
-                            fail(asset, "Actor component has missing or duplicate $type.");
+                            || !item["$type"].is_string()) {
+                            fail(asset, "Actor component has missing $type.");
+                            continue;
+                        }
+                        const std::string type = item["$type"].get<std::string>();
+                        if (actorSchema < 3 && !seen.insert(type).second) {
+                            fail(asset, "Legacy Actor component has duplicate $type.");
+                        } else if (actorSchema == 3) {
+                            const std::string id = item.value("$instanceId", std::string{});
+                            const bool validId = id.size() == 32
+                                && std::all_of(id.begin(), id.end(), [](unsigned char c) {
+                                    return (c >= '0' && c <= '9')
+                                        || (c >= 'a' && c <= 'f');
+                                });
+                            if (!validId || !seen.insert(id).second) {
+                                fail(asset, "Actor component has missing or duplicate $instanceId.");
+                            }
                         }
                     }
                 }
