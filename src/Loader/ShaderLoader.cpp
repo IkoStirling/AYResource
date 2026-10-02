@@ -1,4 +1,5 @@
 #include "AYResource/Loader/ShaderLoader.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/IResourceLoader.h"
 #include <AYIO/File.h>
 #include <cstring>
@@ -10,10 +11,7 @@ namespace ayt::resource
 // ===== ShaderLoader =====
 
 bool ShaderLoader::canLoad(const std::string& path) const {
-    if (path.size() < 9) { // ".ayshader" = 9 chars
-        return false;
-    }
-    return path.compare(path.size() - 9, 9, EXTENSION) == 0;
+    return ayt::asset_format::matchesPath(path, ayt::asset_format::Id::ShaderBlob);
 }
 
 std::shared_ptr<IResource> ShaderLoader::load(const std::string& path) {

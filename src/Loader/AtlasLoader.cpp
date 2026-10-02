@@ -1,4 +1,5 @@
 #include "AYResource/Loader/AtlasLoader.h"
+#include <AYAssetFormat/AssetFormat.h>
 
 #include "AYResource/assetsImpl/AtlasAsset.h"
 
@@ -7,10 +8,7 @@ namespace ayt::resource
 
 bool AtlasLoader::canLoad(const std::string& path) const
 {
-    constexpr const char* extension = ".ayatlas";
-    constexpr size_t length = 8u;
-    return path.size() >= length
-        && path.compare(path.size() - length, length, extension) == 0;
+    return ayt::asset_format::matchesPath(path, ayt::asset_format::Id::Atlas);
 }
 
 std::shared_ptr<IResource> AtlasLoader::load(const std::string& path)

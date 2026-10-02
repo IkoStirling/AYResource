@@ -1,4 +1,5 @@
 #include "AYResource/LooseDependency.h"
+#include <AYAssetFormat/AssetFormat.h>
 
 #include "AYResource/AssetPath.h"
 #include "AYResource/IConverter.h"
@@ -62,17 +63,20 @@ std::string looseDependencySidecarPath(const std::string& assetPath)
     const std::string dir = ayt::io::path::directory(assetPath);
     const std::string stem = ayt::io::path::stem(assetPath);
     if (!dir.empty() && dir != ".") {
-        return ayt::io::path::join(dir, stem + ".aydep.json");
+        return ayt::io::path::join(dir, ayt::asset_format::appendSuffix(stem, ayt::asset_format::Id::ImportDependency));
     }
-    return stem + ".aydep.json";
+    return ayt::asset_format::appendSuffix(stem, ayt::asset_format::Id::ImportDependency);
 }
 
 std::vector<std::string> collectLooseDependencies(const std::string& assetPath)
 {
     std::vector<std::string> resolved;
-    const std::string sidecarPath = looseDependencySidecarPath(assetPath);
+    std::string sidecarPath = looseDependencySidecarPath(assetPath);
     if (!ayt::io::File::exists(sidecarPath)) {
-        return resolved;
+        sidecarPath.replace(sidecarPath.size() - ayt::asset_format::suffix(ayt::asset_format::Id::ImportDependency).size(),
+            ayt::asset_format::suffix(ayt::asset_format::Id::ImportDependency).size(),
+            std::string(ayt::asset_format::describe(ayt::asset_format::Id::ImportDependency).readAliases.front()));
+        if (!ayt::io::File::exists(sidecarPath)) return resolved;
     }
 
     const std::string json = ayt::io::File::readAllText(sidecarPath);

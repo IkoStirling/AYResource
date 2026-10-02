@@ -1,4 +1,5 @@
 #include "AYResource/Loader/PhysicsLoader.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/IResourceLoader.h"
 #include <AYIO/File.h>
 
@@ -8,10 +9,7 @@ namespace ayt::resource
 // ===== PhysicsLoader =====
 
 bool PhysicsLoader::canLoad(const std::string& path) const {
-    if (path.size() < 7) {
-        return false;
-    }
-    return path.compare(path.size() - 7, 7, EXTENSION) == 0;
+    return ayt::asset_format::matchesPath(path, ayt::asset_format::Id::Physics);
 }
 
 std::shared_ptr<IResource> PhysicsLoader::load(const std::string& path) {

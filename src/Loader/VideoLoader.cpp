@@ -1,4 +1,5 @@
 #include "AYResource/Loader/VideoLoader.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/IResourceLoader.h"
 #include <AYIO/File.h>
 #include <cstring>
@@ -9,10 +10,7 @@ namespace ayt::resource
 // ===== VideoLoader =====
 
 bool VideoLoader::canLoad(const std::string& path) const {
-    if (path.size() < 8) { // ".ayvideo" = 8 chars
-        return false;
-    }
-    return path.compare(path.size() - 8, 8, EXTENSION) == 0;
+    return ayt::asset_format::matchesPath(path, ayt::asset_format::Id::Video);
 }
 
 std::shared_ptr<IResource> VideoLoader::load(const std::string& path) {

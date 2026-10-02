@@ -21,7 +21,7 @@ public:
         std::function<void(std::shared_ptr<IResource>)> callback = {}) override;
 
 private:
-    static constexpr const char* EXTENSION = ".ayaudio";
+    static constexpr const char* EXTENSION = ".aud";
 };
 
 } // namespace ayt::resource

@@ -1,4 +1,5 @@
 #include "AYResource/Loader/TilemapLoader.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/IResourceLoader.h"
 #include <AYIO/File.h>
 
@@ -8,11 +9,7 @@ namespace ayt::resource
 // ===== TilemapLoader =====
 
 bool TilemapLoader::canLoad(const std::string& path) const {
-    constexpr size_t extLen = 10; // strlen(".aytilemap")
-    if (path.size() < extLen) {
-        return false;
-    }
-    return path.compare(path.size() - extLen, extLen, EXTENSION) == 0;
+    return ayt::asset_format::matchesPath(path, ayt::asset_format::Id::Tilemap);
 }
 
 std::shared_ptr<IResource> TilemapLoader::load(const std::string& path) {

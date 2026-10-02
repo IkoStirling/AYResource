@@ -1,4 +1,5 @@
 #include "AYResource/Converter/ShaderConverter.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/assetsImpl/Shader.h"
 #include <AYIO/File.h>
 #include <AYIO/Path.h>
@@ -47,10 +48,10 @@ std::string ShaderConverter::_detectShaderType(const std::string& source) const 
 
 std::string ShaderConverter::_generateOutputPath(const std::string& name) const {
     if (!_outputDir.empty()) {
-        std::string fullPath = _outputDir + "/" + name + ".ayshader";
+        std::string fullPath = _outputDir + "/" + ayt::asset_format::appendSuffix(name, ayt::asset_format::Id::ShaderBlob);
         return fullPath;
     }
-    return name + ".ayshader";
+    return ayt::asset_format::appendSuffix(name, ayt::asset_format::Id::ShaderBlob);
 }
 
 static bool writeFile(const std::string& path, const void* data, size_t size) {

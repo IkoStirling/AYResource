@@ -49,6 +49,6 @@ void closeAudioStreamDecoder(AudioStreamDecoder* dec);
 std::string audioFileExtension(const std::string& path);
 
 bool isLooseAudioExtension(const std::string& extLowerNoDot); // wav/mp3/ogg
-bool isCookedAudioExtension(const std::string& extLowerNoDot); // ayaudio
+bool isCookedAudioExtension(const std::string& extLowerNoDot); // aud or ayaudio
 
 } // namespace ayt::resource

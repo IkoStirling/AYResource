@@ -218,7 +218,7 @@ void diagnostic(std::vector<ProjectBuildDiagnostic>& target,
 bool isBakedSkeletonPath(const fs::path& path)
 {
     const std::string filename = lower(path.filename().string());
-    return filename.ends_with(".baked.ayskel");
+    return filename.ends_with(".baked.skl") || filename.ends_with(".baked.ayskel");
 }
 
 bool isBakedSkeletonArtifact(const fs::path& path)
@@ -226,16 +226,17 @@ bool isBakedSkeletonArtifact(const fs::path& path)
     const std::string filename = lower(path.filename().string());
     const std::string extension = lower(path.extension().string());
     return filename.find(".baked.") != std::string::npos
-        && (extension == ".ayskel" || extension == ".ayanm"
+        && (ayt::asset_format::matchesPath(path.string(), ayt::asset_format::Id::Skeleton)
+            || ayt::asset_format::matchesPath(path.string(), ayt::asset_format::Id::Animation)
             || ayt::asset_format::isCanonicalPath(path.string(), ayt::asset_format::Id::Mesh)
-            || extension == ".aymask");
+            || ayt::asset_format::matchesPath(path.string(), ayt::asset_format::Id::SkeletonMask));
 }
 
 bool isSkeletonAuthoringMetadata(const fs::path& path)
 {
     const std::string filename = lower(path.filename().string());
     const std::string extension = lower(path.extension().string());
-    return extension == ".ayrig" || extension == ".aysmap"
+    return ayt::asset_format::matchesPath(path.string(), ayt::asset_format::Id::RigProfile)
         || filename.ends_with(".bake-plan.json")
         || filename.ends_with(".bake-result.json");
 }
@@ -391,13 +392,15 @@ SkeletonReleaseGateResult validateSkeletonReleaseGate(
             logical, "[" + std::move(code) + "] " + std::move(message));
     };
     fs::path mappingPath = skeletonPath;
-    mappingPath.replace_extension(".ayrig");
+    mappingPath.replace_extension(ayt::asset_format::suffix(ayt::asset_format::Id::RigProfile));
     if (!fs::is_regular_file(mappingPath)) {
         fs::path legacyPath = skeletonPath;
-        legacyPath.replace_extension(".aysmap");
-        if (fs::is_regular_file(legacyPath)) {
+        legacyPath.replace_extension(".ayrig");
+        fs::path oldestPath = skeletonPath;
+        oldestPath.replace_extension(".aysmap");
+        if (fs::is_regular_file(legacyPath) || fs::is_regular_file(oldestPath)) {
             reject("skeletonRigProfileMigrationRequired",
-                "Legacy .aysmap must be opened and saved as .ayrig before packaging.");
+                "Legacy Rig Profile must be opened and saved as .rig before packaging.");
         } else {
             reject("skeletonRigProfileMissing",
                 "Source skeleton has no Rig Profile resource.");
@@ -640,9 +643,9 @@ SkeletonReleaseGateResult validateSkeletonReleaseGate(
         const auto required = requiredDependencies.find(key);
         const std::string extension = lower(output.extension().string());
         const bool extensionMatches =
-            (kind == "animation" && extension == ".ayanm")
+            (kind == "animation" && ayt::asset_format::isCanonicalPath(output.string(), ayt::asset_format::Id::Animation))
             || (kind == "mesh" && ayt::asset_format::isCanonicalPath(output.string(), ayt::asset_format::Id::Mesh))
-            || (kind == "skeletonMask" && extension == ".aymask");
+            || (kind == "skeletonMask" && ayt::asset_format::isCanonicalPath(output.string(), ayt::asset_format::Id::SkeletonMask));
         if (required == requiredDependencies.end() || !extensionMatches
             || !isBakedSkeletonArtifact(output)) {
             reject("skeletonBakeArtifactInvalid",
@@ -725,7 +728,7 @@ std::vector<fs::path> sourceClosure(const fs::path& source, const fs::path& asse
     std::vector<fs::path> paths{source};
     const std::string extension = lower(source.extension().string());
 #if defined(AY_RESOURCE_HAS_STATS)
-    if(lower(source.filename().string()).ends_with(".aystats.json")) {
+    if(ayt::asset_format::matchesPath(source.string(), ayt::asset_format::Id::StatsSource)) {
         auto inspected=stats::inspectRecipeAssetSource(source,assetRoot);
         if(!inspected) return {};
         paths.push_back(inspected->targetDefinitions);
@@ -737,7 +740,7 @@ std::vector<fs::path> sourceClosure(const fs::path& source, const fs::path& asse
     }
 #endif
 #if defined(AY_RESOURCE_HAS_PARTICLE)
-    if(extension == ".ayparticle") {
+    if(ayt::asset_format::matchesPath(source.string(), ayt::asset_format::Id::ParticleEffect)) {
         particle::EffectSource effect;
         if(!particle::inspectEffectSource(source,assetRoot,effect)) return {};
         for(const auto& texture:effect.textures) if(!texture.empty()) paths.push_back(texture);
@@ -776,10 +779,10 @@ std::string cacheDiscriminator(const ProjectBuildProfile& profile,
         {"cookTextures", asset.cookTextures},
         {"fbxImporterContract", std::string(kFbxImporterContractTag)},
     };
-    if(lower(fs::path(asset.sourcePath).extension().string())==".ayparticle")
+    if(ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::ParticleEffect))
         value["particleImporterContract"]="particle-closure-rgba8-v3";
 #if defined(AY_RESOURCE_HAS_STATS)
-    if(lower(asset.sourcePath).ends_with(".aystats.json"))
+    if(ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::StatsSource))
         value["statsImporterContract"]="stats-recipe-asset-v1";
 #endif
     return value.dump();
@@ -806,16 +809,17 @@ void validateStatsContent(const ProjectBuildPlan& plan,
         std::set<std::string> available;
         for(const auto& asset:plan.assets) {
             if(asset.transform==ProjectAssetTransform::Exclude) continue;
-            if(lower(asset.sourcePath).ends_with(".aystats.json") && asset.transform==ProjectAssetTransform::Cook) {
-                auto name=asset.logicalPath;
-                name.resize(name.size()-5);
-                available.insert(name);
-            } else if(lower(fs::path(asset.sourcePath).extension().string())==".aystats") {
+            if(ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::StatsSource) && asset.transform==ProjectAssetTransform::Cook) {
+                const auto matched = ayt::asset_format::matchPath(asset.logicalPath);
+                if (matched) available.insert(ayt::asset_format::appendSuffix(
+                    std::string_view(asset.logicalPath).substr(0, asset.logicalPath.size() - matched->suffix.size()),
+                    ayt::asset_format::Id::StatsRecipes));
+            } else if(ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::StatsRecipes)) {
                 available.insert(asset.logicalPath);
             }
         }
         for(const auto& asset:plan.assets) {
-            if(asset.transform!=ProjectAssetTransform::Exclude && lower(fs::path(asset.sourcePath).extension().string())==".aystats") {
+            if(asset.transform!=ProjectAssetTransform::Exclude && ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::StatsRecipes)) {
                 auto decoded=stats::decodeRecipeAsset(io::File::readAllText(asset.sourcePath));
                 if(!decoded)
                     diagnostic(diagnostics,ProjectBuildDiagnostic::Severity::Error,asset.logicalPath,
@@ -831,7 +835,7 @@ void validateStatsContent(const ProjectBuildPlan& plan,
                                 const auto path=node.find("assetPath");
                                 if(path!=node.end() && path->is_string() && !path->get<std::string>().empty()) {
                                     const auto reference=path->get<std::string>();
-                                    if(!portableRelative(reference) || !reference.ends_with(".aystats") || !available.contains(fs::path(reference).generic_string()))
+                                    if(!portableRelative(reference) || !ayt::asset_format::matchesPath(reference, ayt::asset_format::Id::StatsRecipes) || !available.contains(fs::path(reference).generic_string()))
                                         diagnostic(diagnostics,ProjectBuildDiagnostic::Severity::Error,asset.logicalPath,
                                                    "Missing or invalid StatsRecipeComponent asset: "+reference);
                                 }
@@ -845,7 +849,7 @@ void validateStatsContent(const ProjectBuildPlan& plan,
                     inspect(inspect,scene);
                 }
             }
-            if(asset.transform==ProjectAssetTransform::Exclude || !lower(asset.sourcePath).ends_with(".aystats.json")) continue;
+            if(asset.transform==ProjectAssetTransform::Exclude || !ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::StatsSource)) continue;
             auto source=stats::inspectRecipeAssetSource(asset.sourcePath,root);
             if(!source) {
                 diagnostic(diagnostics,ProjectBuildDiagnostic::Severity::Error,asset.logicalPath,source.error().message);
@@ -853,7 +857,7 @@ void validateStatsContent(const ProjectBuildPlan& plan,
             }
             if(asset.transform!=ProjectAssetTransform::Cook) {
                 diagnostic(diagnostics,ProjectBuildDiagnostic::Severity::Error,asset.logicalPath,
-                           "Stats source manifests must be cooked to .aystats.");
+                           "Stats source manifests must be cooked to .sts.");
             }
             for(const auto& path:{source->targetDefinitions,source->sourceDefinitions,source->recipeBook}) {
                 if(path.empty()) continue;
@@ -902,7 +906,7 @@ void validateParticleContent(const ProjectBuildPlan& plan,
     for(const auto& asset:plan.assets) {
         if(asset.transform==ProjectAssetTransform::Exclude) continue;
         const auto extension=lower(fs::path(asset.sourcePath).extension().string());
-        if(extension==".ayparticle") {
+        if(ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::ParticleEffect)) {
             particle::EffectSource effect; std::string error;
             if(!particle::inspectEffectSource(asset.sourcePath,root,effect,&error)) { fail(asset,error); continue; }
             for(size_t index=0; index<effect.textures.size(); ++index) {
@@ -934,10 +938,10 @@ void validateParticleContent(const ProjectBuildPlan& plan,
                             const auto field=node.find(effect?"effectPath":"texturePath");
                             if(field!=node.end() && field->is_string() && !field->get<std::string>().empty()) {
                                 const auto* dependency=reference(asset,field->get<std::string>());
-                                if(effect && dependency && lower(fs::path(dependency->sourcePath).extension().string())!=".ayparticle")
-                                    fail(asset,"ParticleEffectComponent must reference a .ayparticle asset.");
+                                if(effect && dependency && !ayt::asset_format::matchesPath(dependency->sourcePath, ayt::asset_format::Id::ParticleEffect))
+                                    fail(asset,"ParticleEffectComponent must reference a .pfx asset.");
                                 if(emitter && dependency && dependency->transform==ProjectAssetTransform::Cook)
-                                    fail(asset,"Inline particle texture changes path during cook; use a reusable .ayparticle effect or final .aytex.");
+                                    fail(asset,"Inline particle texture changes path during cook; use a reusable .pfx effect or final .txr.");
                             }
                             if(asset.storage==ProjectAssetStorage::Pak)
                                 fail(asset,"Particle showcase scenes must be loose: SceneSerializer reads scene files from disk.");
@@ -973,7 +977,9 @@ void validateActorContent(const ProjectBuildPlan& plan,
         if (!portableRelative(path) || path.find('\\') != std::string::npos
             || path.find(':') != std::string::npos
             || relative.lexically_normal().generic_string() != path
-            || lower(relative.extension().string()) != extension
+            || (extension == ".act"
+                ? !ayt::asset_format::matchesPath(path, ayt::asset_format::Id::ActorClass)
+                : lower(relative.extension().string()) != extension)
             || !isUnder(root, root / relative)) {
             fail(owner, "Invalid Actor reference: " + path);
             return nullptr;
@@ -997,10 +1003,10 @@ void validateActorContent(const ProjectBuildPlan& plan,
     };
     for (const auto& asset : plan.assets) {
         if (asset.transform == ProjectAssetTransform::Exclude) continue;
-        const auto extension = lower(fs::path(asset.sourcePath).extension().string());
-        if (extension != ".ayactor" && !ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::Scene)) continue;
+        const bool actorClass = ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::ActorClass);
+        if (!actorClass && !ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::Scene)) continue;
         try {
-            if (extension == ".ayactor") {
+            if (actorClass) {
                 if (asset.transform != ProjectAssetTransform::Raw
                     || asset.storage != ProjectAssetStorage::Loose) {
                     fail(asset, "Actor class must be raw and loose for runtime loading.");
@@ -1022,7 +1028,7 @@ void validateActorContent(const ProjectBuildPlan& plan,
                 if (!script.empty()) reference(asset, script, ".logia");
                 if (actorSchema >= 2) {
                     const auto parent = doc.value("parent", std::string{});
-                    if (!parent.empty() && reference(asset, parent, ".ayactor"))
+                    if (!parent.empty() && reference(asset, parent, ".act"))
                         parents[asset.logicalPath] = parent;
                 }
                 const Json properties = doc.value("properties", Json::object());
@@ -1073,7 +1079,7 @@ void validateActorContent(const ProjectBuildPlan& plan,
                             if (path == node.end() || !path->is_string()
                                 || path->get<std::string>().empty()) {
                                 fail(asset, "Actor instance has no classPath.");
-                            } else reference(asset, path->get<std::string>(), ".ayactor");
+                            } else reference(asset, path->get<std::string>(), ".act");
                         }
                         for (const auto& item : node.items()) self(self, item.value());
                     } else if (node.is_array()) {
@@ -1380,7 +1386,7 @@ ProjectBuildPlan ProjectBuildPlanner::create(
     std::unordered_set<std::string> skeletonAuthoringExclusions;
     std::unordered_set<std::string> skeletonBakeOutputs;
     for (const fs::path& file : files) {
-        if (lower(file.extension().string()) != ".ayskel"
+        if (!ayt::asset_format::matchesPath(file.string(), ayt::asset_format::Id::Skeleton)
             || isBakedSkeletonPath(file)) {
             continue;
         }
@@ -1489,7 +1495,7 @@ ProjectBuildResult ProjectBuildExecutor::execute(
     }
     for(const auto& asset:plan.assets) {
         if(asset.transform==ProjectAssetTransform::Cook
-           && lower(fs::path(asset.sourcePath).extension().string())==".ayparticle"
+           && ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::ParticleEffect)
            && asset.cacheKey!=computeCacheKey(plan.profile,asset)) {
             result.error="Particle inputs changed after planning; create a fresh build plan.";
             return result;
@@ -1506,7 +1512,7 @@ ProjectBuildResult ProjectBuildExecutor::execute(
         return result;
     }
     for(const auto& asset:plan.assets) {
-        if(asset.transform==ProjectAssetTransform::Cook && lower(asset.sourcePath).ends_with(".aystats.json")
+        if(asset.transform==ProjectAssetTransform::Cook && ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::StatsSource)
            && asset.cacheKey!=computeCacheKey(plan.profile,asset)) {
             result.error="Stats inputs changed after planning; create a fresh build plan.";
             return result;
@@ -1515,7 +1521,7 @@ ProjectBuildResult ProjectBuildExecutor::execute(
 #endif
     for (const ProjectBuildAsset& asset : plan.assets) {
         const fs::path source(asset.sourcePath);
-        if (lower(source.extension().string()) != ".ayskel"
+        if (!ayt::asset_format::matchesPath(source.string(), ayt::asset_format::Id::Skeleton)
             || isBakedSkeletonPath(source)) {
             continue;
         }
@@ -1742,7 +1748,7 @@ ProjectBuildResult ProjectBuildExecutor::execute(
     // The converter graph and actual payload must both close over staged files.
     std::set<std::string> stagedPaths;
     for(const auto& file:staged) stagedPaths.insert(file.logicalPath);
-    for(auto& file:staged) if(file.type=="ParticleEffect" || lower(fs::path(file.logicalPath).extension().string())==".ayparticle") {
+    for(auto& file:staged) if(file.type=="ParticleEffect" || ayt::asset_format::matchesPath(file.logicalPath, ayt::asset_format::Id::ParticleEffect)) {
         particle::EffectAsset effect; std::string error;
         if(!particle::loadEffectAsset(file.diskPath.string(),effect,&error)) { result.error=error; return result; }
         file.type="ParticleEffect";
@@ -1756,7 +1762,7 @@ ProjectBuildResult ProjectBuildExecutor::execute(
                 result.error="Cook owner-relative particle texture references before Pak storage: "+authored; return result;
             }
             if(file.storage==ProjectAssetStorage::Pak && !ayt::asset_format::isCanonicalPath(path, ayt::asset_format::Id::Texture)) {
-                result.error="Packaged particle textures must be cooked .aytex: "+path; return result;
+                result.error="Packaged particle textures must be cooked .txr: "+path; return result;
             }
             file.dependencies.push_back({file.logicalPath,path});
         }

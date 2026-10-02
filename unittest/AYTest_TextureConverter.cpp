@@ -292,15 +292,15 @@ TEST_SUITE(TextureConverterTests)
         }
 
         // dds is excluded from rawCopy: passthrough (default on) still
-        // produces an .aytex so the FBXParser reference stays consistent.
+        // produces a .txr so the FBXParser reference stays consistent.
         TextureConverter conv;
         conv.setOutputDir(root + "/out");
         conv.setRawCopy(true);
         auto res = conv.convertFromPath("tex.dds", "tex", root + "/src");
 
         CHECK(res.resources.size() == 1u);
-        CHECK(res.resources[0].path == "textures/tex_d.aytex");
-        CHECK(ayt::io::File::exists(root + "/out/textures/tex_d.aytex"));
+        CHECK(res.resources[0].path == "textures/tex_d.txr");
+        CHECK(ayt::io::File::exists(root + "/out/textures/tex_d.txr"));
 
         std::filesystem::remove_all(root, ec);
     }

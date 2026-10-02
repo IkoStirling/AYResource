@@ -1,4 +1,5 @@
 #include "AYResource/Loader/AnimationLoader.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include <fstream>
 
 namespace ayt::resource
@@ -7,8 +8,7 @@ namespace ayt::resource
 AnimationLoader::AnimationLoader() = default;
 
 bool AnimationLoader::canLoad(const std::string& path) const {
-    if (path.size() < 6) return false;
-    return path.compare(path.size() - 6, 6, EXTENSION) == 0;
+    return ayt::asset_format::matchesPath(path, ayt::asset_format::Id::Animation);
 }
 
 std::shared_ptr<IResource> AnimationLoader::load(const std::string& path) {

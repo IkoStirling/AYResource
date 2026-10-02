@@ -62,7 +62,7 @@ TEST_CASE(AtlasLoaderAndConverterClosedLoop)
     CHECK_FALSE(loader.canLoad("atlases/terrain.ayatlas.json"));
 
     const char* sourcePath = "atlas_skeleton.ayatlas.json";
-    const char* outputPath = "atlases/terrain_skeleton.ayatlas";
+    const std::string outputPath = makeAtlasVirtualPath("terrain_skeleton");
     {
         std::ofstream stream(sourcePath, std::ios::binary);
         stream << "{\"name\":\"terrain_skeleton\","
@@ -92,7 +92,7 @@ TEST_CASE(AtlasLoaderAndConverterClosedLoop)
     CHECK_INT_EQ(atlas->getTilesPerRow(), 8u);
 
     std::remove(sourcePath);
-    std::remove(outputPath);
+    std::remove(outputPath.c_str());
 }
 
 TEST_SUITE_END

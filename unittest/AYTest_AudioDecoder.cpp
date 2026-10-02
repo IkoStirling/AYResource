@@ -89,6 +89,7 @@ TEST_SUITE(AudioDecoderTests)
         CHECK(isLooseAudioExtension("mp3"));
         CHECK(isLooseAudioExtension("ogg"));
         CHECK(isCookedAudioExtension("ayaudio"));
+        CHECK(isCookedAudioExtension("aud"));
         CHECK(!isLooseAudioExtension("ayaudio"));
     }
 
@@ -122,7 +123,7 @@ TEST_SUITE(AudioDecoderTests)
         CHECK(r.resources.size() == 1);
         CHECK(r.resources[0].type == std::string("Audio"));
 
-        const std::string cooked = dir + "/audio/cook_src.ayaudio";
+        const std::string cooked = dir + "/audio/cook_src.aud";
         CHECK(ayt::io::File::exists(cooked));
 
         AudioLoader loader;

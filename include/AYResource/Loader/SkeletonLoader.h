@@ -19,7 +19,7 @@ public:
         std::function<void(std::shared_ptr<IResource>)> callback = {}) override;
 
 private:
-    static constexpr const char* EXTENSION = ".ayskel";
+    static constexpr const char* EXTENSION = ".skl";
 };
 
 } // namespace ayt::resource

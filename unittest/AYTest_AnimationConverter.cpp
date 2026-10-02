@@ -1,7 +1,7 @@
 // AYTest_AnimationConverter.cpp — R-02 AnimationConverter unit tests
 //
 // 验证 AnimationConverter::convertAll 的:
-//   1. valueType 透传到 .ayanm 二进制 (loadFromBinary 后 getTrackType 仍正确)
+//   1. valueType 透传到 .anm 二进制 (loadFromBinary 后 getTrackType 仍正确)
 //   2. 文件名 sanitize (空名 / 保留字符 / 重复 take)
 //   3. GUID hash 包含 valueType (类型变化会改变 GUID)
 //
@@ -78,9 +78,9 @@ TEST_SUITE(AnimationConverterTests)
         auto res = conv.convertAll(anims, "hero");
         CHECK(res.size() == 1u);
 
-        // convertAll 应给出 animations/hero_run.ayanm
+        // convertAll 应给出 animations/hero_run.anm
         const std::string vp = res[0].path;
-        CHECK(vp.find("animations/hero_run.ayanm") != std::string::npos);
+        CHECK(vp.find("animations/hero_run.anm") != std::string::npos);
 
         // 真去盘上读
         std::string fullPath = std::string(animConvOutDir()) + "/" + vp;
@@ -198,7 +198,7 @@ TEST_SUITE(AnimationConverterTests)
         bool sawRun = false;
         bool sawDup = false;
         for (const auto& r : res) {
-            if (r.path.find("/hero_run.ayanm") != std::string::npos) sawRun = true;
+            if (r.path.find("/hero_run.anm") != std::string::npos) sawRun = true;
             if (r.path.find("_dup2") != std::string::npos) sawDup = true;
         }
         CHECK(sawRun);

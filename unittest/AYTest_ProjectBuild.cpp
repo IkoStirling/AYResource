@@ -630,12 +630,12 @@ TEST_CASE(actor_classes_and_scripts_form_a_checked_loose_release_closure)
     ProjectBuildCleanup cleanup{"ayproject_build_actor_closure_test"};
     CHECK(writeText(cleanup.root / "Assets/actors/Base.ayactor",
         R"({"type":"ay.actorClass","schemaVersion":3,"id":"Base","script":"actors/Base.logia","properties":{},"components":[{"$type":"Camera","$instanceId":"11111111111111111111111111111111"},{"$type":"Camera","$instanceId":"22222222222222222222222222222222"}]})"));
-    CHECK(writeText(cleanup.root / "Assets/actors/Child.ayactor",
+    CHECK(writeText(cleanup.root / "Assets/actors/Child.act",
         R"({"type":"ay.actorClass","schemaVersion":2,"id":"Child","parent":"actors/Base.ayactor","script":"","properties":{},"components":[]})"));
     CHECK(writeText(cleanup.root / "Assets/actors/Base.logia",
         "script Base { on_start() {} }\n"));
     CHECK(writeText(cleanup.root / "Assets/worlds/Main.ayscene",
-        R"({"entities":[{"components":[{"$type":"ActorInstanceComponent","classPath":"actors/Child.ayactor"}]}]})"));
+        R"({"entities":[{"components":[{"$type":"ActorInstanceComponent","classPath":"actors/Child.act"}]}]})"));
     CHECK(writeText(cleanup.root / "BuildProfiles/test.aybuild.json", profileJson()));
     std::string error;
     auto profile = ProjectBuildProfile::load(
@@ -645,12 +645,12 @@ TEST_CASE(actor_classes_and_scripts_form_a_checked_loose_release_closure)
     const auto built = ProjectBuildExecutor::execute(plan);
     CHECK_MSG(built.ok, built.error.c_str());
     CHECK(fs::is_regular_file(cleanup.root
-        / "out/package/test/Content/actors/Child.ayactor"));
+        / "out/package/test/Content/actors/Child.act"));
     CHECK(fs::is_regular_file(cleanup.root
         / "out/package/test/Content/actors/Base.logia"));
 
     CHECK(writeText(cleanup.root / "Assets/actors/Base.ayactor",
-        R"({"type":"ay.actorClass","schemaVersion":2,"id":"Base","parent":"actors/Child.ayactor","script":"actors/Base.logia","properties":{},"components":[]})"));
+        R"({"type":"ay.actorClass","schemaVersion":2,"id":"Base","parent":"actors/Child.act","script":"actors/Base.logia","properties":{},"components":[]})"));
     plan = ProjectBuildPlanner::create(profile, cleanup.root.string());
     CHECK_FALSE(plan.valid());
     CHECK(writeText(cleanup.root / "Assets/actors/Base.ayactor",
@@ -711,7 +711,7 @@ TEST_CASE(repeated_build_reuses_content_addressed_cook_result)
     CHECK(first.cookedCount == 1u);
     CHECK(first.cacheHitCount == 0u);
     CHECK(fs::is_regular_file(cleanup.root
-        / "out/package/test/Content/audio/tone.ayaudio"));
+        / "out/package/test/Content/audio/tone.aud"));
 
     const ProjectBuildResult second = ProjectBuildExecutor::execute(plan);
     if (!second.ok) {
@@ -851,11 +851,11 @@ TEST_CASE(skeleton_release_gate_packages_only_verified_baked_outputs)
     const fs::path animation = character / "walk.ayanm";
     const fs::path mesh = character / "hero.aymesh";
     const fs::path mask = character / "upper.aymask";
-    const fs::path bakedSkeleton = character / "Baked/hero.baked.ayskel";
-    const fs::path bakedAnimation = character / "Baked/walk.baked.ayanm";
-    const fs::path bakedMesh = character / "Baked/hero.baked.aymesh";
-    const fs::path bakedMask = character / "Baked/upper.baked.aymask";
-    const fs::path staleAnimation = character / "Baked/old.baked.ayanm";
+    const fs::path bakedSkeleton = character / "Baked/hero.baked.skl";
+    const fs::path bakedAnimation = character / "Baked/walk.baked.anm";
+    const fs::path bakedMesh = character / "Baked/hero.baked.msh";
+    const fs::path bakedMask = character / "Baked/upper.baked.skm";
+    const fs::path staleAnimation = character / "Baked/old.baked.anm";
     CHECK(writeText(skeleton, "source-skeleton"));
     CHECK(writeText(animation, "source-animation"));
     CHECK(writeText(mesh, "source-mesh"));
@@ -867,7 +867,7 @@ TEST_CASE(skeleton_release_gate_packages_only_verified_baked_outputs)
     CHECK(writeText(staleAnimation, "stale-animation"));
     const std::string fingerprint = skeletonFingerprint(skeleton);
     const nlohmann::json mapping = rigProfile(fingerprint);
-    CHECK(writeText(character / "hero.ayrig", mapping.dump(2)));
+    CHECK(writeText(character / "hero.rig", mapping.dump(2)));
     CHECK(writeText(character / "hero.aysmap", "legacy-mapping"));
     nlohmann::json receipt = {
         {"type", "SkeletonBakeResult"}, {"version", 2}, {"generation", 1},
@@ -932,7 +932,7 @@ TEST_CASE(skeleton_release_gate_packages_only_verified_baked_outputs)
     };
     CHECK(transformOf("Characters/hero.ayskel")
         == ProjectAssetTransform::Exclude);
-    CHECK(transformOf("Characters/hero.ayrig")
+    CHECK(transformOf("Characters/hero.rig")
         == ProjectAssetTransform::Exclude);
     CHECK(transformOf("Characters/hero.aysmap")
         == ProjectAssetTransform::Exclude);
@@ -944,15 +944,15 @@ TEST_CASE(skeleton_release_gate_packages_only_verified_baked_outputs)
         == ProjectAssetTransform::Exclude);
     CHECK(transformOf("Characters/Baked/hero.bake-result.json")
         == ProjectAssetTransform::Exclude);
-    CHECK(transformOf("Characters/Baked/hero.baked.ayskel")
+    CHECK(transformOf("Characters/Baked/hero.baked.skl")
         == ProjectAssetTransform::Raw);
-    CHECK(transformOf("Characters/Baked/walk.baked.ayanm")
+    CHECK(transformOf("Characters/Baked/walk.baked.anm")
         == ProjectAssetTransform::Raw);
-    CHECK(transformOf("Characters/Baked/hero.baked.aymesh")
+    CHECK(transformOf("Characters/Baked/hero.baked.msh")
         == ProjectAssetTransform::Raw);
-    CHECK(transformOf("Characters/Baked/upper.baked.aymask")
+    CHECK(transformOf("Characters/Baked/upper.baked.skm")
         == ProjectAssetTransform::Raw);
-    CHECK(transformOf("Characters/Baked/old.baked.ayanm")
+    CHECK(transformOf("Characters/Baked/old.baked.anm")
         == ProjectAssetTransform::Exclude);
 
     const ProjectBuildResult built = ProjectBuildExecutor::execute(plan);
@@ -961,19 +961,19 @@ TEST_CASE(skeleton_release_gate_packages_only_verified_baked_outputs)
     }
     CHECK_MSG(built.ok, built.error.c_str());
     CHECK(fs::is_regular_file(cleanup.root
-        / "out/package/test/Content/Characters/Baked/hero.baked.ayskel"));
+        / "out/package/test/Content/Characters/Baked/hero.baked.skl"));
     CHECK(fs::is_regular_file(cleanup.root
-        / "out/package/test/Content/Characters/Baked/walk.baked.ayanm"));
+        / "out/package/test/Content/Characters/Baked/walk.baked.anm"));
     CHECK(fs::is_regular_file(cleanup.root
-        / "out/package/test/Content/Characters/Baked/hero.baked.aymesh"));
+        / "out/package/test/Content/Characters/Baked/hero.baked.msh"));
     CHECK(fs::is_regular_file(cleanup.root
-        / "out/package/test/Content/Characters/Baked/upper.baked.aymask"));
+        / "out/package/test/Content/Characters/Baked/upper.baked.skm"));
     CHECK_FALSE(fs::exists(cleanup.root
         / "out/package/test/Content/Characters/hero.ayskel"));
     CHECK_FALSE(fs::exists(cleanup.root
         / "out/package/test/Content/Characters/walk.ayanm"));
     CHECK_FALSE(fs::exists(cleanup.root
-        / "out/package/test/Content/Characters/Baked/old.baked.ayanm"));
+        / "out/package/test/Content/Characters/Baked/old.baked.anm"));
 }
 
 TEST_CASE(skeleton_release_gate_rechecks_source_at_execution_time)
@@ -981,12 +981,12 @@ TEST_CASE(skeleton_release_gate_rechecks_source_at_execution_time)
     ProjectBuildCleanup cleanup{"ayproject_build_skeleton_stale_test"};
     const fs::path character = cleanup.root / "Assets/Characters";
     const fs::path skeleton = character / "hero.ayskel";
-    const fs::path bakedSkeleton = character / "Baked/hero.baked.ayskel";
+    const fs::path bakedSkeleton = character / "Baked/hero.baked.skl";
     CHECK(writeText(skeleton, "source-skeleton"));
     CHECK(writeText(bakedSkeleton, "cleaned-skeleton"));
     const std::string fingerprint = skeletonFingerprint(skeleton);
     const nlohmann::json mapping = rigProfile(fingerprint);
-    CHECK(writeText(character / "hero.ayrig", mapping.dump(2)));
+    CHECK(writeText(character / "hero.rig", mapping.dump(2)));
     nlohmann::json receipt = {
         {"type", "SkeletonBakeResult"}, {"version", 2},
         {"sourceFingerprint", fingerprint},
@@ -1036,13 +1036,13 @@ TEST_CASE(skeleton_release_gate_accepts_scoped_retarget_receipt)
         {"roles", requiredSkeletonRoles()},
     };
     profile["output"] = {{"mode", "BakeToTarget"}, {"platform", "test"}};
-    const fs::path profilePath = character / "hero.ayrig";
+    const fs::path profilePath = character / "hero.rig";
     CHECK(writeText(profilePath, profile.dump(2)));
     const std::string scope = scopedFnv("rt-",
         fs::absolute(target).lexically_normal().generic_string()
             + "|BakeToTarget|test");
     const fs::path bakedSkeleton = character / "Baked"
-        / ("hero." + scope + ".baked.ayskel");
+        / ("hero." + scope + ".baked.skl");
     const fs::path receiptPath = character / "Baked"
         / ("hero." + scope + ".bake-result.json");
     CHECK(writeText(bakedSkeleton, "retargeted-skeleton"));
@@ -1085,12 +1085,12 @@ TEST_CASE(skeleton_release_gate_rechecks_rig_profile_at_execution_time)
     ProjectBuildCleanup cleanup{"ayproject_build_rig_profile_stale_test"};
     const fs::path character = cleanup.root / "Assets/Characters";
     const fs::path skeleton = character / "hero.ayskel";
-    const fs::path bakedSkeleton = character / "Baked/hero.baked.ayskel";
+    const fs::path bakedSkeleton = character / "Baked/hero.baked.skl";
     CHECK(writeText(skeleton, "source-skeleton"));
     CHECK(writeText(bakedSkeleton, "cleaned-skeleton"));
     const std::string fingerprint = skeletonFingerprint(skeleton);
     nlohmann::json mapping = rigProfile(fingerprint);
-    CHECK(writeText(character / "hero.ayrig", mapping.dump(2)));
+    CHECK(writeText(character / "hero.rig", mapping.dump(2)));
     const nlohmann::json receipt = {
         {"type", "SkeletonBakeResult"}, {"version", 2},
         {"sourceFingerprint", fingerprint},
@@ -1119,7 +1119,7 @@ TEST_CASE(skeleton_release_gate_rechecks_rig_profile_at_execution_time)
     CHECK(plan.valid());
 
     mapping["roles"]["head"]["bonePath"] = "root/reassignedHead";
-    CHECK(writeText(character / "hero.ayrig", mapping.dump(2)));
+    CHECK(writeText(character / "hero.rig", mapping.dump(2)));
     const ProjectBuildResult built = ProjectBuildExecutor::execute(plan);
     CHECK_FALSE(built.ok);
     CHECK(built.error.find("Skeleton release gate") != std::string::npos);
@@ -1131,15 +1131,15 @@ TEST_CASE(skeleton_release_gate_rechecks_dependency_closure_at_execution_time)
     const fs::path character = cleanup.root / "Assets/Characters";
     const fs::path skeleton = character / "hero.ayskel";
     const fs::path animation = character / "walk.ayanm";
-    const fs::path bakedSkeleton = character / "Baked/hero.baked.ayskel";
-    const fs::path bakedAnimation = character / "Baked/walk.baked.ayanm";
+    const fs::path bakedSkeleton = character / "Baked/hero.baked.skl";
+    const fs::path bakedAnimation = character / "Baked/walk.baked.anm";
     CHECK(writeText(skeleton, "source-skeleton"));
     CHECK(writeText(animation, "source-animation"));
     CHECK(writeText(bakedSkeleton, "cleaned-skeleton"));
     CHECK(writeText(bakedAnimation, "rewritten-animation"));
     const std::string fingerprint = skeletonFingerprint(skeleton);
     const nlohmann::json mapping = rigProfile(fingerprint);
-    CHECK(writeText(character / "hero.ayrig", mapping.dump(2)));
+    CHECK(writeText(character / "hero.rig", mapping.dump(2)));
     const nlohmann::json receipt = {
         {"type", "SkeletonBakeResult"}, {"version", 2},
         {"sourceFingerprint", fingerprint},

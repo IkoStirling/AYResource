@@ -22,7 +22,7 @@ public:
         std::function<void(std::shared_ptr<IResource>)> callback = {}) override;
 
 private:
-    static constexpr const char* EXTENSION = ".ayshader";
+    static constexpr const char* EXTENSION = ".shb";
 };
 
 } // namespace ayt::resource

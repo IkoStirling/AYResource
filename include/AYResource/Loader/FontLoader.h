@@ -24,7 +24,7 @@ public:
         std::function<void(std::shared_ptr<IResource>)> callback = {}) override;
 
 private:
-    static constexpr const char* EXTENSION = ".ayfont";
+    static constexpr const char* EXTENSION = ".fnt";
 };
 
 } // namespace ayt::resource

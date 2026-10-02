@@ -16,9 +16,9 @@ TEST_SUITE(VirtualAssetPath_P0)
 TEST_CASE(material_path_contract)
 {
     CHECK(makeMaterialVirtualPath("Sour", 0) ==
-          std::string("materials/Sour_material_0.aymat"));
+          std::string("materials/Sour_material_0.mat"));
     CHECK(makeMaterialVirtualPath("Sour", 38) ==
-          std::string("materials/Sour_material_38.aymat"));
+          std::string("materials/Sour_material_38.mat"));
 }
 
 TEST_CASE(texture_stem_and_path_contract)
@@ -31,9 +31,9 @@ TEST_CASE(texture_stem_and_path_contract)
           std::string("skin"));
 
     CHECK(makeTextureVirtualPath("tex_skin", "_d") ==
-          std::string("textures/tex_skin_d.aytex"));
+          std::string("textures/tex_skin_d.txr"));
     CHECK(makeTextureVirtualPathFromSource("tex/skin.png") ==
-          std::string("textures/tex_skin_d.aytex"));
+          std::string("textures/tex_skin_d.txr"));
 }
 
 TEST_CASE(texture_path_extension_overload_contract)
@@ -82,14 +82,15 @@ TEST_CASE(texture_dev_extension_of_contract)
     CHECK(textureDevExtensionOf("photo.JPG") == ".jpg");
     CHECK(textureDevExtensionOf("logo.jpeg") == ".jpeg");
     CHECK(textureDevExtensionOf("scene.bmp") == ".bmp");
-    // ...but container/passthrough formats always resolve to .aytex so
+    // ...but container/passthrough formats always resolve to the current texture suffix so
     // parser references and converter output can never drift apart.
-    CHECK(textureDevExtensionOf("tex/skin.dds") == ".aytex");
-    CHECK(textureDevExtensionOf("tex/skin.DDS") == ".aytex");
-    CHECK(textureDevExtensionOf("tex/skin.aytex") == ".aytex");
-    // No extension / trailing dot → .aytex fallback.
-    CHECK(textureDevExtensionOf("tex/skin") == ".aytex");
-    CHECK(textureDevExtensionOf("tex/skin.") == ".aytex");
+    CHECK(textureDevExtensionOf("tex/skin.dds") == ".txr");
+    CHECK(textureDevExtensionOf("tex/skin.DDS") == ".txr");
+    CHECK(textureDevExtensionOf("tex/skin.aytex") == ".txr");
+    CHECK(textureDevExtensionOf("tex/skin.txr") == ".txr");
+    // No extension / trailing dot → current texture suffix fallback.
+    CHECK(textureDevExtensionOf("tex/skin") == ".txr");
+    CHECK(textureDevExtensionOf("tex/skin.") == ".txr");
 }
 
 TEST_CASE(material_convertAll_emits_one_file_per_material)

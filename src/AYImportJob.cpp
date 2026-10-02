@@ -1,4 +1,5 @@
 #include "AYResource/ImportJob.h"
+#include <AYAssetFormat/AssetFormat.h>
 
 #include <AYIO/File.h>
 #include <AYResource/LooseDependency.h>
@@ -88,10 +89,13 @@ bool tryLoadCachedConversion(const ImportOptions& options,
     if (baseName.empty()) {
         return false;
     }
-    const std::string depPath = joinDirFile(options.outputDir, baseName + ".aydep.json");
+    std::string depPath = joinDirFile(options.outputDir,
+        ayt::asset_format::appendSuffix(baseName, ayt::asset_format::Id::ImportDependency));
     depPathOut = depPath;
     if (!fileExists(depPath)) {
-        return false;
+        depPath = joinDirFile(options.outputDir, baseName + ".aydep.json");
+        if (!fileExists(depPath)) return false;
+        depPathOut = depPath;
     }
 
     const uint64_t srcMtime = ayt::io::File::lastModifiedTime(options.sourcePath);
@@ -200,11 +204,11 @@ std::string importExtensionOf(const std::string& path)
 bool isImportSupportedExtension(const std::string& sourcePath)
 {
 #if defined(AY_RESOURCE_HAS_STATS)
-    if(toLowerCopy(sourcePath).ends_with(".aystats.json")) return true;
+    if(ayt::asset_format::matchesPath(sourcePath, ayt::asset_format::Id::StatsSource)) return true;
 #endif
     const std::string ext = importExtensionOf(sourcePath);
 #if defined(AY_RESOURCE_HAS_PARTICLE)
-    if (ext == "ayparticle") return true;
+    if (ayt::asset_format::matchesPath(sourcePath, ayt::asset_format::Id::ParticleEffect)) return true;
 #endif
     return ext == "fbx"
         || ext == "gltf" || ext == "glb"
@@ -255,9 +259,9 @@ ImportResult importAsset(const ImportOptions& options,
     report(progress, ImportStage::CheckCache, 0.1f, "checking cache");
     // Particle closure includes external textures; source mtime alone cannot
     // validate it. ProjectBuild owns the content-addressed closure cache.
-    if (!options.force && importExtensionOf(options.sourcePath) != "ayparticle"
+    if (!options.force && !ayt::asset_format::matchesPath(options.sourcePath, ayt::asset_format::Id::ParticleEffect)
 #if defined(AY_RESOURCE_HAS_STATS)
-        && !toLowerCopy(options.sourcePath).ends_with(".aystats.json")
+        && !ayt::asset_format::matchesPath(options.sourcePath, ayt::asset_format::Id::StatsSource)
 #endif
     ) {
         ConversionResult cached;
@@ -352,7 +356,8 @@ ImportResult importAsset(const ImportOptions& options,
 
     r.ok = true;
     r.usedCache = false;
-    r.depSidecarPath = joinDirFile(options.outputDir, stemOf(options.sourcePath) + ".aydep.json");
+    r.depSidecarPath = joinDirFile(options.outputDir,
+        ayt::asset_format::appendSuffix(stemOf(options.sourcePath), ayt::asset_format::Id::ImportDependency));
 #if defined(AY_RESOURCE_HAS_PARTICLE)
     if (dynamic_cast<ParticleConverter*>(converter.get())) {
         for (const auto& resource : r.conversion.resources) {

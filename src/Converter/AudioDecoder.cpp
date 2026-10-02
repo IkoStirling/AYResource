@@ -1,4 +1,5 @@
 #include "AYResource/Converter/AudioDecoder.h"
+#include <AYAssetFormat/AssetFormat.h>
 
 #include <AYIO/File.h>
 
@@ -244,7 +245,8 @@ bool isLooseAudioExtension(const std::string& extLowerNoDot)
 
 bool isCookedAudioExtension(const std::string& extLowerNoDot)
 {
-    return extLowerNoDot == "ayaudio";
+    return ayt::asset_format::matchesPath(
+        "." + extLowerNoDot, ayt::asset_format::Id::Audio);
 }
 
 bool decodeAudioFile(const std::string& path, PcmBuffer& out)

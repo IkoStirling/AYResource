@@ -43,6 +43,8 @@ bool registerLoaderType(const char* typeName, ayt::asset_format::Id format)
 {
     ResourceRegistry::registerExtension(
         std::string(ayt::asset_format::suffix(format)), typeName);
+    for (const auto alias : ayt::asset_format::describe(format).readAliases)
+        ResourceRegistry::registerExtension(std::string(alias), typeName);
     return ResourceRegistry::registerLoader(typeName, &createLoaderInstance<LoaderT>);
 }
 
@@ -72,13 +74,18 @@ bool initializeLoaders()
         ResourceRegistry::registerExtension(".ogg", "Audio");
         // Metadata only: the optional AYParticleResources adapter owns its loader.
 #if defined(AY_RESOURCE_HAS_PARTICLE)
-        ResourceRegistry::registerExtension(
-            std::string(ayt::asset_format::suffix(Id::ParticleEffect)), "ParticleEffect");
+        for (const auto& format : {Id::ParticleEffect}) {
+            ResourceRegistry::registerExtension(std::string(ayt::asset_format::suffix(format)), "ParticleEffect");
+            for (const auto alias : ayt::asset_format::describe(format).readAliases)
+                ResourceRegistry::registerExtension(std::string(alias), "ParticleEffect");
+        }
 #endif
 #endif
 #if defined(AY_RESOURCE_HAS_STATS)
         ResourceRegistry::registerExtension(
             std::string(ayt::asset_format::suffix(Id::StatsRecipes)), "StatsRecipes");
+        for (const auto alias : ayt::asset_format::describe(Id::StatsRecipes).readAliases)
+            ResourceRegistry::registerExtension(std::string(alias), "StatsRecipes");
 #endif
 #if defined(AY_TEXTURE_LOOSE_FORMATS)
         // Dev/Editor: same Texture loader also owns loose authoring formats

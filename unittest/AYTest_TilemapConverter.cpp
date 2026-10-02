@@ -1,6 +1,6 @@
 // AYTest_TilemapConverter.cpp — CM-2 (2026-08-11) acceptance cases.
 //
-// Covers the .aytilemap.json -> .aytilemap v3 Converter:
+// Covers the .aytilemap.json -> .tlm v3 Converter:
 //   1. round-trip: author JSON -> convert() -> on-disk binary ->
 //      TilemapAsset::loadFromBinary — every field asserted.
 //   2. Guid determinism: same input twice -> same guid; one changed
@@ -119,15 +119,15 @@ TEST_CASE(TilemapJsonToBinaryRoundTrip)
     CHECK_INT_EQ(static_cast<int>(result.resources.size()), 1);
 
     const ConversionResult::ConvertedResource& res = result.resources[0];
-    CHECK_TRUE(res.path == "tilemaps/ground.aytilemap");
+    CHECK_TRUE(res.path == "tilemaps/ground.tlm");
     CHECK_TRUE(std::string(res.type) == "Tilemap");
     CHECK(res.size > 0u);
     CHECK_FALSE(res.guid.isZero());
-    CHECK_TRUE(fileExists("tilemaps/ground.aytilemap"));
+    CHECK_TRUE(fileExists("tilemaps/ground.tlm"));
 
     // Load the cooked binary back and assert every field.
     std::vector<UInt8> binary;
-    readBinaryFile("tilemaps/ground.aytilemap", binary);
+    readBinaryFile("tilemaps/ground.tlm", binary);
     CHECK_FALSE(binary.empty());
 
     TilemapAsset loaded;
@@ -155,7 +155,7 @@ TEST_CASE(TilemapJsonToBinaryRoundTrip)
                  TileCollisionFlagBits::Slope_L);
 
     std::remove("cm2_ground.aytilemap.json");
-    std::remove("tilemaps/ground.aytilemap");
+    std::remove("tilemaps/ground.tlm");
 }
 
 // ─── #2 — guid determinism + sensitivity to a single tile change. ──
@@ -201,7 +201,7 @@ TEST_CASE(TilemapConverterDefaults)
     CHECK_INT_EQ(static_cast<int>(result.resources.size()), 1);
 
     std::vector<UInt8> binary;
-    readBinaryFile("tilemaps/flat.aytilemap", binary);
+    readBinaryFile("tilemaps/flat.tlm", binary);
     CHECK_FALSE(binary.empty());
 
     TilemapAsset loaded;
@@ -215,7 +215,7 @@ TEST_CASE(TilemapConverterDefaults)
     }
 
     std::remove("cm2_flat.aytilemap.json");
-    std::remove("tilemaps/flat.aytilemap");
+    std::remove("tilemaps/flat.tlm");
 }
 
 // ─── #4 — invalid inputs: missing source / bad JSON, no throw. ─────
@@ -257,8 +257,8 @@ TEST_CASE(TilemapConverterDispatchAndPath)
     CHECK_NULL(IConverter::create("map.json").get());
 
     // Exact virtual-path spelling (single source of truth).
-    CHECK_TRUE(makeTilemapVirtualPath("ground") == "tilemaps/ground.aytilemap");
-    CHECK_TRUE(makeTilemapVirtualPath("hero_sheet") == "tilemaps/hero_sheet.aytilemap");
+    CHECK_TRUE(makeTilemapVirtualPath("ground") == "tilemaps/ground.tlm");
+    CHECK_TRUE(makeTilemapVirtualPath("hero_sheet") == "tilemaps/hero_sheet.tlm");
 }
 
 // ===== CM-5 (2026-08-12): animations JSON -> binary -> load =====
@@ -300,7 +300,7 @@ TEST_CASE(TilemapConverterAnimationsRoundTrip)
     CHECK_INT_EQ(static_cast<int>(result.resources.size()), 1);
 
     std::vector<UInt8> binary;
-    readBinaryFile("tilemaps/anim.aytilemap", binary);
+    readBinaryFile("tilemaps/anim.tlm", binary);
     CHECK_FALSE(binary.empty());
 
     TilemapAsset loaded;
@@ -320,7 +320,7 @@ TEST_CASE(TilemapConverterAnimationsRoundTrip)
     CHECK_INT_EQ(e9->frames[0].durationMs, 0u);  // zero duration allowed
 
     std::remove("cm5_anim.aytilemap.json");
-    std::remove("tilemaps/anim.aytilemap");
+    std::remove("tilemaps/anim.tlm");
 }
 
 TEST_CASE(TilemapConverterAnimationsGuidSensitive)
@@ -371,7 +371,7 @@ TEST_CASE(TilemapConverterAnimationsEmptyFramesAborts)
     converter.setOutputDir(kOutputDir);
     const ConversionResult result = converter.convert();
     CHECK_INT_EQ(static_cast<int>(result.resources.size()), 0);
-    CHECK_FALSE(fileExists("tilemaps/bad.aytilemap"));
+    CHECK_FALSE(fileExists("tilemaps/bad.tlm"));
 
     std::remove("cm5_bad.aytilemap.json");
 }
@@ -388,7 +388,7 @@ TEST_CASE(TilemapConverterWithoutAnimationsLoadsWithEmptyTable)
     CHECK_INT_EQ(static_cast<int>(result.resources.size()), 1);
 
     std::vector<UInt8> binary;
-    readBinaryFile("tilemaps/ground.aytilemap", binary);
+    readBinaryFile("tilemaps/ground.tlm", binary);
     CHECK_FALSE(binary.empty());
 
     TilemapAsset loaded;
@@ -397,7 +397,7 @@ TEST_CASE(TilemapConverterWithoutAnimationsLoadsWithEmptyTable)
     CHECK_INT_EQ(loaded.getTileCollisionFlagCount(), 2u);  // rest intact
 
     std::remove("cm5_plain.aytilemap.json");
-    std::remove("tilemaps/ground.aytilemap");
+    std::remove("tilemaps/ground.tlm");
 }
 
 TEST_CASE(TilemapConverterV3AuthoringDataRoundTrip)
@@ -430,22 +430,22 @@ TEST_CASE(TilemapConverterV3AuthoringDataRoundTrip)
             return resource.type == "Texture";
         });
     CHECK_TRUE(textureResource != result.resources.end());
-    CHECK_TRUE(result.dependencies[0].from == "tilemaps/rich.aytilemap");
+    CHECK_TRUE(result.dependencies[0].from == "tilemaps/rich.tlm");
     CHECK_TRUE(textureResource != result.resources.end()
         && result.dependencies[0].to == textureResource->path);
     const std::string sidecarPath =
-        looseDependencySidecarPath("tilemaps/rich.aytilemap");
+        looseDependencySidecarPath("tilemaps/rich.tlm");
     CHECK_TRUE(fileExists(sidecarPath));
     const ConversionResult sidecar = ConversionResult::fromJson(
         ayt::io::File::readAllText(sidecarPath));
     CHECK_INT_EQ(static_cast<int>(sidecar.dependencies.size()), 1);
     CHECK_TRUE(sidecar.dependencies[0].from
-        == "tilemaps/rich.aytilemap");
+        == "tilemaps/rich.tlm");
     CHECK_TRUE(textureResource != result.resources.end()
         && sidecar.dependencies[0].to == textureResource->path);
 
     std::vector<UInt8> binary;
-    readBinaryFile("tilemaps/rich.aytilemap", binary);
+    readBinaryFile("tilemaps/rich.tlm", binary);
     TilemapAsset loaded;
     CHECK_TRUE(loaded.loadFromBinary(binary.data(), binary.size()));
     CHECK_INT_EQ(loaded.getLayerCount(), 2u);
@@ -477,7 +477,7 @@ TEST_CASE(TilemapConverterV3AuthoringDataRoundTrip)
 
     std::remove("cm_editor_sheet.png");
     std::remove("cm_editor_v3.aytilemap.json");
-    std::remove("tilemaps/rich.aytilemap");
+    std::remove("tilemaps/rich.tlm");
     std::remove(sidecarPath.c_str());
 }
 
@@ -512,8 +512,8 @@ TEST_CASE(TilemapConverterAtlasWriteFailureDoesNotPublishSuccess)
     const ConversionResult result = converter.convert();
     CHECK(result.resources.empty());
     CHECK(result.dependencies.empty());
-    CHECK_FALSE(fs::exists(outputRoot / "tilemaps/write_failure.aytilemap"));
-    CHECK_FALSE(fs::exists(outputRoot / "tilemaps/write_failure.aydep.json"));
+    CHECK_FALSE(fs::exists(outputRoot / "tilemaps/write_failure.tlm"));
+    CHECK_FALSE(fs::exists(outputRoot / "tilemaps/write_failure.dep"));
 
     fs::remove_all(root, cleanupError);
 }
@@ -546,8 +546,8 @@ TEST_CASE(TilemapV3PackagesAtlasDependencyAndLoadsWithoutLooseFiles)
     const ConversionResult converted = converter.convert();
     CHECK_INT_EQ(static_cast<int>(converted.resources.size()), 2);
     CHECK_INT_EQ(static_cast<int>(converted.dependencies.size()), 1);
-    const fs::path runtimeMap = assetRoot / "tilemaps/portable.aytilemap";
-    const fs::path sidecar = assetRoot / "tilemaps/portable.aydep.json";
+    const fs::path runtimeMap = assetRoot / "tilemaps/portable.tlm";
+    const fs::path sidecar = assetRoot / "tilemaps/portable.dep";
     CHECK(fs::is_regular_file(runtimeMap));
     CHECK(fs::is_regular_file(sidecar));
 
@@ -578,7 +578,7 @@ TEST_CASE(TilemapV3PackagesAtlasDependencyAndLoadsWithoutLooseFiles)
     manager.unloadAll();
     setAssetRoots({});
     CHECK(manager.openDatabase(package.dbPath));
-    const std::string mapLogical = "tilemaps/portable.aytilemap";
+    const std::string mapLogical = "tilemaps/portable.tlm";
     const auto map = manager.load<ITilemap>(mapLogical);
     CHECK_NOT_NULL(map.get());
     CHECK_INT_EQ(map ? map->getAtlasCount() : 0u, 1u);

@@ -1,4 +1,5 @@
 #include "AYResource/Converter/TilemapConverter.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/Converter/TextureConverter.h"
 #include "AYResource/LooseDependency.h"
 #include "AYResource/VirtualAssetPath.h"
@@ -91,18 +92,11 @@ std::string getFileName(const std::string& path) {
     return path.substr(pos + 1);
 }
 
-// "ground.aytilemap.json" -> "ground" (used when JSON omits "name").
 std::string tilemapStem(const std::string& fileName) {
-    std::string stem = fileName;
-    size_t dot = stem.find_last_of('.');
-    if (dot != std::string::npos) {
-        stem = stem.substr(0, dot);          // ground.aytilemap
-        dot = stem.find_last_of('.');
-        if (dot != std::string::npos) {
-            stem = stem.substr(0, dot);      // ground
-        }
-    }
-    return stem;
+    const auto match = ayt::asset_format::matchPath(fileName);
+    if (match && match->descriptor->id == ayt::asset_format::Id::TilemapSource)
+        return fileName.substr(0, fileName.size() - match->suffix.size());
+    return std::filesystem::path(fileName).stem().string();
 }
 
 std::optional<std::filesystem::path> resolveAtlasSourcePath(

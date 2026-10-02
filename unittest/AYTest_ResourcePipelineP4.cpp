@@ -59,7 +59,7 @@ TEST_CASE(cook_ship_and_load_from_pak_via_db)
     const std::string meshDir = kAssets + "/meshes";
     std::filesystem::create_directories(meshDir);
 
-    const std::string meshPath = meshDir + "/cube.aymesh";
+    const std::string meshPath = meshDir + "/cube.msh";
     {
         auto mesh = std::make_shared<Mesh>();
         mesh->createCube(1.0f);
@@ -85,7 +85,7 @@ TEST_CASE(cook_ship_and_load_from_pak_via_db)
     resetManager();
     CHECK(ResourceManager::instance().openDatabase(cooked.dbPath));
 
-    const std::string logical = ayt::io::path::normalize("meshes/cube.aymesh");
+    const std::string logical = ayt::io::path::normalize("meshes/cube.msh");
     auto loaded = ResourceManager::instance().load<IMesh>(logical);
     CHECK(loaded != nullptr);
     CHECK(loaded->getVertexCount() > 0u);

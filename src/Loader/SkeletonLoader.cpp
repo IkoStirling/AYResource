@@ -1,4 +1,5 @@
 #include "AYResource/Loader/SkeletonLoader.h"
+#include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/IResourceLoader.h"
 #include <cstring>
 
@@ -8,10 +9,7 @@ namespace ayt::resource
 SkeletonLoader::SkeletonLoader() = default;
 
 bool SkeletonLoader::canLoad(const std::string& path) const {
-    if (path.size() < 7) { // ".ayskel" = 7 chars
-        return false;
-    }
-    return path.compare(path.size() - 7, 7, EXTENSION) == 0;
+    return ayt::asset_format::matchesPath(path, ayt::asset_format::Id::Skeleton);
 }
 
 std::shared_ptr<IResource> SkeletonLoader::load(const std::string& path) {

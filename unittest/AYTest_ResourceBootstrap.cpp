@@ -13,6 +13,9 @@ TEST_CASE(initialize_loaders_registers_core_types)
     CHECK(ResourceRegistry::getTypeFromExtension(".aymesh") == "Mesh");
     CHECK(ResourceRegistry::getTypeFromExtension(".aymat") == "Material");
     CHECK(ResourceRegistry::getTypeFromExtension(".aytex") == "Texture");
+    CHECK(ResourceRegistry::getTypeFromExtension(".msh") == "Mesh");
+    CHECK(ResourceRegistry::getTypeFromExtension(".mat") == "Material");
+    CHECK(ResourceRegistry::getTypeFromExtension(".txr") == "Texture");
 
     auto meshLoader = ResourceRegistry::createLoader("Mesh");
     CHECK(meshLoader != nullptr);
