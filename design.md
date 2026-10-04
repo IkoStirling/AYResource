@@ -1,5 +1,20 @@
 # AYResource — Design (v2.1)
 
+## 2026-10-05 — ProjectBuild 默认 Phoskia 阶段
+
+验证：ProjectBuild默认无宏程序及纯helper闭包发布成功，破坏模块后不替换既有发布；
+Pak选择规划失败。完整Resource快组169用例/965断言、integration128选择/1714断言通过，
+后者12项外部FBXfixture未提供/未opt-in而跳过。深cwd写包失败修复为native长路径读写，
+AYShader额外覆盖最终包目录超过260字符的往返；不通过改短测试目录隐藏真实问题。
+
+staging Content 完成后、package manifest 与目录发布前执行 ProjectShaderProduction：
+校验代码产物相邻 Shaders 的每个 engine 包并重写受限包；对选中 raw/loose 源调用共享
+collectShaderBuildJobs，要求模块也在选中集合，默认无宏程序离线编译到相同目标的 project 包。
+结果 shaderPackages 进入原 manifest，production.policy 为运行时严格策略标记。
+编译/校验失败不触及既有发布目录；不用 ResourceManager 的旧 .shb loader，不新增资产格式。
+作者目标私有依赖 AYShader，运行时 Resource 不链接项目编译阶段；不支持跨目标 host 构建，
+所选 profile 的平台必须匹配配置。大小写扩展名按 AYAssetFormat 识别，不另维护后缀表。
+
 **Version:** 2.1.0
 **Date:** 2026-09-18
 

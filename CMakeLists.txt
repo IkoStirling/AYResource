@@ -37,11 +37,13 @@ set(AYRESOURCE_COOK_SOURCES
 )
 set(AYPROJECT_BUILD_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AYProjectBuild.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ProjectShaderProduction.cpp
 )
 
 # The runtime build keeps the converter data contract but excludes all
 # authoring implementations and heavy importer SDKs.
 list(REMOVE_ITEM SRC_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ProjectShaderProductionUnavailable.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/ParticleConverter.cpp
     ${AYRESOURCE_IMPORT_SOURCES}
     ${AYRESOURCE_COOK_SOURCES}
@@ -194,6 +196,29 @@ if(AY_BUILD_RESOURCE_AUTHORING)
             AYStorage
             AYIO
     )
+    if(TARGET AYShader)
+        target_link_libraries(AYProjectBuild PRIVATE AYShader)
+        target_compile_definitions(AYProjectBuild PRIVATE AY_RESOURCE_HAS_SHADER=1
+            AY_SHADER_SHADERC_HINT="${AY_SHADER_SHADERC_PATH}"
+            AY_SHADER_BGFX_COMMON_HINT="${AY_SHADER_BGFX_COMMON_DIR}"
+            AY_SHADER_BGFX_SRC_HINT="${AY_SHADER_BGFX_SRC_DIR}")
+        if(WIN32)
+            set(AY_PRODUCTION_SHADER_PLATFORM windows CACHE STRING "Offline shader platform")
+            set(AY_PRODUCTION_SHADER_PROFILE s_5_0 CACHE STRING "Offline shader profile")
+        elseif(APPLE)
+            set(AY_PRODUCTION_SHADER_PLATFORM osx CACHE STRING "Offline shader platform")
+            set(AY_PRODUCTION_SHADER_PROFILE metal CACHE STRING "Offline shader profile")
+        else()
+            set(AY_PRODUCTION_SHADER_PLATFORM linux CACHE STRING "Offline shader platform")
+            set(AY_PRODUCTION_SHADER_PROFILE spirv CACHE STRING "Offline shader profile")
+        endif()
+        target_compile_definitions(AYProjectBuild PRIVATE
+            AY_PRODUCTION_SHADER_PLATFORM="${AY_PRODUCTION_SHADER_PLATFORM}"
+            AY_PRODUCTION_SHADER_PROFILE="${AY_PRODUCTION_SHADER_PROFILE}")
+    else()
+        target_sources(AYProjectBuild PRIVATE src/ProjectShaderProductionUnavailable.cpp)
+        set_source_files_properties(src/ProjectShaderProduction.cpp PROPERTIES HEADER_FILE_ONLY TRUE)
+    endif()
 endif()
 
 if(BUILD_TESTING AND AY_BUILD_RESOURCE_AUTHORING)

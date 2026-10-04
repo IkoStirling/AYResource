@@ -188,6 +188,9 @@ struct ProjectBuildResult {
 /// both a package manifest and `.ayeditor/builds/last-success.json`, allowing
 /// Project Run to consume the exact artifact instead of guessing a build
 /// directory.
+/// Adjacent engine shader packages are verified/staged; selected raw/loose
+/// .phoskia programs and modules are compiled into a portable project package.
+/// Published shader policy disables runtime compilation even for Debug code.
 /// Windows publication/retirement/rollback retry short-lived directory
 /// contention with a 250 ms retry scheduling budget and at most 26 attempts
 /// per operation; in-flight filesystem calls cannot be interrupted by it.

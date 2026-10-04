@@ -1,5 +1,6 @@
 #include "AYResource/ProjectBuild.h"
 #include "ProjectPublishRetry.h"
+#include "ProjectShaderProduction.h"
 
 #include "AYResource/ImportJob.h"
 #include "AYResource/ResourceBootstrap.h"
@@ -1447,6 +1448,12 @@ ProjectBuildPlan ProjectBuildPlanner::create(
                            "Could not compute the content-addressed cook key.");
             }
         }
+        if(ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::PhoskiaShader)
+            && asset.transform!=ProjectAssetTransform::Exclude
+            && (asset.transform!=ProjectAssetTransform::Raw || asset.storage!=ProjectAssetStorage::Loose)) {
+            diagnostic(plan.diagnostics,ProjectBuildDiagnostic::Severity::Error,asset.logicalPath,
+                "Phoskia programs/modules require raw/loose publication for portable source lookup.");
+        }
         plan.assets.push_back(std::move(asset));
     }
 #if defined(AY_RESOURCE_HAS_PARTICLE)
@@ -1889,6 +1896,15 @@ ProjectBuildResult ProjectBuildExecutor::execute(
             result.error = "Could not stage the run working directory: "
                 + fileError.message();
             return result;
+        }
+    }
+    std::vector<std::string> shaderPackages;
+    if(!detail::stageProductionShaders(plan,builtArtifact,staging,contentRoot,shaderPackages,result.error)) return result;
+    manifest["shaderPackages"]=shaderPackages;
+    if(!shaderPackages.empty()) {
+        const std::string policy="AYPhoskiaProduction/1\n";
+        if(!ayt::io::File::atomicWrite((staging/"Shaders"/"production.policy").string(),policy.data(),policy.size())) {
+            result.error="Cannot write production shader policy";return result;
         }
     }
     const std::string encodedManifest = manifest.dump(2) + "\n";

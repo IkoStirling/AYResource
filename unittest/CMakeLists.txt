@@ -54,6 +54,10 @@ target_link_libraries(${MODULE_NAME} PRIVATE
     AYProjectBuild
     AYTest
 )
+if(TARGET AYShader)
+    target_link_libraries(${MODULE_NAME} PRIVATE AYShader)
+    target_compile_definitions(${MODULE_NAME} PRIVATE AY_RESOURCE_TEST_SHADER=1)
+endif()
 
 target_include_directories(${MODULE_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

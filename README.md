@@ -1,5 +1,14 @@
 # AYResource
 
+## 默认项目 shader 发布（2026-10-05）
+
+启用 AYShader 的作者工具下，ProjectBuild 默认校验并暂存代码产物旁的 engine shader 包，
+收集选中的 raw/loose `.phoskia` 程序和模块，离线生成 project 包；无需调用方新增构建步骤。
+纯 helper 模块不独立生成程序，缺失/排除模块、错误源、Pak/Cook 选择或不支持的跨目标均阻止发布，
+保留原发布目录。engine/project 包列入包清单，并生成 `Shaders/production.policy`，
+使发布 Debug 也不在启动时依赖 shaderc。源码仍 loose 以支持正常文件/模块解析。
+默认只生成无宏变体，附加宏需显式 shader 构建清单；无 AYShader 的作者构建明确拒绝该能力。
+
 AYResource 是资产注册、导入、加载、缓存、热重载与 Cook/Ship 管线模块，维护资源 GUID、虚拟路径和运行时资产接口。
 
 ## 角色资产规范

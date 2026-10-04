@@ -1,5 +1,11 @@
 #include "AYResource/ProjectBuild.h"
 #include "AYTest.h"
+#ifdef AY_RESOURCE_TEST_SHADER
+#include <AYShader/ShaderBuild.h>
+#include <AYShader/detail/PhoskiaSourceSnapshot.h>
+#include <AYShader/detail/ShaderRuntimeKey.h>
+#include <AYShader/Phoskia.h>
+#endif
 
 #include <nlohmann/json.hpp>
 
@@ -331,6 +337,43 @@ std::string scopedFnv(const char* prefix, const std::string& value)
 } // namespace
 
 TEST_SUITE(ProjectBuildTests)
+
+TEST_CASE(phoskia_default_project_publication_compiles_modules_and_preserves_old_output_on_failure)
+{
+#ifdef AY_RESOURCE_TEST_SHADER
+    ProjectBuildCleanup cleanup{"ayproject_phoskia_production"};
+    CHECK(writeText(cleanup.root/"BuildProfiles/test.bld",profileJson()));
+    const std::string source="include \"math.phoskia\";\nmaterial Probe { vertex { in p : position; return vec4(p,1.0) } fragment { return vec4(gain(0.25)) } }";
+    CHECK(writeText(cleanup.root/"Assets/Shaders/probe.phoskia",source));
+    CHECK(writeText(cleanup.root/"Assets/Shaders/math.phoskia","fn gain(v:float):float {return v*2.0;}"));
+    std::string error;
+    const auto profile=ProjectBuildProfile::load((cleanup.root/"BuildProfiles/test.bld").string(),&error);
+    const auto plan=ProjectBuildPlanner::create(profile,cleanup.root.string());
+    CHECK(plan.valid());
+    const auto built=ProjectBuildExecutor::execute(plan);
+    CHECK_MSG(built.ok,built.error.c_str());if(!built.ok)return;
+    const auto package=fs::path(built.outputDirectory)/"Shaders/windows-s_5_0/project";
+    ayt::shader::ShaderBuildReport report;
+    CHECK(ayt::shader::readShaderBuildPackage(package.string(),report));
+    CHECK(report.entries.size()==1);if(report.entries.size()!=1)return;
+    ayt::shader::phoskia::CompileOptions options;
+    options.sourcePath=(cleanup.root/"Assets/Shaders/probe.phoskia").string();
+    ayt::shader::phoskia::PhoskiaSourceSnapshot snapshot;std::vector<std::string> errors;
+    CHECK(ayt::shader::phoskia::detail::preparePhoskiaSource(source,options,snapshot,errors));
+    CHECK(report.entries[0].runtimeKey==ayt::shader::detail::shaderRuntimeKey("phoskia",snapshot.text,{},"windows","s_5_0"));
+    const auto manifest=fs::path(built.manifestPath);
+    std::ifstream input(manifest);const std::string previous{std::istreambuf_iterator<char>(input),{}};input.close();
+    CHECK(previous.find("Shaders/windows-s_5_0/project")!=std::string::npos);
+    CHECK(writeText(cleanup.root/"Assets/Shaders/math.phoskia","fn broken("));
+    const auto failed=ProjectBuildExecutor::execute(ProjectBuildPlanner::create(profile,cleanup.root.string()));
+    CHECK_FALSE(failed.ok);
+    std::ifstream preserved(manifest);CHECK(std::string(std::istreambuf_iterator<char>(preserved),{})==previous);
+    auto pak=profile;pak.content.defaultStorage=ProjectAssetStorage::Pak;
+    CHECK_FALSE(ProjectBuildPlanner::create(pak,cleanup.root.string()).valid());
+#else
+    SKIP_TEST("AYShader authoring is disabled");
+#endif
+}
 
 TEST_CASE(publish_retries_after_a_staged_child_file_is_released)
 {
