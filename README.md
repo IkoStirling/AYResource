@@ -35,3 +35,11 @@ AYResource 是资产注册、导入、加载、缓存、热重载与 Cook/Ship �
 资产格式、导入/Cook 和缓存契约见 [design.md](design.md)。
 
 测试筛选入口、fast/integration 分层及已知发布问题见[统一测试契约](../../AYDocs/testing.md)。
+
+## ProjectBuild 的 Logia import 闭包
+
+启用 AYScript 的作者构建自动解析所选 .logia 的 helper import，记录 Assets 相对的递归依赖。
+未匹配显式规则的脚本自动选择 raw/loose；显式 excluded、pak/cook 依赖会使计划失败。
+计划与执行均校验缺失、循环、根逃逸、helper 限制及数量/大小预算；执行时闭包变化要求重新计划。
+依赖写入计划 JSON、发布 manifest 和 resources.db，不包含作者绝对路径。语义/Actor schema 仍由脚本宿主校验。
+禁用 AYScript 的作者构建遇到需发布的 .logia 会明确报错。验证见 `ProjectLogiaTests`。

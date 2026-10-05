@@ -19,6 +19,7 @@ add_executable(${MODULE_NAME}
     AYTest_ResourcePipelineP5.cpp
     AYTest_ResourcePipelineP6.cpp
     AYTest_ProjectBuild.cpp
+    AYTest_ProjectLogia.cpp
     AYTest_ProjectPublishRetry.cpp
     AYTest_MaterialFile.cpp
     AYTest_AssetPath.cpp
@@ -78,7 +79,7 @@ ay_add_test_tiers(${MODULE_NAME} PREFIX resource TIMEOUT 180
     INTEGRATION_SUITES HotReloadWatcherTests ResourceManagerPhase2Tests
         ResourcePipelineP1Tests ResourcePipelineP2Tests ResourcePipelineP3Tests
         ResourcePipelineP4Tests ResourcePipelineP5Tests ResourcePipelineP6Tests
-        ProjectBuildTests FBXConverterTests FBXMaterialConverterTests UvContractTests
+        ProjectBuildTests ProjectLogiaTests FBXConverterTests FBXMaterialConverterTests UvContractTests
         FBXParserAnimationTests AnimationConverterTests TextureConverterTests
         TextureIntegrationTests TextureLoaderLooseTests MaterialConverterTests
         TilemapConverterTests UvContractCacheTests)

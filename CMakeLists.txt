@@ -38,6 +38,7 @@ set(AYRESOURCE_COOK_SOURCES
 set(AYPROJECT_BUILD_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AYProjectBuild.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ProjectShaderProduction.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ProjectLogiaContent.cpp
 )
 
 # The runtime build keeps the converter data contract but excludes all

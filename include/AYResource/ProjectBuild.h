@@ -119,6 +119,9 @@ struct ProjectBuildAsset {
     bool cookTextures = true;
     std::size_t matchedRule = static_cast<std::size_t>(-1);
     std::string cacheKey;
+    /// Portable transitive Logia source paths resolved by the planner. Excluded,
+    /// missing or non-loose imports are errors; execution rechecks this closure.
+    std::vector<std::string> scriptDependencies;
 };
 
 struct ProjectBuildPlan {
@@ -135,6 +138,8 @@ class ProjectBuildPlanner final {
 public:
     /// Particle-enabled authoring validates effect/scene references and hashes
     /// every referenced texture in the owning effect's cook identity.
+    /// Script-enabled authoring discovers Logia imports using the shared parser.
+    /// Unruled scripts default to raw/loose; explicit incompatible rules fail.
     static ProjectBuildPlan create(const ProjectBuildProfile& profile,
                                    const std::string& projectRoot);
 };

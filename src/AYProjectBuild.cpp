@@ -1,6 +1,7 @@
 #include "AYResource/ProjectBuild.h"
 #include "ProjectPublishRetry.h"
 #include "ProjectShaderProduction.h"
+#include "ProjectLogiaContent.h"
 
 #include "AYResource/ImportJob.h"
 #include "AYResource/ResourceBootstrap.h"
@@ -1332,6 +1333,7 @@ std::string ProjectBuildPlan::serialize(bool pretty) const
             {"storage", storageName(asset.storage)},
             {"chunk", asset.chunk},
             {"cacheKey", asset.cacheKey},
+            {"scriptDependencies", asset.scriptDependencies},
             {"matchedRule", asset.matchedRule == static_cast<std::size_t>(-1)
                 ? Json(nullptr) : Json(asset.matchedRule)},
         });
@@ -1415,6 +1417,12 @@ ProjectBuildPlan ProjectBuildPlanner::create(
             asset.matchedRule = index;
             break;
         }
+        if (fs::path(asset.logicalPath).extension() == ".logia"
+            && asset.matchedRule == static_cast<std::size_t>(-1)
+            && asset.transform != ProjectAssetTransform::Exclude) {
+            asset.transform = ProjectAssetTransform::Raw;
+            asset.storage = ProjectAssetStorage::Loose;
+        }
         if (asset.transform == ProjectAssetTransform::Auto) {
             asset.transform = isImportSupportedExtension(asset.sourcePath)
                 ? ProjectAssetTransform::Cook
@@ -1463,6 +1471,7 @@ ProjectBuildPlan ProjectBuildPlanner::create(
     validateStatsContent(plan,plan.diagnostics);
 #endif
     validateActorContent(plan, plan.diagnostics);
+    detail::discoverProjectLogia(plan);
     return plan;
 }
 
@@ -1482,13 +1491,14 @@ ProjectBuildResult ProjectBuildExecutor::execute(
         / plan.profile.content.assetRoot;
     std::vector<ProjectBuildDiagnostic> releaseDiagnostics;
     validateActorContent(plan, releaseDiagnostics);
+    detail::validateProjectLogia(plan, releaseDiagnostics);
     if (std::any_of(releaseDiagnostics.begin(), releaseDiagnostics.end(),
             [](const auto& item) {
                 return item.severity == ProjectBuildDiagnostic::Severity::Error;
             })) {
         result.diagnostics.insert(result.diagnostics.end(),
             releaseDiagnostics.begin(), releaseDiagnostics.end());
-        result.error = "Actor content validation rejected the project build.";
+        result.error = "Actor content or Logia import validation rejected the project build.";
         return result;
     }
 #if defined(AY_RESOURCE_HAS_PARTICLE)
@@ -1651,6 +1661,8 @@ ProjectBuildResult ProjectBuildExecutor::execute(
                 asset.storage, asset.chunk,
                 ResourceRegistry::getTypeFromPath(asset.logicalPath), {},
                 true, asset.logicalPath, {}});
+            for (const auto& dependency : asset.scriptDependencies)
+                staged.back().dependencies.push_back({asset.logicalPath, dependency});
             continue;
         }
 
@@ -1863,6 +1875,9 @@ ProjectBuildResult ProjectBuildExecutor::execute(
             {"type", type},
             {"hash", contentHash},
             {"cookKey", file.cacheKey},
+            {"scriptDependencies", [&] { std::vector<std::string> paths;
+                for (const auto& dep : file.dependencies) if (fs::path(dep.to).extension() == ".logia") paths.push_back(dep.to);
+                return paths; }()},
         });
     }
     for (auto& [chunk, writer] : writers) {

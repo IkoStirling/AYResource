@@ -1011,3 +1011,12 @@ unittest/
 选择这一边界的原因是：terrain/stamp 是生成 Tile ID 的编辑操作，文件夹/名称是资产
 组织信息，它们不影响运行；layer、visual、tint、shadow 则直接影响每帧绘制，必须进入
 运行时格式。v1/v2 资源在接口中自然表现为“一个可见层、无视觉目录、无语义阴影”。
+
+## ProjectBuild Logia 依赖发布（2026-10-06）
+
+AYProjectBuild 的可选作者依赖由 AYScript 配置阶段连接，避免 AYResource runtime 引入脚本依赖。
+ProjectLogiaContent 复用 Logia tokenizer/parser 与 expandLogiaModules，不复制语言规则；这里验证
+语法、helper-only import 和闭包安全，不假设各入口的 Actor schema/provider，因此不替代宿主语义编译。
+计划收集并排序 transitive scriptDependencies；执行在创建 staging 前重读并比较，新增/删除 import
+要求重新计划，失败保留已有发布目录。未匹配规则的 .logia 强制 raw/loose，显式不兼容规则是硬错误。
+发布清单列出便携依赖并写 DB dependency edge。ProjectLogiaTests 移走作者 Assets 后从 Content 运行递归 import。
