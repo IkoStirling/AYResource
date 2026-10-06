@@ -43,3 +43,4 @@ AYResource 是资产注册、导入、加载、缓存、热重载与 Cook/Ship �
 计划与执行均校验缺失、循环、根逃逸、helper 限制及数量/大小预算；执行时闭包变化要求重新计划。
 依赖写入计划 JSON、发布 manifest 和 resources.db，不包含作者绝对路径。语义/Actor schema 仍由脚本宿主校验。
 禁用 AYScript 的作者构建遇到需发布的 .logia 会明确报错。验证见 `ProjectLogiaTests`。
+该套件也验证发布的 import helper 在移走作者 Assets 后接收 task 参数、等待 typed EventBus payload 并更新 Actor。

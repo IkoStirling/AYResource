@@ -1020,3 +1020,5 @@ ProjectLogiaContent 复用 Logia tokenizer/parser 与 expandLogiaModules，不�
 计划收集并排序 transitive scriptDependencies；执行在创建 staging 前重读并比较，新增/删除 import
 要求重新计划，失败保留已有发布目录。未匹配规则的 .logia 强制 raw/loose，显式不兼容规则是硬错误。
 发布清单列出便携依赖并写 DB dependency edge。ProjectLogiaTests 移走作者 Assets 后从 Content 运行递归 import。
+2026-10-07 补充异步发布验收：Content 中的 import helper 接收已检查 task 参数，并在后续 tick 消费
+task_complete 的 int/bool payload；作者 Assets 移走后流程仍完整运行，不引入新的发布格式。
