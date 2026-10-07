@@ -54,3 +54,9 @@ Checked 脚本以 `asset sound:string="audio/start.ayaudio"` 声明 immutable �
 缺失资源、指纹不符、路径越界、清单冲突拒绝发布/加载。包只复制资源，不替代 cook；目标 Host 仍须有对应 loader。
 ProjectBuild 的 resourceDependencies 独立记录资源边，使用项目 transform/storage 规则，排除/缺失引用为错误。
 执行前重新检查依赖集合，变更须重新规划；失败不替换上一份输出。示例：[resource_refs.logia](../AYScript/examples/resource_refs.logia)。
+
+Logia ProjectBuild closure validation accepts checked reusable behaviors with
+instance fields/signals/lifecycle hooks; shared var exports remain invalid. Sources
+stay raw/loose and dependency sets are rechecked before publishing. The
+ProjectLogiaTests stateful_behavior_hooks_survive_project_publication case runs
+the published behavior without its original authoring paths.

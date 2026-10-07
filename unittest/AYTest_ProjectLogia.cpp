@@ -167,12 +167,12 @@ TEST_CASE(excluded_or_packed_imports_are_rejected)
     files.profile.content.rules[0].storage = ProjectAssetStorage::Pak;
     CHECK(!files.plan().valid());
 }
-TEST_CASE(missing_cycles_escape_and_stateful_modules_are_rejected)
+TEST_CASE(missing_cycles_escape_and_shared_modules_are_rejected)
 {
     Fixture files;
     files.put("modules/b.logia", "script B { import \"a.logia\" }");
     CHECK(!files.plan().valid());
-    files.put("modules/b.logia", "script B { state v:int=1 }");
+    files.put("modules/b.logia", "script B { var v:int=1 }");
     CHECK(!files.plan().valid());
     files.put("modules/b.logia", "script B { import \"../../outside.logia\" }");
     CHECK(!files.plan().valid());
@@ -194,6 +194,24 @@ TEST_CASE(execution_rechecks_changed_imports_and_preserves_previous_output)
     auto replanned = files.plan();
     CHECK(replanned.valid());
     CHECK(ProjectBuildExecutor::execute(replanned).ok);
+}
+TEST_CASE(stateful_behavior_hooks_survive_project_publication)
+{
+    Fixture files;
+    files.put("modules/b.logia",R"(script B { persist count:int=3
+        function nested():int { return count }
+        on_start(){ count+=1 }
+    })");
+    auto plan=files.plan(); CHECK(plan.valid()); auto built=ProjectBuildExecutor::execute(plan);CHECK(built.ok);
+    if(!built.ok)return;
+    auto content=fs::path(built.outputDirectory)/"Content"; auto main=content/"main.logia";
+    std::ifstream sourceFile(main);std::string source((std::istreambuf_iterator<char>(sourceFile)),{});
+    auto ctx=ayt::script::logia::checkedLogiaHostContext(ayt::script::logia::actorLogiaHostContext());
+    ctx.actorProperties={{"hp","float"}};ctx.sourcePath=main.generic_string();ctx.assetRoot=content.generic_string();
+    ayt::script::LogiaRuntimeBridge bridge;std::vector<ayt::script::logia::CompilerError> errors;
+    CHECK(bridge.loadScript("Main",source,ctx,errors));ayt::entity::ActorScriptComponent actor;actor.properties["hp"]=0.0;
+    CHECK(bridge.callActorLifecycle("Main","on_start",actor));
+    CHECK_FLOAT_EQ(std::get<double>(actor.properties["hp"]),4.0,0.001);bridge.releaseInstance("Main",&actor);
 }
 TEST_SUITE_END
 #endif

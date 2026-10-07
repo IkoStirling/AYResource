@@ -1022,3 +1022,8 @@ ProjectLogiaContent 复用 Logia tokenizer/parser 与 expandLogiaModules，不�
 发布清单列出便携依赖并写 DB dependency edge。ProjectLogiaTests 移走作者 Assets 后从 Content 运行递归 import。
 2026-10-07 补充异步发布验收：Content 中的 import helper 接收已检查 task 参数，并在后续 tick 消费
 task_complete 的 int/bool payload；作者 Assets 移走后流程仍完整运行，不引入新的发布格式。
+
+Logia behavior composition is performed by AYScript module expansion. ProjectBuild
+uses that bounded closure for source edges and publication, allowing instance
+state/persist fields and hooks but retaining shared-export/path/cycle rejection.
+Host-specific property/provider semantics are still checked by runtime loading.
