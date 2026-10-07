@@ -44,3 +44,13 @@ AYResource 是资产注册、导入、加载、缓存、热重载与 Cook/Ship �
 依赖写入计划 JSON、发布 manifest 和 resources.db，不包含作者绝对路径。语义/Actor schema 仍由脚本宿主校验。
 禁用 AYScript 的作者构建遇到需发布的 .logia 会明确报错。验证见 `ProjectLogiaTests`。
 该套件也验证发布的 import helper 在移走作者 Assets 后接收 task 参数、等待 typed EventBus payload 并更新 Actor。
+
+## Logia resource dependencies
+
+Checked 脚本以 `asset sound:string="audio/start.ayaudio"` 声明 immutable 的 asset-root-relative 路径。
+编译器/CLI analysis 记录 resourceDependencies；import 模块也可导出 asset 常量。
+普通字符串保持动态语义，不自动收集。运行时允许 DB/pak 虚拟资源；路径以 AYIO PathSafety 检查根边界。
+脚本包 v2 原样复制声明资源并记录内容指纹，读取器兼容无资源的 v1；单资源 64 MiB，总资源 256 MiB，最多 128 项。
+缺失资源、指纹不符、路径越界、清单冲突拒绝发布/加载。包只复制资源，不替代 cook；目标 Host 仍须有对应 loader。
+ProjectBuild 的 resourceDependencies 独立记录资源边，使用项目 transform/storage 规则，排除/缺失引用为错误。
+执行前重新检查依赖集合，变更须重新规划；失败不替换上一份输出。示例：[resource_refs.logia](../AYScript/examples/resource_refs.logia)。

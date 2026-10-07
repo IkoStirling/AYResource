@@ -1222,6 +1222,7 @@ struct StagedFile {
     bool raw = false;
     std::string source;
     std::string cacheKey;
+    std::vector<std::string> declaredResources;
 };
 
 bool loadCachedConversion(const fs::path& objectRoot,
@@ -1334,6 +1335,7 @@ std::string ProjectBuildPlan::serialize(bool pretty) const
             {"chunk", asset.chunk},
             {"cacheKey", asset.cacheKey},
             {"scriptDependencies", asset.scriptDependencies},
+            {"resourceDependencies", asset.resourceDependencies},
             {"matchedRule", asset.matchedRule == static_cast<std::size_t>(-1)
                 ? Json(nullptr) : Json(asset.matchedRule)},
         });
@@ -1663,6 +1665,9 @@ ProjectBuildResult ProjectBuildExecutor::execute(
                 true, asset.logicalPath, {}});
             for (const auto& dependency : asset.scriptDependencies)
                 staged.back().dependencies.push_back({asset.logicalPath, dependency});
+            for (const auto& dependency : asset.resourceDependencies)
+                staged.back().dependencies.push_back({asset.logicalPath, dependency});
+            staged.back().declaredResources=asset.resourceDependencies;
             continue;
         }
 
@@ -1875,6 +1880,7 @@ ProjectBuildResult ProjectBuildExecutor::execute(
             {"type", type},
             {"hash", contentHash},
             {"cookKey", file.cacheKey},
+            {"resourceDependencies", file.declaredResources},
             {"scriptDependencies", [&] { std::vector<std::string> paths;
                 for (const auto& dep : file.dependencies) if (fs::path(dep.to).extension() == ".logia") paths.push_back(dep.to);
                 return paths; }()},

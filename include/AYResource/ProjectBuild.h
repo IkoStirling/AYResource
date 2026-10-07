@@ -122,6 +122,9 @@ struct ProjectBuildAsset {
     /// Portable transitive Logia source paths resolved by the planner. Excluded,
     /// missing or non-loose imports are errors; execution rechecks this closure.
     std::vector<std::string> scriptDependencies;
+    /// Explicit asset-root-relative resources from the transitive Logia modules.
+    /// Transform/storage follow normal project rules; excluded/missing references fail.
+    std::vector<std::string> resourceDependencies;
 };
 
 struct ProjectBuildPlan {

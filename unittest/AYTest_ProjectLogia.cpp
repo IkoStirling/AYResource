@@ -51,6 +51,44 @@ struct Fixture
 };
 } // namespace
 TEST_SUITE(ProjectLogiaTests)
+TEST_CASE(explicit_resources_from_modules_are_published_and_recorded_as_dependency_edges)
+{
+    Fixture files;
+    files.put("main.logia",R"(script Main { import "modules/a.logia"
+        on_start(){log.info(resource_path())}
+    })");
+    files.put("modules/a.logia",R"(script A {
+        asset message:string="data/message.bin"
+        function resource_path():string{return message}
+    })");
+    files.put("data/message.bin","portable-resource");
+    auto plan=files.plan();CHECK(plan.valid());
+    auto main=std::find_if(plan.assets.begin(),plan.assets.end(),[](const auto& a){return a.logicalPath=="main.logia";});
+    CHECK(main!=plan.assets.end());if(main==plan.assets.end())return;
+    CHECK(main->resourceDependencies==std::vector<std::string>({"data/message.bin"}));
+    CHECK(plan.serialize().find("resourceDependencies")!=std::string::npos);
+    auto built=ProjectBuildExecutor::execute(plan);CHECK(built.ok);if(!built.ok)return;
+    CHECK(fs::is_regular_file(fs::path(built.outputDirectory)/"Content/data/message.bin"));
+    std::ifstream manifest(fs::path(built.outputDirectory)/"build-manifest.json");
+    std::string text((std::istreambuf_iterator<char>(manifest)),{});
+    CHECK(text.find("resourceDependencies")!=std::string::npos);
+    files.profile.content.rules.push_back({"data/**",ProjectAssetTransform::Exclude,ProjectAssetStorage::Loose});
+    CHECK(!files.plan().valid());
+}
+TEST_CASE(changed_or_missing_resource_declarations_invalidate_publication_without_replacing_output)
+{
+    Fixture files;
+    files.put("main.logia",R"(script Main {asset data:string="first.bin" on_start(){log.info(data)}})");
+    files.put("first.bin","first");
+    auto plan=files.plan();CHECK(plan.valid());CHECK(ProjectBuildExecutor::execute(plan).ok);
+    files.put("main.logia",R"(script Main {asset data:string="second.bin" on_start(){log.info(data)}})");
+    files.put("second.bin","second");
+    CHECK(!ProjectBuildExecutor::execute(plan).ok);
+    CHECK(fs::is_regular_file(files.root/"out/game/Content/first.bin"));
+    auto next=files.plan();CHECK(next.valid());CHECK(ProjectBuildExecutor::execute(next).ok);
+    fs::remove(files.root/"Assets/second.bin");
+    CHECK(!files.plan().valid());
+}
 TEST_CASE(import_closure_is_portable_and_published_without_author_sources)
 {
     Fixture files;
