@@ -20,6 +20,11 @@
 #if defined(AY_RESOURCE_HAS_STATS)
 #include <AYStats/RecipeAsset.h>
 #endif
+#if defined(AY_RESOURCE_HAS_DET_LEVEL)
+#include <AYEntity/DeterministicLevelCooked2D.h>
+#include <fstream>
+#include <vector>
+#endif
 
 namespace ayt::resource
 {
@@ -47,6 +52,25 @@ std::string makeLogicalPath(const fs::path& root, const fs::path& file)
     }
     return toForwardSlashes(rel.generic_string());
 }
+
+#if defined(AY_RESOURCE_HAS_DET_LEVEL)
+bool validateDetLevelCookedFile(const fs::path& path,std::string& error) {
+    std::error_code ec;const auto status=fs::symlink_status(path,ec);
+    if(ec || !fs::is_regular_file(status)) {error="Cooked level must be an ordinary file";return false;}
+    const auto size=fs::file_size(path,ec);
+    if(ec || size<entity::kDetLevelCooked2DHeaderBytes || size>entity::kDetLevelCooked2DMaxBytes) {
+        error="Cooked level exceeds the bounded envelope";return false;
+    }
+    std::ifstream stream(path,std::ios::binary);
+    if(!stream) {error="Cannot open cooked level";return false;}
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+    stream.read(reinterpret_cast<char*>(bytes.data()),static_cast<std::streamsize>(bytes.size()));
+    if(stream.gcount()!=static_cast<std::streamsize>(bytes.size()) || stream.peek()!=std::char_traits<char>::eof() || stream.bad()) {
+        error="Cooked level changed size or could not be read completely";return false;
+    }
+    entity::DetLevel2D level;return entity::decodeDetLevelCooked2D(bytes,level,error);
+}
+#endif
 
 bool isCookableAsset(const std::string& path)
 {
@@ -179,6 +203,27 @@ CookShipResult cookShipPackage(const CookShipOptions& options)
     if(statsScanError) {result.error="Stats input scan failed: "+statsScanError.message();return result;}
 #endif
 
+#if defined(AY_RESOURCE_HAS_DET_LEVEL)
+    // Reject damaged final assets before replacing an existing package/database.
+    auto validateLevel=[&](const fs::directory_entry& entry) {
+        if(!asset_format::matchesPath(entry.path().string(),asset_format::Id::DeterministicLevelCooked))return true;
+        if(ResourceRegistry::getTypeFromPath(entry.path().string())!="DeterministicLevel2D") {
+            result.error="Cooked level suffix belongs to a different resource type";return false;
+        }
+        std::string error;
+        if(validateDetLevelCookedFile(entry.path(),error))return true;
+        result.error="Invalid cooked deterministic level: "+entry.path().string()+": "+error;return false;
+    };
+    std::error_code levelScanError;
+    if(options.recursive) {
+        fs::recursive_directory_iterator it(root,levelScanError),end;
+        while(!levelScanError && it!=end) {if(!validateLevel(*it))return result;it.increment(levelScanError);}
+    } else {
+        fs::directory_iterator it(root,levelScanError),end;
+        while(!levelScanError && it!=end) {if(!validateLevel(*it))return result;it.increment(levelScanError);}
+    }
+    if(levelScanError) {result.error="Level input scan failed: "+levelScanError.message();return result;}
+#endif
     std::error_code ec;
     fs::create_directories(options.outputDir, ec);
     if (ec) {

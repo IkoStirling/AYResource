@@ -60,3 +60,34 @@ instance fields/signals/lifecycle hooks; shared var exports remain invalid. Sour
 stay raw/loose and dependency sets are rechecked before publishing. The
 ProjectLogiaTests stateful_behavior_hooks_survive_project_publication case runs
 the published behavior without its original authoring paths.
+
+## Optional deterministic level content
+
+`AY_ENTITY_LEVEL_RESOURCES=ON` adds the AYEntity-owned adapter and offline converter.
+Runtime Resource Core receives `.dlc` packaging metadata only and does not link a
+Session/kernel. The separate `AYEntity::DeterministicLevelResources` target loads
+immutable validated initial-level snapshots through the existing ResourceManager,
+including Pak bytes. Startup explicitly calls `initializeLoaders`, then
+`registerDetLevelResources2D` before concurrent loads; metadata registration alone
+does not provide that loader. Level acquisition/configuration stays outside Sim.
+
+With resource authoring enabled, `.dlt` imports produce one `.dlc` preserving its
+source-root logical subdirectory. Single imports revalidate complete content instead
+of using timestamp sidecars. ProjectBuild retains its SHA content-addressed cache,
+but also validates the sole output/type/importer contract and exact current source
+canonical content before publication. Changed plans, damaged or valid-but-different
+cached levels are refused. CookShip validates final `.dlc` before replacing its
+previous package/database; keep source/cooked trees quiescent during publication.
+Raw `.dlt` is authoring and is not accepted as a shipped runtime resource.
+
+Build/use instructions and runnable ResourceManager example are in
+[AYEntity's level-resource example](../AYEntity/examples/detlevel-resource/README.md).
+This opt-in does not change ordinary resource types, install a Session/World/Scene,
+or hot-reload running deterministic authority.
+
+Necessary local Windows Release integration is passed: three resource paths and
+the affected bootstrap, existing mesh Pak, timestamp sidecar, raw storage and
+Audio SHA-cache cases. Physical extended paths stay at filesystem boundaries;
+the public importer output directory remains its original logical spelling.
+The new level cache gate retains a302-character object and checks replacement
+and reuse without shortening its path. Native final acceptance is deferred.

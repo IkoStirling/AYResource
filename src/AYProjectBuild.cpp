@@ -22,6 +22,9 @@
 #if defined(AY_RESOURCE_HAS_STATS)
 #include <AYStats/RecipeAsset.h>
 #endif
+#if defined(AY_RESOURCE_HAS_DET_LEVEL)
+#include <AYEntity/DeterministicLevelCooked2D.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -52,6 +55,22 @@ namespace fs = std::filesystem;
 using Json = nlohmann::json;
 
 constexpr const char* kPackageManifest = "build-manifest.json";
+
+fs::path nativeFilesystemPath(const fs::path& path)
+{
+#if defined(_WIN32)
+    // Only physical I/O uses this spelling. Keep project-relative names, cache
+    // keys, containment preflight and published identities in their original form.
+    // Cache hash components can exceed MAX_PATH before atomicWrite is reached.
+    const auto native = fs::absolute(path).lexically_normal().make_preferred().native();
+    if (native.rfind(L"\\\\?\\", 0) == 0) return fs::path(native);
+    if (native.rfind(L"\\\\", 0) == 0)
+        return fs::path(L"\\\\?\\UNC\\" + native.substr(2));
+    return fs::path(L"\\\\?\\" + native);
+#else
+    return path;
+#endif
+}
 
 std::string portable(fs::path value)
 {
@@ -787,6 +806,10 @@ std::string cacheDiscriminator(const ProjectBuildProfile& profile,
     if(ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::StatsSource))
         value["statsImporterContract"]="stats-recipe-asset-v1";
 #endif
+#if defined(AY_RESOURCE_HAS_DET_LEVEL)
+    if(asset_format::matchesPath(asset.sourcePath,asset_format::Id::DeterministicLevelSource))
+        value["detLevelImporterContract"]="deterministic-level-cooked-v1";
+#endif
     return value.dump();
 }
 
@@ -800,6 +823,56 @@ std::string computeCacheKey(const ProjectBuildProfile& profile,
     return hashFiles(closure,
                      cacheDiscriminator(profile, asset));
 }
+
+#if defined(AY_RESOURCE_HAS_DET_LEVEL)
+bool validateDetLevelCookedFile(const fs::path& path,std::string& error,entity::DetLevel2D* output=nullptr) {
+    std::error_code ec;
+    const auto status=fs::symlink_status(path,ec);
+    if(ec || !fs::is_regular_file(status)) {error="Cooked level must be an ordinary file";return false;}
+    const auto size=fs::file_size(path,ec);
+    if(ec || size<entity::kDetLevelCooked2DHeaderBytes || size>entity::kDetLevelCooked2DMaxBytes) {
+        error="Cooked level exceeds the bounded envelope";return false;
+    }
+    std::ifstream stream(path,std::ios::binary);
+    if(!stream) {error="Cannot open cooked level";return false;}
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+    stream.read(reinterpret_cast<char*>(bytes.data()),static_cast<std::streamsize>(bytes.size()));
+    if(stream.gcount()!=static_cast<std::streamsize>(bytes.size()) || stream.peek()!=std::char_traits<char>::eof() || stream.bad()) {
+        error="Cooked level changed size or could not be read completely";return false;
+    }
+    entity::DetLevel2D level;
+    if(!entity::decodeDetLevelCooked2D(bytes,level,error))return false;
+    if(output)*output=std::move(level);return true;
+}
+#endif
+
+#if defined(AY_RESOURCE_HAS_DET_LEVEL)
+void validateDetLevelContent(const ProjectBuildPlan& plan,
+                            std::vector<ProjectBuildDiagnostic>& diagnostics) {
+    for(const auto& asset:plan.assets) {
+        if(asset.transform==ProjectAssetTransform::Exclude)continue;
+        const auto source=asset_format::matchesPath(asset.sourcePath,asset_format::Id::DeterministicLevelSource);
+        const auto cooked=asset_format::matchesPath(asset.sourcePath,asset_format::Id::DeterministicLevelCooked);
+        if(!source && !cooked)continue;
+        std::string error;
+        try {
+            if(source) {
+                entity::DetLevel2D level;
+                std::error_code ec;
+                if(!fs::is_regular_file(fs::symlink_status(asset.sourcePath,ec)) || ec)
+                    error="Deterministic level source must be an ordinary file";
+                else if(asset.transform!=ProjectAssetTransform::Cook)
+                    error="Deterministic level authoring requires Cook to .dlc";
+                else if(entity::loadDetLevel2D(asset.sourcePath,level,error))
+                    (void)entity::encodeDetLevelCooked2D(level);
+            } else {
+                (void)validateDetLevelCookedFile(asset.sourcePath,error);
+            }
+        } catch(const std::exception& exception) {error=exception.what();}
+        if(!error.empty())diagnostic(diagnostics,ProjectBuildDiagnostic::Severity::Error,asset.logicalPath,error);
+    }
+}
+#endif
 
 #if defined(AY_RESOURCE_HAS_STATS)
 void validateStatsContent(const ProjectBuildPlan& plan,
@@ -1145,13 +1218,15 @@ bool copyFile(const fs::path& source, const fs::path& destination,
               std::string& error)
 {
     std::error_code fileError;
-    fs::create_directories(destination.parent_path(), fileError);
+    const auto nativeSource = nativeFilesystemPath(source);
+    const auto nativeDestination = nativeFilesystemPath(destination);
+    fs::create_directories(nativeDestination.parent_path(), fileError);
     if (fileError) {
         error = "Could not create staging directory: " + fileError.message();
         return false;
     }
-    fs::copy_file(source, destination, fs::copy_options::overwrite_existing,
-                  fileError);
+    fs::copy_file(nativeSource, nativeDestination,
+                  fs::copy_options::overwrite_existing, fileError);
     if (fileError) {
         error = "Could not stage '" + source.string() + "': "
             + fileError.message();
@@ -1239,7 +1314,7 @@ bool loadCachedConversion(const fs::path& objectRoot,
     }
     if (conversion.resources.empty()) return false;
     for (const auto& resource : conversion.resources) {
-        if (!fs::is_regular_file(objectRoot / "files" / resource.path)) {
+        if (!fs::is_regular_file(nativeFilesystemPath(objectRoot / "files" / resource.path))) {
             return false;
         }
     }
@@ -1472,6 +1547,9 @@ ProjectBuildPlan ProjectBuildPlanner::create(
 #if defined(AY_RESOURCE_HAS_STATS)
     validateStatsContent(plan,plan.diagnostics);
 #endif
+#if defined(AY_RESOURCE_HAS_DET_LEVEL)
+    validateDetLevelContent(plan,plan.diagnostics);
+#endif
     validateActorContent(plan, plan.diagnostics);
     detail::discoverProjectLogia(plan);
     return plan;
@@ -1535,6 +1613,22 @@ ProjectBuildResult ProjectBuildExecutor::execute(
            && asset.cacheKey!=computeCacheKey(plan.profile,asset)) {
             result.error="Stats inputs changed after planning; create a fresh build plan.";
             return result;
+        }
+    }
+#endif
+#if defined(AY_RESOURCE_HAS_DET_LEVEL)
+    validateDetLevelContent(plan,releaseDiagnostics);
+    if(std::any_of(releaseDiagnostics.begin(),releaseDiagnostics.end(),[](const auto& item) {
+        return item.severity==ProjectBuildDiagnostic::Severity::Error;
+    })) {
+        result.diagnostics.insert(result.diagnostics.end(),releaseDiagnostics.begin(),releaseDiagnostics.end());
+        result.error="Deterministic level content validation rejected the project build.";return result;
+    }
+    for(const auto& asset:plan.assets) {
+        if(asset.transform==ProjectAssetTransform::Cook
+           && asset_format::matchesPath(asset.sourcePath,asset_format::Id::DeterministicLevelSource)
+           && asset.cacheKey!=computeCacheKey(plan.profile,asset)) {
+            result.error="Deterministic level inputs changed after planning; create a fresh build plan.";return result;
         }
     }
 #endif
@@ -1679,8 +1773,11 @@ ProjectBuildResult ProjectBuildExecutor::execute(
                 "can be published transactionally.";
             return result;
         }
-        const fs::path objectRoot = cacheRoot / "objects"
-            / asset.cacheKey.substr(0, 2) / asset.cacheKey;
+        // Carry one native physical spelling through cache probe, metadata
+        // reads, replacement/rename, hashing and Pak reads. Importer-facing
+        // directory strings retain their existing ordinary-path contract.
+        const fs::path objectRoot = nativeFilesystemPath(cacheRoot / "objects"
+            / asset.cacheKey.substr(0, 2) / asset.cacheKey);
         ConversionResult conversion;
         const bool cacheHit = policy != ProjectCookPolicy::Force
             && loadCachedConversion(objectRoot, conversion);
@@ -1693,8 +1790,9 @@ ProjectBuildResult ProjectBuildExecutor::execute(
                     + "' while policy is " + policyName(policy) + ".";
                 return result;
             }
-            const fs::path temporary = cacheRoot / "staging"
+            const fs::path temporaryPath = cacheRoot / "staging"
                 / (asset.cacheKey + ".tmp");
+            const fs::path temporary = nativeFilesystemPath(temporaryPath);
             if (fs::exists(temporary)) fs::remove_all(temporary, fileError);
             fileError.clear();
             fs::create_directories(temporary / "files", fileError);
@@ -1705,7 +1803,10 @@ ProjectBuildResult ProjectBuildExecutor::execute(
             }
             ImportOptions import;
             import.sourcePath = asset.sourcePath;
-            import.outputDir = (temporary / "files").string();
+            // Existing converters append portable separators to this string;
+            // do not expose Windows extended spelling through that interface.
+            // The level converter reacquires native paths at each physical access.
+            import.outputDir = (temporaryPath / "files").string();
             import.force = true;
             import.requireCharacterAssets = false;
             import.cookTextures = asset.cookTextures;
@@ -1723,6 +1824,18 @@ ProjectBuildResult ProjectBuildExecutor::execute(
                 return result;
             }
         }
+#if defined(AY_RESOURCE_HAS_DET_LEVEL)
+        if(asset_format::matchesPath(asset.sourcePath,asset_format::Id::DeterministicLevelSource)) {
+            auto expected=fs::path(asset.logicalPath);
+            expected.replace_extension(asset_format::suffix(asset_format::Id::DeterministicLevelCooked));
+            if(conversion.importerContractTag!="deterministic-level-cooked-v1"
+               || conversion.resources.size()!=1 || !conversion.dependencies.empty()
+               || conversion.resources.front().type!="DeterministicLevel2D"
+               || conversion.resources.front().path!=expected.generic_string()) {
+                result.error="Invalid deterministic level cached conversion identity: "+asset.logicalPath;return result;
+            }
+        }
+#endif
         for (const auto& resource : conversion.resources) {
             if (!portableRelative(resource.path)) {
                 result.error = "Cooker produced a non-portable output path for '"
@@ -1730,7 +1843,25 @@ ProjectBuildResult ProjectBuildExecutor::execute(
                 return result;
             }
             StagedFile outputFile;
-            outputFile.diskPath = objectRoot / "files" / resource.path;
+            outputFile.diskPath = nativeFilesystemPath(objectRoot / "files" / resource.path);
+#if defined(AY_RESOURCE_HAS_DET_LEVEL)
+            if(resource.type=="DeterministicLevel2D" || asset_format::matchesPath(resource.path,asset_format::Id::DeterministicLevelCooked)) {
+                std::string error;entity::DetLevel2D cachedLevel;
+                if(resource.type!="DeterministicLevel2D"
+                   || !asset_format::isCanonicalPath(resource.path,asset_format::Id::DeterministicLevelCooked)
+                   || !validateDetLevelCookedFile(outputFile.diskPath,error,&cachedLevel)) {
+                    result.error="Invalid cooked deterministic level cache output: "+resource.path+": "+error;return result;
+                }
+                if(asset_format::matchesPath(asset.sourcePath,asset_format::Id::DeterministicLevelSource)) {
+                    entity::DetLevel2D sourceLevel;
+                    if(!entity::loadDetLevel2D(asset.sourcePath,sourceLevel,error)
+                       || asset.cacheKey!=computeCacheKey(plan.profile,asset)
+                       || entity::encodeDetLevel2D(sourceLevel)!=entity::encodeDetLevel2D(cachedLevel)) {
+                        result.error="Cooked deterministic level cache/source identity mismatch: "+asset.logicalPath+": "+error;return result;
+                    }
+                }
+            }
+#endif
             outputFile.logicalPath = portable(resource.path);
             outputFile.storage = asset.storage;
             outputFile.chunk = asset.chunk;

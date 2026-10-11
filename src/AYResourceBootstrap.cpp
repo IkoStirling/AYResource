@@ -87,6 +87,12 @@ bool initializeLoaders()
         for (const auto alias : ayt::asset_format::describe(Id::StatsRecipes).readAliases)
             ResourceRegistry::registerExtension(std::string(alias), "StatsRecipes");
 #endif
+#if defined(AY_RESOURCE_HAS_DET_LEVEL)
+        // Packaging metadata only; the optional AYEntity loader is explicitly registered by the host.
+        const auto levelSuffix=std::string(ayt::asset_format::suffix(Id::DeterministicLevelCooked));
+        if(ResourceRegistry::getTypeFromExtension(levelSuffix).empty())
+            ResourceRegistry::registerExtension(levelSuffix, "DeterministicLevel2D");
+#endif
 #if defined(AY_TEXTURE_LOOSE_FORMATS)
         // Dev/Editor: same Texture loader also owns loose authoring formats
         // (dev raw-reference mode — ImportOptions.cookTextures=false copies

@@ -1027,3 +1027,36 @@ Logia behavior composition is performed by AYScript module expansion. ProjectBui
 uses that bounded closure for source edges and publication, allowing instance
 state/persist fields and hooks but retaining shared-export/path/cycle rejection.
 Host-specific property/provider semantics are still checked by runtime loading.
+## Optional deterministic levels (Stage45)
+
+The AYEntity-owned resource target depends on Resource+DeterminismKernel; Resource Core
+has metadata-only `AY_RESOURCE_HAS_DET_LEVEL` and retains its dependency boundary.
+Authoring Import/ProjectBuild/Cook targets alone gain the kernel when the opt-in is on.
+The converter implementation is explicitly compiled into Import, never runtime Core.
+The default off configuration and all pre-existing Id numeric values are preserved.
+
+`.dlt` is bounded source text; `.dlc` carries AYDLC001 canonical validated Level text.
+The optional loader publishes immutable shared snapshots only after whole-buffer
+validation. Failure retains the previous snapshot; an externally retained snapshot
+outlives resource unload. Registration is quiescent, explicit and idempotent for the
+same type, and rejects suffix/type conflicts. Async loader is synchronous completion
+under the existing loader interface, not an added concurrent reload guarantee.
+
+Converter output is root-relative, canonical `.dlc`, typeDeterministicLevel2D and one
+resource with no dependencies. Its contract tag enters the Project SHA key. Single
+imports skip timestamp caches only for `.dlt`; other importer behavior is unchanged.
+Before staging Project output, contract/type/path/count/dependencies are checked and
+the complete decoded cached canonical Level is compared to the current source after
+recomputing its plan key. A valid checksum alone is insufficient cache identity.
+Source mutation after plan and invalid Raw/authoring publication fail before replacement.
+CookShip bounds and semantically validates each final `.dlc` before opening replacement
+Pak/database outputs. FNV is damage detection, not authentication or Session compatibility.
+
+Windows cache filesystem operations use native extended paths while importer
+outputDir keeps ordinary logical spelling. The Level converter independently
+reapplies native spelling at every physical boundary after canonicalization;
+containment and resource metadata use ordinary identity paths. This preserves
+legacy converters while allowing deep Level staging/publication/replacement/reuse.
+The302-character directed gate and affected legacy Audio SHA cache passed in
+Release. The deep copy branch has no separate coverage claim; native acceptance
+is deferred. Original failed attempts remain in the execution evidence.

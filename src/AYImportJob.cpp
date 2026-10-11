@@ -14,6 +14,9 @@
 #if defined(AY_RESOURCE_HAS_STATS)
 #include "AYResource/Converter/StatsConverter.h"
 #endif
+#if defined(AY_RESOURCE_HAS_DET_LEVEL)
+#include "AYResource/Converter/DeterministicLevelConverter2D.h"
+#endif
 
 namespace ayt::resource
 {
@@ -85,6 +88,10 @@ bool tryLoadCachedConversion(const ImportOptions& options,
                              ConversionResult& out,
                              std::string& depPathOut)
 {
+#if defined(AY_RESOURCE_HAS_DET_LEVEL)
+    // Level imports revalidate complete source and root identity; ProjectBuild owns the SHA cache.
+    if(asset_format::matchesPath(options.sourcePath,asset_format::Id::DeterministicLevelSource))return false;
+#endif
     const std::string baseName = stemOf(options.sourcePath);
     if (baseName.empty()) {
         return false;
@@ -203,6 +210,9 @@ std::string importExtensionOf(const std::string& path)
 
 bool isImportSupportedExtension(const std::string& sourcePath)
 {
+#if defined(AY_RESOURCE_HAS_DET_LEVEL)
+    if(ayt::asset_format::matchesPath(sourcePath, ayt::asset_format::Id::DeterministicLevelSource)) return true;
+#endif
 #if defined(AY_RESOURCE_HAS_STATS)
     if(ayt::asset_format::matchesPath(sourcePath, ayt::asset_format::Id::StatsSource)) return true;
 #endif
@@ -318,6 +328,10 @@ ImportResult importAsset(const ImportOptions& options,
 #if defined(AY_RESOURCE_HAS_STATS)
         if(auto* stats=dynamic_cast<StatsConverter*>(converter.get()))
             stats->setAssetRoot(options.sourceAssetRoot);
+#endif
+#if defined(AY_RESOURCE_HAS_DET_LEVEL)
+        if(auto* level=dynamic_cast<DeterministicLevelConverter2D*>(converter.get()))
+            level->setAssetRoot(options.sourceAssetRoot);
 #endif
         converter->setMaterialImportPolicy(options.materialPolicy);
         converter->setSourceCoordinatePolicy(options.sourceCoordinates);
