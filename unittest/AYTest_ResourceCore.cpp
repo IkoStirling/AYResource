@@ -231,6 +231,13 @@ TEST_SUITE_END
 
 TEST_SUITE(ResourceManagerTests)
 
+    TEST_CASE(DebugSnapshotDoesNotTouchCacheAccountingOrLoadState) {
+        auto& manager=ResourceManager::instance();manager.unloadAll();manager.cache().put("debug.mock",std::make_shared<MockResource>());
+        const auto before=manager.cache().stats();auto snapshot=manager.debugSnapshot();(void)manager.debugSnapshot();const auto after=manager.cache().stats();
+        CHECK(before.hitCount==after.hitCount);CHECK(before.missCount==after.missCount);CHECK(before.strongCount==after.strongCount);
+        CHECK(snapshot.resident.size()==1);manager.unloadAll();CHECK(snapshot.resident.size()==1);
+    }
+
     TEST_CASE(LoadFromDatabaseLooseFile) {
         auto db = ayt::storage::IStorageDatabase::create(":memory:");
         db->insertResource({"test/mock.mock", "MockResource", "", 1024, 0, "", ""});

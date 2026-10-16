@@ -11,11 +11,27 @@
 #include <AYLog.h>
 #include <cassert>
 #include <algorithm>
+#include <unordered_set>
 #include <cstdio>
 #include <string>
 
-namespace ayt::resource
-{
+namespace ayt::resource {
+void ResourceManager::setDebugCaptureEnabled(bool enabled){std::lock_guard<std::mutex> lock(_loadsMutex);_debugCapture=enabled;if(!enabled){_debugProgress.clear();_debugReloads.clear();}}
+void ResourceManager::clearDebugHistory(){std::lock_guard<std::mutex> lock(_loadsMutex);_debugProgress.clear();_debugReloads.clear();}
+void ResourceManager::_recordDebugProgress(const std::string& path,float progress) noexcept {
+    try{const auto normalized=ayt::io::path::normalize(path);std::lock_guard<std::mutex> lock(_loadsMutex);if(_debugCapture && (_debugProgress.size()<512 || _debugProgress.contains(normalized)))_debugProgress[normalized]=progress;}catch(...){}
+}
+ResourceManager::DebugSnapshot ResourceManager::debugSnapshot() const {
+    DebugSnapshot result;result.cache=_cache.stats();result.resident=_cache.snapshotStrong();
+    std::unordered_set<std::string> residentPaths;for(const auto& entry:result.resident)residentPaths.insert(entry.path);
+    if(result.resident.size()>512){result.dropped+=result.resident.size()-512;result.resident.resize(512);}
+    std::lock_guard<std::mutex> lock(_loadsMutex);result.reloads=_debugReloads;
+    std::vector<std::string> paths;paths.reserve(_loadStates.size());for(const auto& [path,state]:_loadStates)paths.push_back(path);std::sort(paths.begin(),paths.end());
+    for(const auto& path:paths){if(result.loads.size()==512){++result.dropped;continue;}const auto state=_loadStates.at(path);const auto progress=_debugProgress.find(path);
+        result.loads.push_back({path,state,state==ResourceLoadState::Ready?1.f:progress==_debugProgress.end()?-1.f:progress->second,state==ResourceLoadState::Failed && residentPaths.contains(path)});}
+    return result;
+}
+
 
 namespace {
 
@@ -293,6 +309,7 @@ void ResourceManager::_onResourceLoaded(const std::string& filepath,
 }
 
 void ResourceManager::_handleHotReload(const std::string& filepath) {
+    try{std::lock_guard<std::mutex> lock(_loadsMutex);if(_debugCapture){if(_debugReloads.size()==64)_debugReloads.erase(_debugReloads.begin());_debugReloads.push_back({++_debugReloadSequence,filepath});}}catch(...){}
     const std::string path = normalizeResourcePath(filepath);
     if (path.empty()) {
         return;
@@ -378,6 +395,7 @@ std::shared_ptr<IResource> ResourceManager::_loadInternal(const std::string& fil
         }
         _loadingPaths.insert(path);
         _loadStates[path] = ResourceLoadState::Loading;
+        _debugProgress.erase(path);
     }
 
     if (!areLoadersInitialized()) {

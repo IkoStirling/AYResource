@@ -1061,6 +1061,12 @@ The302-character directed gate and affected legacy Audio SHA cache passed in
 Release. The deep copy branch has no separate coverage claim; native acceptance
 is deferred. Original failed attempts remain in the execution evidence.
 
+## Extended diagnostic observations (2026-10-15)
+
+ResourceManager::debugSnapshot copies load state/progress and CPU cache stats/residency without loading, LRU promotion or callback replacement. State and cache locks are separate, so the result is not a globally atomic transaction. Reload events include a lifetime-monotonic diagnostic sequence so repeated reloads of one path remain distinct. Load/resident rows cap512, optional progress keys512 and reload history64. progress=-1 means unavailable; cachedOnFailure means a failed path also had a cache entry at the observed cache snapshot, not proof of a particular placeholder type. Progress/reload capture defaults off and preserves user callbacks; clear affects only diagnostic history.
+
+Regression sources are included. Runtime tests and interactive editor acceptance are deferred for this content task; untested changes remain uncommitted.
+
 ## Compiled audio authoring content (2026-10-16)
 
 AudioContentConverter supports .performance.json and .chart.json through the

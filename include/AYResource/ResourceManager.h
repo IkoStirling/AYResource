@@ -142,7 +142,10 @@ public:
                     callback(typed);
                 }
             },
-            std::move(onProgress));
+            [this,onProgress=std::move(onProgress)](const std::string& path,float progress) {
+                _recordDebugProgress(path,progress);
+                if(onProgress)onProgress(path,progress);
+            });
 
         return typedFuture;
     }
@@ -200,6 +203,15 @@ public:
     // ===== Update loop =====
     void update(float deltaTime);
 
+    struct DebugLoad {std::string path;ResourceLoadState state=ResourceLoadState::NotLoaded;float progress=-1;bool cachedOnFailure=false;};
+    struct DebugReload {uint64_t sequence=0;std::string path;};
+    struct DebugSnapshot {CacheStats cache;std::vector<ResourceCache::SnapshotEntry> resident;std::vector<DebugLoad> loads;std::vector<DebugReload> reloads;size_t dropped=0;};
+    /// Optional progress/reload capture; state/cache queries never load or promote resources.
+    void setDebugCaptureEnabled(bool enabled);
+    void clearDebugHistory();
+    /// Owned rows (512 each), copied under separate cache/load locks; no globally atomic point.
+    /// progress=-1 is unknown; cachedOnFailure denotes cache presence, not placeholder type.
+    DebugSnapshot debugSnapshot() const;
     // ===== Stats =====
     size_t getMemoryUsage() const;
     size_t getResourceCount() const;
@@ -260,6 +272,11 @@ private:
     std::shared_ptr<ayt::storage::IPackageReader> _getOrOpenPak(const std::string& pakPath);
     std::shared_ptr<IResource> _loadFromDatabase(const std::string& filepath);
 
+    void _recordDebugProgress(const std::string& path,float progress) noexcept;
+    bool _debugCapture=false;
+    std::unordered_map<std::string,float> _debugProgress;
+    uint64_t _debugReloadSequence=0;
+    std::vector<DebugReload> _debugReloads;
     ResourceCache _cache;
     std::unique_ptr<ayt::storage::IStorageDatabase> _db;
     // F1.4: _openedPaks and _resourceTypes were mutated without
