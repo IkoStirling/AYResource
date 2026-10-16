@@ -91,3 +91,35 @@ Audio SHA-cache cases. Physical extended paths stay at filesystem boundaries;
 the public importer output directory remains its original logical spelling.
 The new level cache gate retains a302-character object and checks replacement
 and reuse without shortening its path. Native final acceptance is deferred.
+
+## Compiled audio authoring content (2026-10-16)
+
+AudioContentConverter supports .performance.json and .chart.json through the
+standard converter factory and ImportJob. Models/renderer live under
+include/AYResource/authoring; AYAudio editor compatibility headers forward here.
+The runtime AudioContent loader reads only .acb v1: validated PCM plus sorted
+source-frame event metadata, with no author paths or external sample dependency.
+AudioContent derives from Audio/IAudio, so existing PCM registration remains usable.
+
+ProjectBuild requires Cook for these source types, rejects missing/escaping/
+excluded project samples, hashes their closure (including built-in piano .aud),
+rechecks inputs before execution, validates cached output identity/payload and
+publishes loose or Pak. Native Windows paths normalize separators before .acb
+reads, including extended long cache paths. Built-in piano data is resolved from
+adjacent tool/editor assets first, then the configured engine sample directory.
+Derived piano attribution is embedded and published as licenses/audio-content.txt.
+
+Limits: fixed BPM; <=64 tracks/4096 source clips/100000 compiled events;
+<=600 seconds/256 MiB PCM, <=16 MiB metadata, <=64 KiB credits. Loading rejects
+malformed/truncated/range-invalid bundles without replacing existing content.
+Runtime playback/owner lifetime is the AudioContentPlayer facade in AYAudio.
+See AYDocs/sdk/contracts/audio.md and unittest/AYTest_AudioContent.cpp for the
+Cook/cache/Pak/author-tree-removal regression evidence.
+
+Validation (Windows Debug, 2026-10-16): AudioContentTests passed 3/3 (48 checks),
+including actual piano Cook/attribution, content-addressed cache replacement,
+stale-plan rejection and Pak loading after moving the authoring Assets tree.
+Affected ProjectBuild/import/bootstrap/decoder/loader suites passed 49/49
+(472 checks). Standard import_tool cooked a piano arrangement successfully.
+Reports: out/audio-completion-20261016/content-credits-final.json and
+resource-integration-final.json. AYAssetFormat_Tests and both editor builds passed.

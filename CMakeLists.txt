@@ -19,6 +19,7 @@ set(AYRESOURCE_IMPORT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/AnimationConverter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/AtlasConverter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/AudioConverter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/AudioContentConverter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/FBXConverter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/FBXParser.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/FontConverter.cpp
@@ -149,7 +150,8 @@ if(AY_BUILD_RESOURCE_AUTHORING)
     add_library(AYResourceImport STATIC ${AYRESOURCE_IMPORT_SOURCES})
     add_library(AYResource::Import ALIAS AYResourceImport)
     target_compile_definitions(AYResourceImport PRIVATE
-        AY_RESOURCE_BUILD_CONVERTER_FACTORY=1)
+        AY_RESOURCE_BUILD_CONVERTER_FACTORY=1
+        AY_AUDIO_CONTENT_BUILTIN_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../../EngineAssets/AYAudio")
     target_include_directories(AYResourceImport PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/interface

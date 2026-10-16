@@ -3,6 +3,7 @@
 
 #include <AYIO/File.h>
 #include <AYResource/LooseDependency.h>
+#include <AYResource/Converter/AudioContentConverter.h>
 
 #include <algorithm>
 #include <cctype>
@@ -210,6 +211,7 @@ std::string importExtensionOf(const std::string& path)
 
 bool isImportSupportedExtension(const std::string& sourcePath)
 {
+    if(ayt::asset_format::matchesPath(sourcePath,ayt::asset_format::Id::AudioChartSource)||ayt::asset_format::matchesPath(sourcePath,ayt::asset_format::Id::AudioPerformanceSource))return true;
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)
     if(ayt::asset_format::matchesPath(sourcePath, ayt::asset_format::Id::DeterministicLevelSource)) return true;
 #endif
@@ -270,6 +272,8 @@ ImportResult importAsset(const ImportOptions& options,
     // Particle closure includes external textures; source mtime alone cannot
     // validate it. ProjectBuild owns the content-addressed closure cache.
     if (!options.force && !ayt::asset_format::matchesPath(options.sourcePath, ayt::asset_format::Id::ParticleEffect)
+        && !ayt::asset_format::matchesPath(options.sourcePath,ayt::asset_format::Id::AudioChartSource)
+        && !ayt::asset_format::matchesPath(options.sourcePath,ayt::asset_format::Id::AudioPerformanceSource)
 #if defined(AY_RESOURCE_HAS_STATS)
         && !ayt::asset_format::matchesPath(options.sourcePath, ayt::asset_format::Id::StatsSource)
 #endif
@@ -321,6 +325,7 @@ ImportResult importAsset(const ImportOptions& options,
         converter->setOutputDir(options.outputDir);
         converter->setLoadOption(options.loadOption);
         converter->setCookTextures(options.cookTextures);
+        if(auto* audio=dynamic_cast<AudioContentConverter*>(converter.get()))audio->setAssetRoot(options.sourceAssetRoot);
 #if defined(AY_RESOURCE_HAS_PARTICLE)
         if(auto* particle=dynamic_cast<ParticleConverter*>(converter.get()))
             particle->setAssetRoot(options.sourceAssetRoot);

@@ -7,6 +7,7 @@
 #include "AYResource/Loader/SkeletonMaskLoader.h"
 #include "AYResource/Loader/AnimationLoader.h"
 #include "AYResource/Loader/AudioLoader.h"
+#include <AYResource/AudioContent.h>
 #include "AYResource/Loader/VideoLoader.h"
 #include "AYResource/Loader/FontLoader.h"
 #include "AYResource/Loader/ScriptLoader.h"
@@ -61,6 +62,7 @@ bool initializeLoaders()
                      && registerLoaderType<SkeletonMaskLoader>("SkeletonMask", Id::SkeletonMask)
                      && registerLoaderType<AnimationLoader>("Animation", Id::Animation)
                      && registerLoaderType<AudioLoader>("Audio", Id::Audio)
+                     && registerLoaderType<AudioContentLoader>("AudioContent", Id::AudioContent)
                      && registerLoaderType<VideoLoader>("Video", Id::Video)
                      && registerLoaderType<FontLoader>("Font", Id::Font)
                      && registerLoaderType<ScriptLoader>("Script", Id::ScriptBlob)

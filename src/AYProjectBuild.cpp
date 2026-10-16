@@ -1,4 +1,6 @@
 #include "AYResource/ProjectBuild.h"
+#include <AYResource/Converter/AudioContentConverter.h>
+#include <AYResource/AudioContent.h>
 #include "ProjectPublishRetry.h"
 #include "ProjectShaderProduction.h"
 #include "ProjectLogiaContent.h"
@@ -744,9 +746,24 @@ std::string hashFiles(const std::vector<fs::path>& paths,
     return result;
 }
 
+bool audioContentSource(const std::string& source){return asset_format::matchesPath(source,asset_format::Id::AudioChartSource)||asset_format::matchesPath(source,asset_format::Id::AudioPerformanceSource);}
+void validateAudioContent(const ProjectBuildPlan& plan,std::vector<ProjectBuildDiagnostic>& diagnostics){
+    const fs::path root=fs::path(plan.projectRoot)/plan.profile.content.assetRoot;
+    for(const auto& asset:plan.assets){if(asset.transform==ProjectAssetTransform::Exclude)continue;
+        try{if(audioContentSource(asset.sourcePath)){
+                if(asset.transform!=ProjectAssetTransform::Cook)throw std::runtime_error("audio authoring content requires Cook to .acb");
+                const auto source=inspectAudioContentSource(asset.sourcePath,root);
+                for(const auto& dependency:source.dependencies){if(!isUnder(root,dependency))continue;const auto found=std::find_if(plan.assets.begin(),plan.assets.end(),[&](const auto& item){return fs::weakly_canonical(item.sourcePath)==dependency;});if(found==plan.assets.end()||found->transform==ProjectAssetTransform::Exclude)throw std::runtime_error("missing or excluded audio dependency: "+portable(dependency));}
+            }else if(asset_format::matchesPath(asset.sourcePath,asset_format::Id::AudioContent)){AudioContent content;if(!content.load(asset.sourcePath))throw std::runtime_error("invalid compiled audio bundle");}
+        }catch(const std::exception& e){diagnostic(diagnostics,ProjectBuildDiagnostic::Severity::Error,asset.logicalPath,e.what());}
+    }
+}
 std::vector<fs::path> sourceClosure(const fs::path& source, const fs::path& assetRoot)
 {
     std::vector<fs::path> paths{source};
+    if(asset_format::matchesPath(source.string(),asset_format::Id::AudioChartSource)||asset_format::matchesPath(source.string(),asset_format::Id::AudioPerformanceSource)){
+        try{const auto inspected=inspectAudioContentSource(source,assetRoot);paths.insert(paths.end(),inspected.dependencies.begin(),inspected.dependencies.end());std::sort(paths.begin(),paths.end());return paths;}catch(...){return {};}
+    }
     const std::string extension = lower(source.extension().string());
 #if defined(AY_RESOURCE_HAS_STATS)
     if(ayt::asset_format::matchesPath(source.string(), ayt::asset_format::Id::StatsSource)) {
@@ -800,6 +817,7 @@ std::string cacheDiscriminator(const ProjectBuildProfile& profile,
         {"cookTextures", asset.cookTextures},
         {"fbxImporterContract", std::string(kFbxImporterContractTag)},
     };
+    if(asset_format::matchesPath(asset.sourcePath,asset_format::Id::AudioChartSource)||asset_format::matchesPath(asset.sourcePath,asset_format::Id::AudioPerformanceSource))value["audioContentImporterContract"]="audio-content-bundle-v1";
     if(ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::ParticleEffect))
         value["particleImporterContract"]="particle-closure-rgba8-v3";
 #if defined(AY_RESOURCE_HAS_STATS)
@@ -1550,6 +1568,7 @@ ProjectBuildPlan ProjectBuildPlanner::create(
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)
     validateDetLevelContent(plan,plan.diagnostics);
 #endif
+    validateAudioContent(plan,plan.diagnostics);
     validateActorContent(plan, plan.diagnostics);
     detail::discoverProjectLogia(plan);
     return plan;
@@ -1570,6 +1589,10 @@ ProjectBuildResult ProjectBuildExecutor::execute(
     const fs::path releaseAssetsRoot = fs::path(plan.projectRoot)
         / plan.profile.content.assetRoot;
     std::vector<ProjectBuildDiagnostic> releaseDiagnostics;
+    validateAudioContent(plan,releaseDiagnostics);
+    for(const auto& asset:plan.assets)if(asset.transform==ProjectAssetTransform::Cook&&audioContentSource(asset.sourcePath)&&asset.cacheKey!=computeCacheKey(plan.profile,asset)){
+        result.error="Audio content inputs changed after planning; create a fresh build plan.";return result;
+    }
     validateActorContent(plan, releaseDiagnostics);
     detail::validateProjectLogia(plan, releaseDiagnostics);
     if (std::any_of(releaseDiagnostics.begin(), releaseDiagnostics.end(),
@@ -1837,6 +1860,12 @@ ProjectBuildResult ProjectBuildExecutor::execute(
         }
 #endif
         for (const auto& resource : conversion.resources) {
+            if(audioContentSource(asset.sourcePath)){
+                const auto matched=asset_format::matchPath(asset.logicalPath);const auto expected=asset_format::appendSuffix(std::string_view(asset.logicalPath).substr(0,asset.logicalPath.size()-matched->suffix.size()),asset_format::Id::AudioContent);
+                if(conversion.resources.size()!=1||!conversion.dependencies.empty()||conversion.importerContractTag!="audio-content-bundle-v1"||resource.type!="AudioContent"){result.error="Invalid audio content cache identity: "+asset.logicalPath;return result;}
+                if(resource.path!=expected){result.error="Audio content cache path mismatch: expected "+expected+", got "+resource.path;return result;}
+                AudioContent content;if(!content.load((objectRoot/"files"/resource.path).string())){result.error="Corrupt audio content cache payload: "+asset.logicalPath;return result;}
+            }
             if (!portableRelative(resource.path)) {
                 result.error = "Cooker produced a non-portable output path for '"
                     + asset.logicalPath + "': " + resource.path;
@@ -1925,6 +1954,9 @@ ProjectBuildResult ProjectBuildExecutor::execute(
 #endif
 
     report(progress, ProjectBuildStage::Stage, 0.78f, "staging content");
+    std::set<std::string> audioCredits;
+    for(const auto& file:staged)if(file.type=="AudioContent"){AudioContent content;if(!content.load(file.diskPath.string())){result.error="Invalid staged audio content: "+file.logicalPath;return result;}if(!content.credits().empty())audioCredits.insert(content.credits());}
+    if(!audioCredits.empty()){std::string notice;for(const auto& credit:audioCredits)notice+=credit+"\n";fs::create_directories(staging/"licenses",fileError);if(fileError||!io::File::atomicWrite((staging/"licenses/audio-content.txt").string(),notice.data(),notice.size())){result.error="Cannot publish audio content attribution";return result;}}
     auto database = ayt::storage::IStorageDatabase::create(
         (contentRoot / "resources.db").string());
     if (!database || !database->isOpen() || !database->beginBatch()) {
@@ -1944,6 +1976,7 @@ ProjectBuildResult ProjectBuildExecutor::execute(
         {"runtimeFiles", runtimeFiles},
         {"files", Json::array()},
     };
+    if(!audioCredits.empty())manifest["audioContentCredits"]="licenses/audio-content.txt";
     for (const StagedFile& file : staged) {
         if (!fs::is_regular_file(file.diskPath)) {
             database->rollbackBatch();

@@ -7,6 +7,7 @@
 #include "AYResource/Converter/TilemapConverter.h"
 #include "AYResource/Converter/AtlasConverter.h"
 #include "AYResource/Converter/AudioConverter.h"
+#include "AYResource/Converter/AudioContentConverter.h"
 #if defined(AY_RESOURCE_HAS_PARTICLE)
 #include "AYResource/Converter/ParticleConverter.h"
 #endif
@@ -130,6 +131,7 @@ std::string sourceCoordinatePolicyCacheTag(const SourceCoordinatePolicy& policy)
 #else
 std::unique_ptr<IConverter> IConverter::create(const std::string& sourcePath) {
     const auto format = ayt::asset_format::matchPath(sourcePath);
+    if(format&&(format->descriptor->id==ayt::asset_format::Id::AudioChartSource||format->descriptor->id==ayt::asset_format::Id::AudioPerformanceSource))return std::make_unique<AudioContentConverter>(sourcePath);
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)
     if (format && format->descriptor->id == ayt::asset_format::Id::DeterministicLevelSource)
         return std::make_unique<DeterministicLevelConverter2D>(sourcePath);
