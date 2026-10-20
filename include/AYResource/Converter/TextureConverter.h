@@ -57,6 +57,7 @@ public:
     // IConverter 开关传播：dev（false）→ rawCopy；发布（true）→ 关闭 rawCopy。
     void setCookTextures(bool cook) override { rawCopy = !cook; }
     bool setOutputNamespace(const std::string& value) override { _outputNamespace = value; return true; }
+    bool setOutputBaseName(const std::string& value) override { _outputBaseName = value; return true; }
 
     // ===== 用途后缀 =====
     void setUsageSuffix(const std::string& suffix) { usageSuffix = suffix; }
@@ -89,6 +90,7 @@ private:
     std::string sourcePath;
     std::string outputDir;
     std::string _outputNamespace;
+    std::string _outputBaseName;
     LoadOption loadOption = IConverter::LoadOption::MeshOnly;
     TextureFormat outputFormat = TextureFormat::BC7;  // 默认 BC7 压缩（离线高质量）
     bool generateMipmaps = true;

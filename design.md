@@ -19,6 +19,14 @@ ResourceCache::replace 同时更新 strong/weak/grace，避免 put 的保留旧�
 refreshPublishedResources 先完整解码驻留集合，失败不发布；成功替换后才通知现有 reload callback。
 不提供跨线程多项缓存的原子读快照，不撤回外部已经借出的旧对象。
 
+### 主源重新定位
+
+ImportOptions.outputBaseName 是可选的单个便携 UTF-8 文件 stem（最长160bytes）；
+默认空保持旧命名。FBX/glTF/Texture 三条作者管线支持覆盖，不支持的 converter 拒绝非空值。
+它进入完整 settings/cache identity；缺省旧 metadata 可读取，但完整设置比较会要求重新构建。
+模型 typed writer/材质槽/骨架动画依赖统一用此 stem，独立图像也保留原 texture/metadata 路径。
+作者 sourceId 显式匹配才允许发布 metadata 的来源路径变化。没有新增运行时格式。
+
 ### 真实来源闭包与贴图绑定补充
 
 ProjectBuild 在规划阶段通过现有场景 parser 发现 main/buffer/image 输入并采集快照，

@@ -120,7 +120,7 @@ bool tryLoadCachedConversion(const ImportOptions& options,
     if(asset_format::matchesPath(options.sourcePath,asset_format::Id::DeterministicLevelSource))return false;
 #endif
     const std::string baseName = options.outputNamespace.empty()
-        ? stemOf(options.sourcePath) : options.outputNamespace;
+        ? (options.outputBaseName.empty() ? stemOf(options.sourcePath) : options.outputBaseName) : options.outputNamespace;
     if (baseName.empty()) {
         return false;
     }
@@ -262,7 +262,7 @@ bool isImportSupportedExtension(const std::string& sourcePath)
 std::string importDependencySidecarPath(const ImportOptions& options)
 {
     return joinDirFile(options.outputDir, ayt::asset_format::appendSuffix(
-        options.outputNamespace.empty() ? stemOf(options.sourcePath) : options.outputNamespace,
+        options.outputNamespace.empty() ? (options.outputBaseName.empty() ? stemOf(options.sourcePath) : options.outputBaseName) : options.outputNamespace,
         ayt::asset_format::Id::ImportDependency));
 }
 
@@ -396,7 +396,7 @@ ImportResult importAsset(const ImportOptions& options,
 
     report(progress, ImportStage::CheckCache, 0.1f, "checking cache");
     const auto sidecarName = ayt::asset_format::appendSuffix(
-        options.outputNamespace.empty() ? stemOf(options.sourcePath) : options.outputNamespace,
+        options.outputNamespace.empty() ? (options.outputBaseName.empty() ? stemOf(options.sourcePath) : options.outputBaseName) : options.outputNamespace,
         ayt::asset_format::Id::ImportDependency);
     try {
         detail::rejectOtherSource(options, detail::readImportJson(
@@ -465,6 +465,8 @@ ImportResult importAsset(const ImportOptions& options,
         transaction = std::make_unique<detail::ImportOutputTransaction>(options.outputDir);
         if (!converter->setOutputNamespace(options.outputNamespace))
             throw std::runtime_error("this importer does not support per-source output namespaces");
+        if (!converter->setOutputBaseName(options.outputBaseName))
+            throw std::runtime_error("this importer does not support a stable output basename");
         converter->setOutputDir(transaction->stagingRoot());
         converter->setLoadOption(options.loadOption);
         converter->setCookTextures(options.cookTextures);

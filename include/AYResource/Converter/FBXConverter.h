@@ -52,6 +52,7 @@ public:
     void setSeparateModels(bool separate) { separateModels = separate; }
     bool getSeparateModels() const { return separateModels; }
     bool setOutputNamespace(const std::string& value) override { _outputNamespace = value; return true; }
+    bool setOutputBaseName(const std::string& value) override { _outputBaseName = value; return true; }
 
 private:
     std::string sourcePath;
@@ -62,6 +63,7 @@ private:
     MaterialImportPolicy _materialPolicy;
     SourceCoordinatePolicy _sourceCoordinates;
     std::string _outputNamespace;
+    std::string _outputBaseName;
 
     // 子转换器
     MeshConverter meshConverter;

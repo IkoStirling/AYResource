@@ -75,6 +75,10 @@ struct ImportOptions {
     /// Optional single ASCII [A-Za-z0-9_-] component beneath each typed output
     /// folder. Distinct source keys isolate identically named models/images.
     std::string outputNamespace;
+    /// Optional stable file stem, independent of the current physical source
+    /// filename. Keep this when relinking a moved/renamed model or image.
+    /// Does not map renamed model subobjects or changed texture output modes.
+    std::string outputBaseName;
 };
 
 struct ImportResult {

@@ -53,6 +53,7 @@ inline ImportJson importSettings(const ImportOptions& options)
         {"requireAnimationAssets", options.requireAnimationAssets},
         {"sourceAssetRoot", options.sourceAssetRoot},
         {"outputNamespace", options.outputNamespace},
+        {"outputBaseName", options.outputBaseName},
         {"material", {{"tag", material.tag}, {"opaqueIndices", material.opaqueIndices},
             {"maskIndices", material.maskIndices}, {"blendIndices", material.blendIndices},
             {"doubleSidedIndices", material.doubleSidedIndices},
@@ -87,6 +88,11 @@ inline void decodeImportSettings(const ImportJson& settings, ImportOptions& opti
         throw std::runtime_error("invalid source asset root");
     options.outputNamespace = settings.value("outputNamespace", std::string{});
     if (!validOutputNamespace(options.outputNamespace)) throw std::runtime_error("invalid import output namespace");
+    options.outputBaseName = settings.value("outputBaseName", std::string{});
+    if (!options.outputBaseName.empty() && (options.outputBaseName.size() > 160
+        || options.outputBaseName.find_first_of("/\\:") != std::string::npos
+        || !ayt::io::path::isPortableRelative(options.outputBaseName)))
+        throw std::runtime_error("invalid stable import output basename");
     const auto& material = settings.at("material");
     auto& policy = options.materialPolicy;
     policy.tag = material.at("tag").get<std::string>();

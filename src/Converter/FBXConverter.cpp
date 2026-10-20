@@ -566,6 +566,7 @@ ConversionResult FBXConverter::convert() {
     if (pos != std::string::npos) {
         baseName = baseName.substr(0, pos);
     }
+    if (!_outputBaseName.empty()) baseName = _outputBaseName;
     if (!_outputNamespace.empty()) baseName = _outputNamespace + "/" + baseName;
     textureConverter.setOutputNamespace(_outputNamespace);
     const auto namespaceTexture = [this](std::string& reference) {

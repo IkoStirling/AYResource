@@ -36,6 +36,7 @@ public:
         _pipeline.setSourceCoordinatePolicy(policy);
     }
     bool setOutputNamespace(const std::string& value) override { return _pipeline.setOutputNamespace(value); }
+    bool setOutputBaseName(const std::string& value) override { return _pipeline.setOutputBaseName(value); }
 
 private:
     std::string sourcePath;

@@ -183,6 +183,8 @@ class IConverter {
         /// Optional per-source output folder component. Empty preserves the
         /// legacy virtual paths; unsupported converters refuse a nonempty key.
         virtual bool setOutputNamespace(const std::string& value) { return value.empty(); }
+        /// Authoring-only stable output stem; unsupported domains refuse it.
+        virtual bool setOutputBaseName(const std::string& value) { return value.empty(); }
 
 	    // ===== 工厂方法 =====
 	    static std::unique_ptr<IConverter> create(const std::string& sourcePath);

@@ -1049,4 +1049,64 @@ TEST_CASE(corrupt_raw_image_import_does_not_replace_last_good_texture)
     CHECK(fixture.read(fs::u8path(first.depSidecarPath))==metadata);
 }
 
+TEST_CASE(relinked_model_keeps_stable_output_stem_and_dependency_identity)
+{
+    ImportFixture fixture;
+    fixture.triangle();
+    auto options=fixture.options();
+    options.sourceId="source-relink";
+    options.outputNamespace="relink";
+    options.outputBaseName="Original Triangle";
+    const auto first=importAsset(options);
+    CHECK_MSG(first.ok,first.error.c_str());
+    if(!first.ok)return;
+    const auto firstPath=fixture.meshPath(first);
+    const auto before=fixture.read(fixture.output()/firstPath);
+    const auto relocated=fixture.root/"Moved/Renamed.gltf";
+    fixture.write(relocated,fixture.read(fixture.source()));
+    fixture.write(relocated.parent_path()/"Triangle.bin",fixture.read(fixture.source().parent_path()/"Triangle.bin"));
+    fs::remove(fixture.source());
+    options.sourcePath=relocated.string();
+    const auto second=importAsset(options);
+    CHECK_MSG(second.ok,second.error.c_str());
+    CHECK_FALSE(second.usedCache);
+    CHECK(fixture.meshPath(second)==firstPath);
+    CHECK(fixture.read(fixture.output()/firstPath)==before);
+    CHECK(second.depSidecarPath==first.depSidecarPath);
+    ImportRecord record;
+    CHECK(readImportRecord(second.depSidecarPath,record));
+    CHECK(record.options.outputBaseName=="Original Triangle");
+    CHECK(record.options.sourceId==options.sourceId);
+    CHECK(isImportRecordCurrent(record));
+    CHECK(importAsset(options).usedCache);
+    const auto metadata=fixture.read(fs::u8path(second.depSidecarPath));
+    options.outputBaseName="../escape";
+    CHECK_FALSE(importAsset(options).ok);
+    CHECK(fixture.read(fs::u8path(second.depSidecarPath))==metadata);
+}
+
+TEST_CASE(relinked_standalone_image_keeps_existing_texture_reference)
+{
+    ImportFixture fixture;
+    const std::string hex="89504e470d0a1a0a0000000d494844520000000200000002080600000072b60d240000001549444154789c63140c3df39f818181810944803000208d0235933bc0420000000049454e44ae426082";
+    std::string png;
+    for(std::size_t i=0;i<hex.size();i+=2)png.push_back(char(std::stoi(hex.substr(i,2),nullptr,16)));
+    const auto source=fixture.root/"Source/Surface.png";
+    fixture.write(source,png);
+    auto options=fixture.options();options.sourcePath=source.string();
+    options.sourceId="source-image-relink";options.outputBaseName="Surface";
+    const auto first=importAsset(options);
+    CHECK_MSG(first.ok,first.error.c_str());
+    if(!first.ok)return;
+    const auto moved=fixture.root/"Moved/Renamed.png";
+    fixture.write(moved,png);fs::remove(source);
+    options.sourcePath=moved.string();
+    const auto second=importAsset(options);
+    CHECK_MSG(second.ok,second.error.c_str());
+    if(!second.ok)return;
+    CHECK(second.conversion.resources[0].path==first.conversion.resources[0].path);
+    CHECK(second.depSidecarPath==first.depSidecarPath);
+    CHECK(importAsset(options).usedCache);
+}
+
 TEST_SUITE_END

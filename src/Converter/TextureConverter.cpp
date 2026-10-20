@@ -374,7 +374,7 @@ ConversionResult TextureConverter::convertPixels(const TextureData& image, const
 
 ConversionResult TextureConverter::convert() {
     if (!isValid()) return {};
-    return convertFromPath(sourcePath, getBaseName(sourcePath), {}, usageSuffix);
+    return convertFromPath(sourcePath, _outputBaseName.empty() ? getBaseName(sourcePath) : _outputBaseName, {}, usageSuffix);
 }
 
 std::vector<ConversionResult::ConvertedResource> TextureConverter::convertAll(
