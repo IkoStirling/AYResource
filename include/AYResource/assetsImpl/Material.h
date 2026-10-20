@@ -95,7 +95,11 @@ public:
     void setTexture(const char* name, const char* path);
 
     // ===== Binary serialization =====
+    /// Decode one complete v1/v2/v3 material. Failure retains the current value;
+    /// truncated/extra payload, duplicate/NUL names, invalid tags/counts are rejected.
+    /// Float4x4 parameters retain all sixteen floats. Bundles use MaterialFile.
     bool loadFromBinary(const void* data, size_t size);
+    /// The single-material header represents at most 255 named parameters.
     bool saveToBinary(std::vector<UInt8>& outData) const;
 
     // ===== GUID =====

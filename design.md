@@ -1,5 +1,16 @@
 # AYResource — Design (v2.1)
 
+## 2026-10-20 — 作者材质读取的原子性
+
+单 Material 的 v1/v2/v3 解码使用有界 memcpy，从任意对齐的完整 bytes 构造临时对象，
+校验精确负载/count/tag、非空唯一参数名和 bool，再发布字段。
+C-string 身份字段 name/shader/参数名不允许 NUL；未知 String 参数仍保留一般字节内容。
+Float4x4 按 16 个 float 读取，修复旧实现只读4个数导致后续参数错位的问题。
+编码前检查 255 参数上限、字符串/负载的 UInt32 可表示性，失败保留输出缓冲。
+没有新文件或虚接口版本，bundle codec 与资源/GPU ownership 不变。
+MaterialFileTests 覆盖旧版本、矩阵/未知参数往返、每个前缀截断、非法 tag/count/name、
+极端长度、非对齐输入和失败不变；同组在独立 MSVC ASan 构建执行。
+
 ## 2026-10-05 — ProjectBuild 默认 Phoskia 阶段
 
 验证：ProjectBuild默认无宏程序及纯helper闭包发布成功，破坏模块后不替换既有发布；

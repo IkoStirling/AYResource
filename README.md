@@ -1,5 +1,14 @@
 # AYResource
 
+## 单材质读取边界（2026-10-20）
+
+`.mat/.aymat` 单材质 decoder 先构造临时值，完整验证 v1/v2/v3 负载后再替换当前对象。
+拒绝截断/额外字节、错误数量/tag、空/重复/NUL 参数名和非法 bool，
+Matrix 保留完整 16 个 float；name/shader 也拒绝嵌入 NUL。
+失败保留现有值，保存拒绝超过单文件头可表示的 255 个参数。
+多材质 bundle 继续使用 MaterialFile；IMaterial ABI3 与文件版本3不变。
+这些是既有格式的结构校验，通用 Float payload 不承担材质编辑器的数值范围策略。
+
 ## 默认项目 shader 发布（2026-10-05）
 
 启用 AYShader 的作者工具下，ProjectBuild 默认校验并暂存代码产物旁的 engine shader 包，

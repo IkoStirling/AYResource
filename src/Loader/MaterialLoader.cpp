@@ -337,155 +337,97 @@ bool Material::load(const std::string& path) {
 }
 
 bool Material::loadFromBinary(const void* data, size_t size) {
-    if (!data || size < sizeof(MaterialBinaryHeaderV1)) {
-        return false;
-    }
-
-    clear();
-
-    const UInt8* ptr = static_cast<const UInt8*>(data);
-    const MaterialBinaryHeaderV1* header =
-        reinterpret_cast<const MaterialBinaryHeaderV1*>(ptr);
-
-    // 验证 magic 和 version
-    if (header->magic != IMaterial::MAGIC
-        || header->version < 1 || header->version > IMaterial::VERSION) {
-        return false;
-    }
-
-    size_t headerSize = sizeof(MaterialBinaryHeaderV1);
-    if (header->version >= 2) {
+    // Decode to a temporary. Failure never leaves a partly replaced material
+    // that an authoring caller might subsequently save over the source asset.
+    if (!data || size < sizeof(MaterialBinaryHeaderV1)) return false;
+    const auto* bytes = static_cast<const UInt8*>(data);
+    MaterialBinaryHeaderV1 header{};
+    std::memcpy(&header, bytes, sizeof(header));
+    if (header.magic != IMaterial::MAGIC || header.version < 1
+        || header.version > IMaterial::VERSION) return false;
+    Material decoded;
+    size_t offset = sizeof(header);
+    if (header.version >= 2) {
         if (size < sizeof(MaterialBinaryHeaderV2)) return false;
-        const auto* v2 = reinterpret_cast<const MaterialBinaryHeaderV2*>(ptr);
-        const UInt8 mode = v2->flags & kAlphaModeMask;
+        MaterialBinaryHeaderV2 surface{};
+        std::memcpy(&surface, bytes, sizeof(surface));
+        const UInt8 mode = surface.flags & kAlphaModeMask;
         if (mode > static_cast<UInt8>(MaterialAlphaMode::Blend)) return false;
-        _alphaMode = static_cast<MaterialAlphaMode>(mode);
-        _alphaCutoff = v2->alphaCutoff;
-        _doubleSided = (v2->flags & kDoubleSidedFlag) != 0;
-        headerSize = sizeof(MaterialBinaryHeaderV2);
+        decoded._alphaMode = static_cast<MaterialAlphaMode>(mode);
+        decoded._alphaCutoff = surface.alphaCutoff;
+        decoded._doubleSided = (surface.flags & kDoubleSidedFlag) != 0;
+        offset = sizeof(surface);
     }
-
-    // 读取 GUID
-    _guid = header->guid;
-
-    // 读取 name
-    size_t offset = headerSize;
-    if (header->nameLength > 0) {
-        if (size < offset + header->nameLength) return false;
-        _name.assign(reinterpret_cast<const char*>(ptr + offset), header->nameLength);
-        offset += header->nameLength;
-    }
-
-    // 读取 shader
-    if (header->shaderLength > 0) {
-        if (size < offset + header->shaderLength) return false;
-        _shader.assign(reinterpret_cast<const char*>(ptr + offset), header->shaderLength);
-        offset += header->shaderLength;
-    }
-
-    // 读取参数数据
-    if (offset < size) {
-        size_t dataEnd = offset + header->dataSize;
-        if (dataEnd > size) dataEnd = size;
-
-        while (offset < dataEnd) {
-            // 读取参数名
-            if (offset + sizeof(UInt32) > dataEnd) break;
-            UInt32 paramNameLen = *reinterpret_cast<const UInt32*>(ptr + offset);
-            offset += sizeof(UInt32);
-
-            if (offset + paramNameLen > dataEnd) break;
-            std::string paramName(reinterpret_cast<const char*>(ptr + offset), paramNameLen);
-            offset += paramNameLen;
-
-            // 读取类型
-            if (offset + sizeof(UInt8) > dataEnd) break;
-            UInt8 typeVal = *reinterpret_cast<const UInt8*>(ptr + offset);
-            offset += sizeof(UInt8);
-
-            MaterialParamType type = static_cast<MaterialParamType>(typeVal);
-
-            ParameterValue pv;
-            pv.type = type;
-
-            switch (type) {
-                case MaterialParamType::Float:
-                    if (offset + sizeof(Float32) > dataEnd) break;
-                    pv.floatValue = *reinterpret_cast<const Float32*>(ptr + offset);
-                    offset += sizeof(Float32);
-                    break;
-                case MaterialParamType::Float2:
-                    if (offset + 2 * sizeof(Float32) > dataEnd) break;
-                    pv.float2Value[0] = *reinterpret_cast<const Float32*>(ptr + offset);
-                    pv.float2Value[1] = *reinterpret_cast<const Float32*>(ptr + offset + 4);
-                    offset += 2 * sizeof(Float32);
-                    break;
-                case MaterialParamType::Float3:
-                    if (offset + 3 * sizeof(Float32) > dataEnd) break;
-                    pv.float3Value[0] = *reinterpret_cast<const Float32*>(ptr + offset);
-                    pv.float3Value[1] = *reinterpret_cast<const Float32*>(ptr + offset + 4);
-                    pv.float3Value[2] = *reinterpret_cast<const Float32*>(ptr + offset + 8);
-                    offset += 3 * sizeof(Float32);
-                    break;
-                case MaterialParamType::Float4:
-                case MaterialParamType::Float4x4: // Float4x4 uses same storage as Float4 for first 4 floats
-                    if (offset + 4 * sizeof(Float32) > dataEnd) break;
-                    pv.float4Value[0] = *reinterpret_cast<const Float32*>(ptr + offset);
-                    pv.float4Value[1] = *reinterpret_cast<const Float32*>(ptr + offset + 4);
-                    pv.float4Value[2] = *reinterpret_cast<const Float32*>(ptr + offset + 8);
-                    pv.float4Value[3] = *reinterpret_cast<const Float32*>(ptr + offset + 12);
-                    offset += 4 * sizeof(Float32);
-                    break;
-                case MaterialParamType::Int:
-                    if (offset + sizeof(Int32) > dataEnd) break;
-                    pv.intValue = *reinterpret_cast<const Int32*>(ptr + offset);
-                    offset += sizeof(Int32);
-                    break;
-                case MaterialParamType::Bool:
-                    if (offset + sizeof(Bool) > dataEnd) break;
-                    pv.boolValue = *reinterpret_cast<const Bool*>(ptr + offset);
-                    offset += sizeof(Bool);
-                    break;
-                case MaterialParamType::Texture2D:
-                case MaterialParamType::Texture3D:
-                case MaterialParamType::TextureCube:
-                case MaterialParamType::String:
-                    if (offset + sizeof(UInt32) > dataEnd) break;
-                    UInt32 strLen = *reinterpret_cast<const UInt32*>(ptr + offset);
-                    offset += sizeof(UInt32);
-                    if (offset + strLen > dataEnd) break;
-                    pv.stringValue.assign(reinterpret_cast<const char*>(ptr + offset), strLen);
-                    offset += strLen;
-                    break;
-            }
-
-            _params[paramName] = pv;
+    decoded._guid = header.guid;
+    const auto text = [&](std::string& target, size_t length, size_t end) {
+        if (offset > end || length > end - offset) return false;
+        target.assign(reinterpret_cast<const char*>(bytes + offset), length);
+        offset += length; return true;
+    };
+    if (!text(decoded._name,header.nameLength,size)
+        || !text(decoded._shader,header.shaderLength,size)) return false;
+    if (decoded._name.find('\0') != std::string::npos || decoded._shader.find('\0') != std::string::npos)
+        return false;
+    // An individual material owns precisely this payload. No truncated data,
+    // trailing bundle sections, duplicate names, or unknown tags are accepted.
+    if (offset > size || header.dataSize != size - offset) return false;
+    const size_t end = size;
+    const auto copy = [&](void* target,size_t length) {
+        if (offset > end || length > end - offset) return false;
+        std::memcpy(target,bytes+offset,length);offset+=length;return true;
+    };
+    for (unsigned i=0;i<header.parameterCount;++i) {
+        UInt32 length=0;std::string name;UInt8 tag=0;
+        if (!copy(&length,sizeof(length)) || !text(name,length,end)
+            || !copy(&tag,sizeof(tag)) || name.empty() || name.find('\0') != std::string::npos
+            || decoded._params.count(name)) return false;
+        ParameterValue value;value.type=static_cast<MaterialParamType>(tag);
+        bool ok=false;
+        switch(value.type) {
+        case MaterialParamType::Float: ok=copy(&value.floatValue,sizeof(Float32));break;
+        case MaterialParamType::Float2: ok=copy(value.float2Value,2*sizeof(Float32));break;
+        case MaterialParamType::Float3: ok=copy(value.float3Value,3*sizeof(Float32));break;
+        case MaterialParamType::Float4: ok=copy(value.float4Value,4*sizeof(Float32));break;
+        case MaterialParamType::Float4x4: ok=copy(value.matrixValue,16*sizeof(Float32));break;
+        case MaterialParamType::Int: ok=copy(&value.intValue,sizeof(Int32));break;
+        case MaterialParamType::Bool: {
+            UInt8 boolean=0;
+            static_assert(sizeof(Bool)==sizeof(boolean));
+            ok=copy(&boolean,sizeof(boolean)) && boolean<=1;
+            value.boolValue=boolean!=0;break;
         }
+        case MaterialParamType::Texture2D:
+        case MaterialParamType::Texture3D:
+        case MaterialParamType::TextureCube:
+        case MaterialParamType::String:
+            ok=copy(&length,sizeof(length)) && text(value.stringValue,length,end);break;
+        default: return false;
+        }
+        if (!ok) return false;
+        decoded._params.emplace(std::move(name),std::move(value));
     }
-
-    // Compatibility migration for v1 assets produced by the first FBX
-    // surface-routing implementation. Renderer code only consumes the typed
-    // fields from this point onward.
-    if (header->version == 1) {
-        if (hasParameter("__ayAlphaMode")) {
-            const Int32 mode = getInt("__ayAlphaMode");
-            if (mode >= 0 && mode <= 2) {
-                _alphaMode = static_cast<MaterialAlphaMode>(mode);
-            }
+    if (offset != end) return false;
+    if (header.version == 1) {
+        if (decoded.hasParameter("__ayAlphaMode")) {
+            const Int32 mode=decoded.getInt("__ayAlphaMode");
+            if(mode>=0 && mode<=2)decoded._alphaMode=static_cast<MaterialAlphaMode>(mode);
         }
-        if (hasParameter("__ayAlphaCutoff")) {
-            _alphaCutoff = getFloat("__ayAlphaCutoff");
-        }
-        if (hasParameter("__ayDoubleSided")) {
-            _doubleSided = getBool("__ayDoubleSided");
-        }
+        if(decoded.hasParameter("__ayAlphaCutoff"))decoded._alphaCutoff=decoded.getFloat("__ayAlphaCutoff");
+        if(decoded.hasParameter("__ayDoubleSided"))decoded._doubleSided=decoded.getBool("__ayDoubleSided");
     }
-
-    _loaded = true;
-    return true;
+    clearImpl();
+    _name=std::move(decoded._name);_shader=std::move(decoded._shader);
+    _params=std::move(decoded._params);_guid=decoded._guid;
+    _alphaMode=decoded._alphaMode;_alphaCutoff=decoded._alphaCutoff;
+    _doubleSided=decoded._doubleSided;_loaded=true;return true;
 }
 
 bool Material::saveToBinary(std::vector<UInt8>& outData) const {
+    if (_params.size()>255 || _name.size()>UINT32_MAX || _shader.size()>UINT32_MAX
+        || _name.find('\0') != std::string::npos || _shader.find('\0') != std::string::npos) return false;
+    for(const auto& [name,value]:_params) {
+        if(name.empty() || name.size()>UINT32_MAX || value.stringValue.size()>UINT32_MAX) return false;
+    }
     // 计算参数数据大小
     size_t paramsDataSize = 0;
     for (const auto& pair : _params) {
@@ -523,6 +465,7 @@ bool Material::saveToBinary(std::vector<UInt8>& outData) const {
         }
     }
 
+    if (paramsDataSize > UINT32_MAX) return false;
     // 计算总大小
     size_t totalSize = sizeof(MaterialBinaryHeaderV2) + _name.size() + _shader.size() + paramsDataSize;
     outData.resize(totalSize);
