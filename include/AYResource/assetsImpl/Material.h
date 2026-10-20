@@ -93,6 +93,10 @@ public:
     void setFloat3(const char* name, const Float32 value[3]);
     void setFloat4(const char* name, const Float32 value[4]);
     void setTexture(const char* name, const char* path);
+    /// Rebase an existing texture reference without changing its 2D/3D/Cube
+    /// type. Refuses missing/non-texture parameters and embedded NUL paths;
+    /// failure preserves the value. Authoring helper, not a runtime facade.
+    bool setTextureReference(const std::string& name, const std::string& path);
 
     // ===== Binary serialization =====
     /// Decode one complete v1/v2/v3 material. Failure retains the current value;

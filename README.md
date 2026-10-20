@@ -174,3 +174,7 @@ Affected ProjectBuild/import/bootstrap/decoder/loader suites passed 49/49
 (472 checks). Standard import_tool cooked a piano arrangement successfully.
 Reports: out/audio-completion-20261016/content-credits-final.json and
 resource-integration-final.json. AYAssetFormat_Tests and both editor builds passed.
+
+具体 Material::setTextureReference 供作者工具重定位既有纹理引用，保留 Texture2D/3D/Cube 类型；
+拒绝缺失、非纹理参数及 NUL 路径，不改变失败前的值。它不是新的运行时资源获取入口。
+证据 MaterialFileTests，普通与 MSVC ASan 材质文件组均通过7例/357断言。

@@ -10,6 +10,33 @@ using namespace ayt::resource;
 
 TEST_SUITE(MaterialFileTests)
 
+TEST_CASE(texture_reference_rebase_preserves_existing_dimensional_type_and_refuses_invalid_targets)
+{
+    for(const auto type:{MaterialParamType::Texture2D,MaterialParamType::Texture3D,MaterialParamType::TextureCube}){
+        Material original;original.initialise("Typed","pbr.phoskia");original.setTexture("customTexture","./before.txr");
+        std::vector<UInt8> bytes;CHECK(original.saveToBinary(bytes));
+        UInt32 nameLength=0,shaderLength=0;
+        std::memcpy(&nameLength,bytes.data()+24,4);std::memcpy(&shaderLength,bytes.data()+28,4);
+        const std::size_t tag=40+nameLength+shaderLength+4+std::string("customTexture").size();
+        bytes[tag]=static_cast<UInt8>(type);
+        Material material;CHECK(material.loadFromBinary(bytes.data(),bytes.size()));
+        CHECK(material.setTextureReference("customTexture","textures/source/new.txr"));
+        CHECK(material.getParameterType("customTexture")==type);
+        CHECK(std::string(material.getTexture("customTexture"))=="textures/source/new.txr");
+        CHECK_FALSE(material.setTextureReference("missing","no.txr"));
+        CHECK_FALSE(material.setTextureReference("customTexture",std::string("bad\0suffix",10)));
+        CHECK(std::string(material.getTexture("customTexture"))=="textures/source/new.txr");
+        CHECK(material.getParameterCount()==1u);
+        CHECK(material.saveToBinary(bytes));Material reopened;CHECK(reopened.loadFromBinary(bytes.data(),bytes.size()));
+        CHECK(reopened.getParameterType("customTexture")==type);
+        CHECK(std::string(reopened.getTexture("customTexture"))=="textures/source/new.txr");
+    }
+    Material scalar;scalar.setFloat("roughness",.25f);
+    CHECK_FALSE(scalar.setTextureReference("roughness","texture.txr"));
+    CHECK(scalar.getFloat("roughness")==.25f);
+}
+
+
 TEST_CASE(single_material_rejects_nul_c_string_identities_and_unbounded_lengths_without_mutation)
 {
     Material original;original.initialise("Identity", "pbr.phoskia");original.setFloat("roughness",.5f);

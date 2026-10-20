@@ -253,6 +253,17 @@ void Material::setTexture(const char* name, const char* path) {
     _params[name ? name : ""] = std::move(pv);
 }
 
+bool Material::setTextureReference(const std::string& name, const std::string& path) {
+    const auto found = _params.find(name);
+    if (found == _params.end() || path.find('\0') != std::string::npos || path.size() > UINT32_MAX)
+        return false;
+    const auto type = found->second.type;
+    if (type != MaterialParamType::Texture2D && type != MaterialParamType::Texture3D
+        && type != MaterialParamType::TextureCube) return false;
+    found->second.stringValue = path;
+    return true;
+}
+
 void Material::setInt(const char* name, int value) {
     ParameterValue pv;
     pv.type = MaterialParamType::Int;
