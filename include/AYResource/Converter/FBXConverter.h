@@ -51,6 +51,7 @@ public:
     /// @param separate true=每个节点一个MeshData，false=合并所有到一个MeshData
     void setSeparateModels(bool separate) { separateModels = separate; }
     bool getSeparateModels() const { return separateModels; }
+    bool setOutputNamespace(const std::string& value) override { _outputNamespace = value; return true; }
 
 private:
     std::string sourcePath;
@@ -60,6 +61,7 @@ private:
     bool _cookTextures = true;   // 默认 cook（旧行为）；importAsset dev 模式传 false
     MaterialImportPolicy _materialPolicy;
     SourceCoordinatePolicy _sourceCoordinates;
+    std::string _outputNamespace;
 
     // 子转换器
     MeshConverter meshConverter;

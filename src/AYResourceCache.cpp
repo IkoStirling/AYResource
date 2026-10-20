@@ -96,6 +96,20 @@ void ResourceCache::put(const std::string& path, std::shared_ptr<IResource> reso
     _promoteUnlocked(path, std::move(resource));
 }
 
+void ResourceCache::replace(const std::string& path, std::shared_ptr<IResource> resource)
+{
+    if (!resource) return;
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (const auto previous = _strongCache.find(path); previous != _strongCache.end()) {
+        _memoryUsage -= previous->second->sizeInBytes();
+        _strongCache.erase(previous);
+    }
+    _weakCache.erase(path);
+    _graceCache.erase(path);
+    _lastUsed.erase(path);
+    _promoteUnlocked(path, std::move(resource));
+}
+
 std::shared_ptr<IResource> ResourceCache::get(const std::string& path)
 {
     std::lock_guard<std::mutex> lock(_mutex);

@@ -1,4 +1,7 @@
 #include "AYResource/Converter/FBXParser.h"
+#include "../ImportCacheMetadata.h"
+#include "../ImportImage.h"
+#include "../ImportTexturePath.h"
 #include <AYAssetFormat/AssetFormat.h>
 #include "AYResource/MaterialTextureContract.h"
 #include "AYResource/VirtualAssetPath.h"
@@ -6,6 +9,11 @@
 #include <AYMath/MathUtils.h>
 #include <assimp/scene.h>
 #include <assimp/Importer.hpp>
+#include <assimp/IOStream.hpp>
+#include <assimp/IOSystem.hpp>
+#include <AYIO/File.h>
+#include <fstream>
+#include <filesystem>
 #include <assimp/config.h>
 #include <assimp/postprocess.h>
 #include <unordered_map>
@@ -413,6 +421,79 @@ SourceCoordinatePolicy resolveFbxAutoCoordinatePolicy(
 FBXParser::FBXParser(const std::string& sourcePath)
     : _sourcePath(sourcePath) {}
 
+namespace {
+class SourceFileStream final : public Assimp::IOStream {
+public:
+    explicit SourceFileStream(const std::string& path)
+        : _file(detail::importNativePath(std::filesystem::u8path(path)), std::ios::binary) {
+        std::error_code error;
+        _size = std::filesystem::file_size(detail::importNativePath(std::filesystem::u8path(path)), error);
+        if (error) _size = 0;
+    }
+    bool isOpen() const { return _file.is_open(); }
+    size_t Read(void* target, size_t size, size_t count) override {
+        if (!size || count > (std::numeric_limits<size_t>::max)() / size) return 0;
+        if (size * count > size_t((std::numeric_limits<std::streamsize>::max)())) return 0;
+        _file.read(static_cast<char*>(target), static_cast<std::streamsize>(size * count));
+        const auto read = static_cast<size_t>(_file.gcount());
+        _position += read;
+        return read / size;
+    }
+    size_t Write(const void*, size_t, size_t) override { return 0; }
+    aiReturn Seek(size_t offset, aiOrigin origin) override {
+        std::ios::seekdir seekOrigin;
+        switch (origin) {
+        case aiOrigin_SET: seekOrigin = std::ios::beg; break;
+        case aiOrigin_CUR: seekOrigin = std::ios::cur; break;
+        case aiOrigin_END: seekOrigin = std::ios::end; break;
+        default: return aiReturn_FAILURE;
+        }
+        // Assimp represents negative END offsets in size_t (IOStream contract).
+        _file.clear();
+        _file.seekg(static_cast<int64_t>(offset), seekOrigin);
+        if (!_file) return aiReturn_FAILURE;
+        _position = static_cast<size_t>(_file.tellg());
+        return aiReturn_SUCCESS;
+    }
+    size_t Tell() const override { return _position; }
+    size_t FileSize() const override { return _size; }
+    void Flush() override {}
+private:
+    std::ifstream _file;
+    size_t _size = 0, _position = 0;
+};
+
+class SourceTrackingIO final : public Assimp::IOSystem {
+public:
+    explicit SourceTrackingIO(std::vector<ConversionResult::SourceFile>& files) : _files(files) {}
+    bool Exists(const char* file) const override {
+        std::error_code error;
+        return file && std::filesystem::is_regular_file(detail::importNativePath(std::filesystem::u8path(file)), error) && !error;
+    }
+    char getOsSeparator() const override { return std::filesystem::path::preferred_separator; }
+    Assimp::IOStream* Open(const char* file, const char* mode = "rb") override {
+        if (!file || !mode || mode[0] != 'r' || std::strchr(mode, '+')) return nullptr;
+        auto owned = std::make_unique<SourceFileStream>(file);
+        if (!owned->isOpen()) return nullptr;
+        auto* stream = owned.get();
+        if (stream && std::none_of(_files.begin(), _files.end(),
+                [&](const auto& entry) { return entry.path == file; })) {
+            _files.push_back(detail::snapshotImportSource(file));
+        }
+        return owned.release();
+    }
+    void Close(Assimp::IOStream* file) override { delete file; }
+    bool ComparePaths(const char* first, const char* second) const override {
+        std::error_code error;
+        const auto same = std::filesystem::equivalent(std::filesystem::u8path(first),
+            std::filesystem::u8path(second), error);
+        return error ? Assimp::IOSystem::ComparePaths(first, second) : same;
+    }
+private:
+    std::vector<ConversionResult::SourceFile>& _files;
+};
+}
+
 bool FBXParser::parse(const std::string& sourcePath) {
     if (!sourcePath.empty()) {
         _sourcePath = sourcePath;
@@ -423,6 +504,8 @@ bool FBXParser::parse(const std::string& sourcePath) {
     }
 
     Assimp::Importer importer;
+    _sourceFiles.clear();
+    importer.SetIOHandler(new SourceTrackingIO(_sourceFiles));
     // Assimp 6 applies FBX axis metadata to the scene root, but AY persists
     // mesh-local vertices and bind-space skeleton data without that node. Auto
     // therefore keeps Assimp right-handed until AY can bake the reference FBX
@@ -430,7 +513,10 @@ bool FBXParser::parse(const std::string& sourcePath) {
     const bool manualCoordinates =
         _sourceCoordinates.mode == SourceCoordinateMode::Manual;
     const bool autoFbxCoordinates = !manualCoordinates && isFbxPath(_sourcePath);
-    const bool explicitCoordinates = manualCoordinates || autoFbxCoordinates;
+    const auto sourceExtension = importExtensionOf(_sourcePath);
+    const bool autoGltfCoordinates = !manualCoordinates
+        && (sourceExtension == "gltf" || sourceExtension == "glb");
+    const bool explicitCoordinates = manualCoordinates || autoFbxCoordinates || autoGltfCoordinates;
     importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_IGNORE_UP_DIRECTION,
                              manualCoordinates);
     importer.SetPropertyBool(AI_CONFIG_FBX_CONVERT_TO_M,
@@ -440,7 +526,7 @@ bool FBXParser::parse(const std::string& sourcePath) {
                        | aiProcess_JoinIdenticalVertices
                        | aiProcess_LimitBoneWeights;
     // Direct parser tests also use OBJ fixtures. Preserve their legacy Assimp
-    // conversion; the explicit Auto wrapper resolution is FBX-specific.
+    // conversion; explicit Auto resolution covers FBX and glTF only.
     if (!explicitCoordinates) {
         flags |= aiProcess_MakeLeftHanded | aiProcess_FlipWindingOrder;
     }
@@ -455,6 +541,7 @@ bool FBXParser::parse(const std::string& sourcePath) {
 
     const aiScene* scene = importer.ReadFile(_sourcePath, flags);
     if (!scene) {
+        std::fprintf(stderr, "[SceneImport] source parse failed: %s\n", importer.GetErrorString());
         return false;
     }
 
@@ -463,6 +550,15 @@ bool FBXParser::parse(const std::string& sourcePath) {
     }
 
     SourceCoordinatePolicy effectiveCoordinates = _sourceCoordinates;
+    if (autoGltfCoordinates) {
+        // glTF specifies RH, Y-up, +Z-forward and metres. Resolve this known
+        // basis explicitly, including a nonzero user unit override, instead
+        // of silently ignoring it in the legacy Assimp LH-only branch.
+        effectiveCoordinates.up = ImportAxis::PositiveY;
+        effectiveCoordinates.forward = ImportAxis::PositiveZ;
+        effectiveCoordinates.handedness = ImportHandedness::Right;
+        if (effectiveCoordinates.metersPerUnit == 0) effectiveCoordinates.metersPerUnit = 1;
+    }
     if (autoFbxCoordinates) {
         aiMatrix4x4 referenceTransform;
         const bool hasReference = findAutoReferenceTransform(
@@ -517,17 +613,18 @@ bool FBXParser::parse(const std::string& sourcePath) {
         _parseAllMeshesAsOne(scene);
     }
 
+    // 解析所有 Texture (embedded)
+    for (unsigned int i = 0; i < scene->mNumTextures; i++) {
+        if (scene->mTextures[i]) {
+            if (!_parseTexture(scene->mTextures[i], i)) return false;
+        } else return false;
+    }
+
+
     // 解析所有 Material
     for (unsigned int i = 0; i < scene->mNumMaterials; i++) {
         if (scene->mMaterials[i]) {
             _parseMaterial(scene->mMaterials[i], i);
-        }
-    }
-
-    // 解析所有 Texture (embedded)
-    for (unsigned int i = 0; i < scene->mNumTextures; i++) {
-        if (scene->mTextures[i]) {
-            _parseTexture(scene->mTextures[i], i);
         }
     }
 
@@ -1342,7 +1439,10 @@ void FBXParser::_extractMaterialTextures(const aiMaterial* mat, MaterialData& ma
     };
 
     std::unordered_map<std::string, UInt32> semanticLayerCounts;
-    for (const auto& [texType, paramName] : textureTypes) {
+    const auto extension = importExtensionOf(_sourcePath);
+    const bool gltf = extension == "gltf" || extension == "glb";
+    for (const auto& [texType, originalName] : textureTypes) {
+        const char* paramName = gltf && texType == aiTextureType_LIGHTMAP ? "aoTexture" : originalName;
         const unsigned int texCount = mat->GetTextureCount(texType);
         for (unsigned int textureIndex = 0; textureIndex < texCount;
              ++textureIndex) {
@@ -1402,7 +1502,21 @@ void FBXParser::_extractMaterialTextures(const aiMaterial* mat, MaterialData& ma
             // Virtual path uses flattened stem + usage + extension.
             // texturePaths keeps the Assimp path so convertFromPath can
             // open absolute or FBX-relative sources.
-            const std::string textureName = makeTextureStemFromSourcePath(path);
+            int embeddedIndex = -1;
+            if (path.front() == '*') {
+                if (path.size() < 2 || !std::all_of(path.begin()+1,path.end(),
+                        [](unsigned char ch){return ch >= '0' && ch <= '9';}))
+                    throw std::runtime_error("invalid embedded texture reference");
+                const auto index = std::stoull(path.substr(1));
+                if (index >= _result->textures.size()) throw std::runtime_error("missing embedded texture");
+                embeddedIndex = int(index);
+            }
+            const int sourceChannel = gltf && texType == aiTextureType_METALNESS ? 2
+                : gltf && texType == aiTextureType_DIFFUSE_ROUGHNESS ? 1 : -1;
+            const std::string textureName = embeddedIndex >= 0
+                ? _assetBaseName + "_embedded_" + std::to_string(embeddedIndex)
+                : detail::safeSceneTextureStem(path,
+                    detail::importPathText(std::filesystem::u8path(_sourcePath).parent_path()));
 
             // Dev raw-reference mode: keep the source extension (e.g. .png)
             // so .aymat points at the raw image copied into textures/;
@@ -1410,7 +1524,7 @@ void FBXParser::_extractMaterialTextures(const aiMaterial* mat, MaterialData& ma
             // sources stay on .aytex (zero-decode passthrough cook, and
             // .dds is not a registered runtime extension).
             const std::string texExt =
-                _preserveSourceExtension ? textureDevExtensionOf(path)
+                _preserveSourceExtension && embeddedIndex < 0 && sourceChannel < 0 ? textureDevExtensionOf(path)
                     : std::string(ayt::asset_format::suffix(
                         ayt::asset_format::Id::Texture));
 
@@ -1426,6 +1540,8 @@ void FBXParser::_extractMaterialTextures(const aiMaterial* mat, MaterialData& ma
 
             material.texturePaths.push_back(path);
             MaterialData::TextureSource source;
+            source.embeddedIndex = embeddedIndex;
+            source.sourceChannel = sourceChannel;
             source.parameterName = bindingName;
             source.sourcePath = path;
             source.virtualPath = param.texturePath;
@@ -1764,21 +1880,32 @@ void FBXParser::_parseMaterial(const void* aiMatPtr, size_t index) {
     _result->materials.push_back(std::move(material));
 }
 
-void FBXParser::_parseTexture(const void* aiTexPtr, size_t index) {
+bool FBXParser::_parseTexture(const void* aiTexPtr, size_t index) {
     const aiTexture* tex = static_cast<const aiTexture*>(aiTexPtr);
-
+    if (!tex || !tex->pcData || !tex->mWidth) return false;
     TextureData texture;
     texture.name = "texture_" + std::to_string(index);
-
-    if (tex->mWidth > 0) {
-        texture.width = tex->mWidth;
-        texture.height = tex->mHeight;
-        texture.format = TextureFormat::RGBA8;
-        texture.imageData.resize(tex->mWidth * tex->mHeight * 4);
-        memcpy(texture.imageData.data(), tex->pcData, texture.imageData.size());
+    texture.format = TextureFormat::RGBA8;
+    if (!tex->mHeight) {
+        // Assimp stores compressed PNG/JPEG byte length in mWidth.
+        detail::ImportImage image;
+        if (!detail::decodeImportImage(tex->pcData, tex->mWidth, image)) return false;
+        texture.width = image.width;
+        texture.height = image.height;
+        texture.imageData = std::move(image.rgba);
+    } else {
+        if (tex->mWidth > 32768 || tex->mHeight > 32768) return false;
+        texture.width = int(tex->mWidth);
+        texture.height = int(tex->mHeight);
+        texture.imageData.resize(std::size_t(tex->mWidth) * tex->mHeight * 4);
+        for (std::size_t pixel = 0; pixel < std::size_t(tex->mWidth) * tex->mHeight; ++pixel) {
+            const auto& source = tex->pcData[pixel]; // aiTexel is BGRA by field layout.
+            auto* target = texture.imageData.data() + pixel * 4;
+            target[0]=source.r; target[1]=source.g; target[2]=source.b; target[3]=source.a;
+        }
     }
-
     _result->textures.push_back(std::move(texture));
+    return true;
 }
 
 void FBXParser::_parseMorphTargets(const aiMesh* sourceMesh,

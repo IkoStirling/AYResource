@@ -1,4 +1,7 @@
 #include "AYResource/ProjectBuild.h"
+#include <AYResource/ImportJob.h>
+#include <AYResource/Loader/MeshLoader.h>
+#include <AYResource/assetsImpl/Mesh.h>
 #include "AYTest.h"
 #ifdef AY_RESOURCE_TEST_SHADER
 #include <AYShader/ShaderBuild.h>
@@ -13,6 +16,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -112,6 +116,16 @@ std::vector<std::uint8_t> makeTinyWav()
     std::vector<std::uint8_t> result(sizeof(Header) + dataBytes, 0);
     std::memcpy(result.data(), &header, sizeof(Header));
     return result;
+}
+
+std::vector<std::uint8_t> makeImportPng(bool red = false)
+{
+    const std::string hex = red
+        ? "89504e470d0a1a0a0000000d494844520000000200000002080600000072b60d240000001549444154789c637c6620f69f81818181094480300021b8022f99fc55610000000049454e44ae426082"
+        : "89504e470d0a1a0a0000000d494844520000000200000002080600000072b60d240000001549444154789c63140c3df39f818181810944803000208d0235933bc0420000000049454e44ae426082";
+    std::vector<std::uint8_t> bytes;
+    for(std::size_t i=0;i<hex.size();i+=2)bytes.push_back(std::uint8_t(std::stoi(hex.substr(i,2),nullptr,16)));
+    return bytes;
 }
 
 std::string profileJson(const std::string& output = "out/package/test")
@@ -684,6 +698,13 @@ TEST_CASE(actor_classes_and_scripts_form_a_checked_loose_release_closure)
     auto profile = ProjectBuildProfile::load(
         (cleanup.root / "BuildProfiles/test.aybuild.json").string(), &error);
     auto plan = ProjectBuildPlanner::create(profile, cleanup.root.string());
+#if !AY_RESOURCE_TEST_SCRIPT
+    CHECK_FALSE(plan.valid());
+    CHECK(std::any_of(plan.diagnostics.begin(),plan.diagnostics.end(),[](const auto& item){
+        return item.message.find("AY_ENABLE_SCRIPT")!=std::string::npos;
+    }));
+    return; // This profile verifies the explicit unsupported-authoring refusal.
+#endif
     CHECK(plan.valid());
     const auto built = ProjectBuildExecutor::execute(plan);
     CHECK_MSG(built.ok, built.error.c_str());
@@ -1221,6 +1242,162 @@ TEST_CASE(skeleton_release_gate_rechecks_dependency_closure_at_execution_time)
     const ProjectBuildResult built = ProjectBuildExecutor::execute(plan);
     CHECK_FALSE(built.ok);
     CHECK(built.error.find("Skeleton release gate") != std::string::npos);
+}
+
+
+TEST_CASE(project_build_uses_authoring_recipe_namespace_coordinates_and_cache_identity)
+{
+    ProjectBuildCleanup cleanup{"ayproject_build_import_recipe"};
+    const float positions[] = {0,0,0, 2,0,0, 0,2,0};
+    std::vector<std::uint8_t> buffer(sizeof(positions));
+    std::memcpy(buffer.data(), positions, sizeof(positions));
+    CHECK(writeBytes(cleanup.root / "Assets/Models/Triangle.bin", buffer));
+    CHECK(writeText(cleanup.root / "Assets/Models/Triangle.gltf", R"({"asset":{"version":"2.0"},
+"buffers":[{"uri":"Triangle.bin","byteLength":36}],"bufferViews":[{"buffer":0,"byteLength":36}],
+"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[2,2,0]}],
+"meshes":[{"name":"Triangle","primitives":[{"attributes":{"POSITION":0}}]}],
+"nodes":[{"mesh":0}],"scenes":[{"nodes":[0]}],"scene":0})"));
+    const auto imageSource=cleanup.root/"Assets/Models/Textures/Surface.png";
+    CHECK(writeBytes(imageSource,makeImportPng()));
+    {
+        nlohmann::json source;
+        std::ifstream input(cleanup.root/"Assets/Models/Triangle.gltf");
+        input>>source; input.close();
+        source["images"]={{{"uri","Textures/Surface.png"}}};
+        source["textures"]={{{"source",0}}};
+        source["materials"]={{{"pbrMetallicRoughness",{{"baseColorTexture",{{"index",0}}}}}}};
+        source["meshes"][0]["primitives"][0]["material"]=0;
+        CHECK(writeText(cleanup.root/"Assets/Models/Triangle.gltf",source.dump()));
+    }
+    ImportOptions settings;
+    settings.sourcePath = "Assets/Models/Triangle.gltf";
+    settings.outputDir = ".ayeditor_cache/assets";
+    settings.requireCharacterAssets = false;
+    settings.loadOption = IConverter::LoadOption::MeshOnly;
+    settings.sourceId = "source-build-triangle";
+    settings.outputNamespace = "source-build-triangle";
+    settings.sourceCoordinates.mode = SourceCoordinateMode::Manual;
+    settings.sourceCoordinates.metersPerUnit = .01f;
+    const auto recipePath = cleanup.root / ".ayeditor/imports/source-build-triangle.json";
+    CHECK(writeText(recipePath, serializeImportRecipe(settings)));
+    auto json = nlohmann::json::parse(profileJson());
+    json["content"]["rules"] = nlohmann::json::array({
+        {{"match","Models/**/*.gltf"},{"transform","cook"},{"storage","loose"},{"cookTextures",false}},
+        {{"match","Models/**/*.bin"},{"transform","exclude"}}
+    });
+    CHECK(writeText(cleanup.root / "BuildProfiles/test.aybuild.json", json.dump(2)));
+    std::string error;
+    const auto profile = ProjectBuildProfile::load(
+        (cleanup.root / "BuildProfiles/test.aybuild.json").string(), &error);
+    auto plan = ProjectBuildPlanner::create(profile, cleanup.root.string());
+    CHECK(plan.valid());
+    auto asset = std::find_if(plan.assets.begin(), plan.assets.end(),
+        [](const auto& item) { return item.transform == ProjectAssetTransform::Cook; });
+    CHECK(asset != plan.assets.end());
+    if (asset == plan.assets.end()) return;
+    CHECK(!asset->importRecipe.empty());
+    const auto firstKey = asset->cacheKey;
+    const auto first = ProjectBuildExecutor::execute(plan);
+    CHECK_MSG(first.ok, first.error.c_str());
+    if (!first.ok) return;
+    fs::path meshPath;
+    const auto content = cleanup.root / "out/package/test/Content";
+    for (const auto& file : fs::recursive_directory_iterator(content / "meshes"))
+        if (file.path().extension() == ".msh") meshPath = file.path();
+    CHECK(!meshPath.empty());
+    CHECK(meshPath.generic_string().find("/source-build-triangle/") != std::string::npos);
+    MeshLoader loader;
+    const auto mesh = std::dynamic_pointer_cast<Mesh>(loader.load(meshPath.string()));
+    CHECK(mesh != nullptr);
+    if (mesh) CHECK(std::abs(mesh->getBounds().halfExtent.x - .01f) < .0001f);
+    const auto cached = ProjectBuildExecutor::execute(plan);
+    CHECK_MSG(cached.ok, cached.error.c_str());
+    CHECK(cached.cacheHitCount == 1u);
+    CHECK(writeText(cleanup.root/"Assets/Models/notes.txt","unrelated author notes"));
+    const auto unrelated=ProjectBuildPlanner::create(profile,cleanup.root.string());
+    const auto unrelatedModel=std::find_if(unrelated.assets.begin(),unrelated.assets.end(),
+        [](const auto& item){return item.transform==ProjectAssetTransform::Cook;});
+    CHECK(unrelatedModel!=unrelated.assets.end());
+    if(unrelatedModel!=unrelated.assets.end())CHECK(unrelatedModel->cacheKey==firstKey);
+    const auto imageStamp=fs::last_write_time(imageSource);
+    CHECK(writeBytes(imageSource,makeImportPng(true)));
+    fs::last_write_time(imageSource,imageStamp);
+    const auto texturePlan=ProjectBuildPlanner::create(profile,cleanup.root.string());
+    CHECK(texturePlan.valid());
+    const auto textureModel=std::find_if(texturePlan.assets.begin(),texturePlan.assets.end(),
+        [](const auto& item){return item.transform==ProjectAssetTransform::Cook;});
+    CHECK(textureModel!=texturePlan.assets.end());
+    if(textureModel!=texturePlan.assets.end()){
+        CHECK(textureModel->importDependencies.size()==3u);
+        CHECK(textureModel->cacheKey!=firstKey);
+    }
+    CHECK(!ProjectBuildExecutor::execute(plan).ok);
+    const auto textureBuild=ProjectBuildExecutor::execute(texturePlan);
+    CHECK_MSG(textureBuild.ok,textureBuild.error.c_str());
+    CHECK(textureBuild.cacheHitCount==0u);
+    settings.sourceCoordinates.metersPerUnit = .5f;
+    CHECK(writeText(recipePath, serializeImportRecipe(settings)));
+    const auto stale = ProjectBuildExecutor::execute(plan);
+    CHECK(!stale.ok);
+    CHECK(stale.error.find("changed after planning") != std::string::npos);
+    plan = ProjectBuildPlanner::create(profile, cleanup.root.string());
+    CHECK(plan.valid());
+    asset = std::find_if(plan.assets.begin(), plan.assets.end(),
+        [](const auto& item) { return item.transform == ProjectAssetTransform::Cook; });
+    CHECK(asset != plan.assets.end());
+    if (asset == plan.assets.end()) return;
+    CHECK(asset->cacheKey != firstKey);
+    const auto changed = ProjectBuildExecutor::execute(plan);
+    CHECK_MSG(changed.ok, changed.error.c_str());
+    CHECK(changed.cacheHitCount == 0u);
+    const auto changedMesh = std::dynamic_pointer_cast<Mesh>(loader.load(meshPath.string()));
+    CHECK(changedMesh != nullptr);
+    if (changedMesh) CHECK(std::abs(changedMesh->getBounds().halfExtent.x - .5f) < .0001f);
+    CHECK(writeText(cleanup.root / "Assets/Models/Triangle.gltf", "{broken"));
+    const auto brokenPlan = ProjectBuildPlanner::create(profile, cleanup.root.string());
+    const auto broken = ProjectBuildExecutor::execute(brokenPlan);
+    CHECK(!broken.ok);
+    const auto retained = std::dynamic_pointer_cast<Mesh>(loader.load(meshPath.string()));
+    CHECK(retained != nullptr);
+    if (retained) CHECK(std::abs(retained->getBounds().halfExtent.x - .5f) < .0001f);
+}
+
+TEST_CASE(project_build_refuses_malformed_authoring_recipes)
+{
+    ProjectBuildCleanup cleanup{"ayproject_build_bad_import_recipe"};
+    CHECK(writeText(cleanup.root / "Assets/value.txt", "value"));
+    CHECK(writeText(cleanup.root / ".ayeditor/imports/source-invalid.json", "{}"));
+    CHECK(writeText(cleanup.root / "BuildProfiles/test.aybuild.json", profileJson()));
+    const auto profile = ProjectBuildProfile::load(
+        (cleanup.root / "BuildProfiles/test.aybuild.json").string());
+    CHECK(!ProjectBuildPlanner::create(profile, cleanup.root.string()).valid());
+}
+
+
+TEST_CASE(project_build_refuses_a_new_source_recipe_added_after_planning)
+{
+    ProjectBuildCleanup cleanup{"ayproject_build_new_recipe"};
+    CHECK(writeBytes(cleanup.root/"Assets/Audio/tone.wav",makeTinyWav()));
+    auto json=nlohmann::json::parse(profileJson());
+    json["content"]["rules"]=nlohmann::json::array({
+        {{"match","Audio/**/*.wav"},{"transform","cook"},{"storage","loose"}}
+    });
+    CHECK(writeText(cleanup.root/"BuildProfiles/test.aybuild.json",json.dump()));
+    const auto profile=ProjectBuildProfile::load(
+        (cleanup.root/"BuildProfiles/test.aybuild.json").string());
+    const auto plan=ProjectBuildPlanner::create(profile,cleanup.root.string());
+    CHECK(plan.valid());
+    ImportOptions recipe;
+    recipe.sourcePath="Assets/Audio/tone.wav";
+    recipe.outputDir=".ayeditor_cache/assets";
+    recipe.requireCharacterAssets=false;
+    CHECK(writeText(cleanup.root/".ayeditor/imports/source-audio.json",serializeImportRecipe(recipe)));
+    const auto stale=ProjectBuildExecutor::execute(plan);
+    CHECK(!stale.ok);
+    CHECK(stale.error.find("changed after planning")!=std::string::npos);
+    const auto current=ProjectBuildPlanner::create(profile,cleanup.root.string());
+    const auto built=ProjectBuildExecutor::execute(current);
+    CHECK_MSG(built.ok,built.error.c_str());
 }
 
 TEST_SUITE_END

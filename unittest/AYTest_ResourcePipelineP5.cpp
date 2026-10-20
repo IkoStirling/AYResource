@@ -70,6 +70,7 @@ TEST_CASE(extension_helpers_match_editor_contract)
 TEST_CASE(import_empty_and_missing_and_unsupported)
 {
     ImportOptions opts;
+    opts.allowLegacyCache = true; // This suite explicitly exercises pre-fingerprint sidecars.
     opts.outputDir = "cache";
 
     ImportResult empty = importAsset(opts);
@@ -104,6 +105,7 @@ TEST_CASE(import_reuses_aydep_cache_without_converter)
     CHECK(writeText(assets + "/hero.aydep.json", sampleDepJson()));
 
     ImportOptions opts;
+    opts.allowLegacyCache = true; // This suite explicitly exercises pre-fingerprint sidecars.
     opts.sourcePath = src;
     opts.outputDir = assets;
     opts.force = false;
@@ -143,6 +145,7 @@ TEST_CASE(animation_requirement_reuses_animation_only_cache)
               "\"type\":\"Animation\",\"size\":15}],\"dependencies\":[]}"));
 
     ImportOptions opts;
+    opts.allowLegacyCache = true; // This suite explicitly exercises pre-fingerprint sidecars.
     opts.sourcePath = src;
     opts.outputDir = assets;
     opts.requireCharacterAssets = false;
@@ -166,6 +169,7 @@ TEST_CASE(import_cancel_before_convert)
     // No cache → would attempt convert; cancel after validate/check.
 
     ImportOptions opts;
+    opts.allowLegacyCache = true; // This suite explicitly exercises pre-fingerprint sidecars.
     opts.sourcePath = src;
     opts.outputDir = assets;
     opts.force = true;
@@ -200,6 +204,7 @@ TEST_CASE(import_batch_reports_per_item)
     const std::string missing = kRoot + "/missing.fbx";
 
     ImportBatchOptions batch;
+    batch.allowLegacyCache = true;
     batch.sourcePaths = {a, missing};
     batch.outputDir = assets;
     batch.requireCharacterAssets = true;
@@ -263,6 +268,7 @@ TEST_CASE(import_texture_mode_gates_cache_hit)
         CHECK(writeText(assets + "/" + c.stem + ".aydep.json", json));
 
         ImportOptions opts;
+    opts.allowLegacyCache = true; // This suite explicitly exercises pre-fingerprint sidecars.
         opts.sourcePath = src;
         opts.outputDir = assets;
         opts.cookTextures = c.cookRequested;
@@ -288,6 +294,7 @@ TEST_CASE(import_fbx_contract_tag_invalidates_legacy_cache)
         R"({"resources":[{"path":"meshes/legacy.aymesh","type":"Mesh","size":1},{"path":"skeletons/legacy.ayskel","type":"Skeleton","size":1}],"dependencies":[]})"));
 
     ImportOptions opts;
+    opts.allowLegacyCache = true; // This suite explicitly exercises pre-fingerprint sidecars.
     opts.sourcePath = src;
     opts.outputDir = assets;
     ImportResult r = importAsset(opts);
@@ -309,6 +316,7 @@ TEST_CASE(import_fbx_contract_tag_invalidates_previous_v6_opacity_alias_cache)
         R"({"importerContractTag":"fbx-assimp-lh-yup-zfwd-ccw-uvtop-m-surface-slots-opacity-v6","resources":[{"path":"meshes/v6.aymesh","type":"Mesh","size":1},{"path":"skeletons/v6.ayskel","type":"Skeleton","size":1}],"dependencies":[]})"));
 
     ImportOptions opts;
+    opts.allowLegacyCache = true; // This suite explicitly exercises pre-fingerprint sidecars.
     opts.sourcePath = src;
     opts.outputDir = assets;
     ImportResult r = importAsset(opts);
@@ -330,6 +338,7 @@ TEST_CASE(import_fbx_contract_tag_invalidates_previous_v9_semantic_texture_cache
         R"({"importerContractTag":"fbx-semantic-textures-explicit-source-space-lh-yup-zfwd-ccw-uvtop-m-v9","resources":[{"path":"meshes/v9.aymesh","type":"Mesh","size":1},{"path":"skeletons/v9.ayskel","type":"Skeleton","size":1}],"dependencies":[]})"));
 
     ImportOptions opts;
+    opts.allowLegacyCache = true; // This suite explicitly exercises pre-fingerprint sidecars.
     opts.sourcePath = src;
     opts.outputDir = assets;
     ImportResult r = importAsset(opts);
@@ -355,6 +364,7 @@ TEST_CASE(import_fbx_contract_tag_invalidates_previous_v10_uv_cache)
         R"({"importerContractTag":"fbx-opacity-source-channel-explicit-source-space-lh-yup-zfwd-ccw-uvtop-m-v10","resources":[{"path":"meshes/v10.aymesh","type":"Mesh","size":1},{"path":"skeletons/v10.ayskel","type":"Skeleton","size":1}],"dependencies":[]})"));
 
     ImportOptions opts;
+    opts.allowLegacyCache = true; // This suite explicitly exercises pre-fingerprint sidecars.
     opts.sourcePath = src;
     opts.outputDir = assets;
     ImportCancelToken cancel;

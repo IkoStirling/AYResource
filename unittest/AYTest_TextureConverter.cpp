@@ -287,12 +287,21 @@ TEST_SUITE(TextureConverterTests)
         std::filesystem::create_directories(root + "/out");
         {
             std::ofstream out(root + "/src/tex.dds", std::ios::binary);
-            const char junk[] = {0x44, 0x44, 0x53, 0x20, 0x00, 0x00, 0x00, 0x00};
-            out.write(junk, sizeof(junk));
+            // A valid 4x4 BC1 source must be wrapped in the typed texture
+            // container; renaming arbitrary DDS bytes is not a conversion.
+            std::string bytes(136, '\0');
+            const auto put = [&](size_t offset, uint32_t value) {
+                for (int byte = 0; byte < 4; ++byte)
+                    bytes[offset + size_t(byte)] = char((value >> (byte * 8)) & 255);
+            };
+            put(0, 0x20534444); put(4, 124); put(8, 0x81007);
+            put(12, 4); put(16, 4); put(20, 8); put(28, 1);
+            put(76, 32); put(80, 4); put(84, 0x31545844); put(108, 0x1000);
+            out.write(bytes.data(), std::streamsize(bytes.size()));
         }
 
-        // dds is excluded from rawCopy: passthrough (default on) still
-        // produces a .txr so the FBXParser reference stays consistent.
+        // DDS is excluded from rawCopy: its encoded blocks are preserved
+        // inside a real .txr so the parser and runtime loader agree.
         TextureConverter conv;
         conv.setOutputDir(root + "/out");
         conv.setRawCopy(true);

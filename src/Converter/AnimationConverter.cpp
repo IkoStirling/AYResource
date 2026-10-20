@@ -22,7 +22,7 @@ void AnimationConverter::setOutputDir(const std::string& dir) {
 }
 
 static bool writeFile(const std::string& path, const void* data, size_t size) {
-    return ayt::io::File::atomicWrite(path, data, size);
+    return ayt::io::File::atomicWriteUtf8(path, data, size);
 }
 
 // R-02: take 名字清洗 — 与引擎其他资产的 <base>_<name>.<ext> 约定一致

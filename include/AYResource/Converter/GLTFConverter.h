@@ -1,5 +1,6 @@
 #pragma once
 #include "AYResource/IConverter.h"
+#include "AYResource/Converter/FBXConverter.h"
 #include <memory>
 #include <string>
 
@@ -27,11 +28,21 @@ public:
     // ===== 加载选项 =====
     void setLoadOption(IConverter::LoadOption option) override { loadOption = option; }
     IConverter::LoadOption getLoadOption() const { return loadOption; }
+    void setCookTextures(bool cook) override { _pipeline.setCookTextures(cook); }
+    void setMaterialImportPolicy(const MaterialImportPolicy& policy) override {
+        _pipeline.setMaterialImportPolicy(policy);
+    }
+    void setSourceCoordinatePolicy(const SourceCoordinatePolicy& policy) override {
+        _pipeline.setSourceCoordinatePolicy(policy);
+    }
+    bool setOutputNamespace(const std::string& value) override { return _pipeline.setOutputNamespace(value); }
 
 private:
     std::string sourcePath;
     std::string outputDir;
     IConverter::LoadOption loadOption = IConverter::LoadOption::MeshOnly;
+    // Shared Assimp scene parser and typed AY asset writers.
+    FBXConverter _pipeline;
 };
 
 } // namespace ayt::resource

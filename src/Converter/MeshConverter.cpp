@@ -14,7 +14,7 @@
 #include <vector>
 
 static bool writeFile(const std::string& path, const void* data, size_t size) {
-    return ayt::io::File::atomicWrite(path, data, size);
+    return ayt::io::File::atomicWriteUtf8(path, data, size);
 }
 
 namespace ayt::resource

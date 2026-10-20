@@ -74,9 +74,11 @@ public:
     const SourceCoordinatePolicy& getSourceCoordinatePolicy() const {
         return _sourceCoordinates;
     }
+    const std::vector<ConversionResult::SourceFile>& sourceFiles() const { return _sourceFiles; }
 
 private:
     std::string _sourcePath;
+    std::vector<ConversionResult::SourceFile> _sourceFiles;
     std::string _assetBaseName;
     std::string _textureUsageSuffix = "_d";
     bool _preserveSourceExtension = false;
@@ -95,7 +97,7 @@ private:
     void _parseMesh(const void* aiMesh, size_t index, const std::string& uniqueName);
     void _parseMaterial(const void* aiMaterial, size_t index);
     void _extractMaterialTextures(const struct aiMaterial* mat, struct MaterialData& material);
-    void _parseTexture(const void* aiTexture, size_t index);
+    bool _parseTexture(const void* aiTexture, size_t index);
     void _parseAllMeshesAsOne(const aiScene* scene);
     void _collectNodeMeshes(const aiNode* node, const aiScene* scene, const std::string& parentPath);
     void _parseSkeletons(const aiScene* scene);

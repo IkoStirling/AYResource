@@ -125,6 +125,15 @@ struct ProjectBuildAsset {
     /// Explicit asset-root-relative resources from the transitive Logia modules.
     /// Transform/storage follow normal project rules; excluded/missing references fail.
     std::vector<std::string> resourceDependencies;
+    /// Complete resolved authoring recipe and its project data file. Cooking
+    /// preserves names/coordinates/material settings; profile owns destination
+    /// and texture cooking. Recipe bytes participate in the cache/plan identity.
+    std::string importRecipe;
+    std::string importRecipePath;
+    /// Physical input closure discovered once by the scene importer while
+    /// planning. Source bytes, external buffers and images are hashed; unrelated
+    /// neighbouring files do not invalidate the model's cook result.
+    std::vector<std::string> importDependencies;
 };
 
 struct ProjectBuildPlan {

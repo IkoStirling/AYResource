@@ -44,6 +44,9 @@ enum class ImportUvOrigin : uint8_t {
     BottomLeft,
 };
 
+/// Auto resolves format axes (FBX metadata/wrapper; glTF RH/Y-up/+Z-forward).
+/// A nonzero finite metersPerUnit overrides units in either coordinate mode.
+/// UV origin remains an explicit source convention.
 struct SourceCoordinatePolicy {
     SourceCoordinateMode mode = SourceCoordinateMode::Auto;
     ImportAxis up = ImportAxis::PositiveY;
@@ -126,6 +129,18 @@ struct ConversionResult {
     // Effective source-coordinate preset. Empty means a legacy sidecar.
     std::string sourceCoordinateTag;
 
+    struct SourceFile {
+        std::string path;
+        std::string sha256;
+        std::uint64_t size = 0;
+        bool operator==(const SourceFile&) const = default;
+    };
+    /// Actual source files read by a scene converter (including external
+    /// buffers/images). ImportJob fingerprints these in its cache metadata;
+    /// they are not runtime resource dependency edges.
+    /// Digests are captured before consumption and checked before publication.
+    std::vector<SourceFile> sourceFiles;
+
     // JSON 序列化（离线模式用）
     std::string toJson() const;
     static ConversionResult fromJson(const std::string& json);
@@ -164,6 +179,10 @@ class IConverter {
 
 	    // ===== 信息 =====
 	    virtual const char* getSourceType() const = 0;
+
+        /// Optional per-source output folder component. Empty preserves the
+        /// legacy virtual paths; unsupported converters refuse a nonempty key.
+        virtual bool setOutputNamespace(const std::string& value) { return value.empty(); }
 
 	    // ===== 工厂方法 =====
 	    static std::unique_ptr<IConverter> create(const std::string& sourcePath);

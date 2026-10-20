@@ -41,21 +41,22 @@ public:
     bool getGenerateMipmaps() const { return generateMipmaps; }
 
     // ===== 直接拷贝选项 =====
-    //开启后：跳过加载/解码/压缩，直接将源文件原始数据写入纹理路径
-    // 适用于已压缩的纹理文件（如 DDS/BC7）直接流转
+    // 开启后：保留已编码块。DDS 经验证并封装正式 Texture 容器；
+    // 已有 Texture 文件先验证再复制，不对 DDS 做改后缀原样复制。
     void setPassthrough(bool enable) { passthrough = enable; }
     bool getPassthrough() const { return passthrough; }
 
     // ===== Dev raw-reference mode（ImportOptions.cookTextures=false）=====
     // 开启后：png/jpg/bmp/tga 源文件原样拷贝到 textures/ 并保留原扩展名
     // （如 textures/foo_d.png），.aymat 引用同扩展名路径，运行时由
-    // TextureLoader 的 stb 分支解码。dds/aytex 源仍走 passthrough → .aytex
-    // （零解码，且 .dds 不是运行时注册扩展）。
+    // TextureLoader 的 stb 分支解码。DDS 保留 BC 块并封装为 .txr；
+    // 已有 typed Texture 先验证再复制（.dds 不是运行时注册扩展）。
     void setRawCopy(bool enable) { rawCopy = enable; }
     bool getRawCopy() const { return rawCopy; }
 
     // IConverter 开关传播：dev（false）→ rawCopy；发布（true）→ 关闭 rawCopy。
     void setCookTextures(bool cook) override { rawCopy = !cook; }
+    bool setOutputNamespace(const std::string& value) override { _outputNamespace = value; return true; }
 
     // ===== 用途后缀 =====
     void setUsageSuffix(const std::string& suffix) { usageSuffix = suffix; }
@@ -71,7 +72,12 @@ public:
     ConversionResult convertFromPath(const std::string& imagePath,
                                    const std::string& textureName,
                                    const std::string& baseFbxDir,
-                                   const std::string& usageSuffixOverride);
+                                   const std::string& usageSuffixOverride,
+                                   int sourceChannel = -1);
+    /// Import-only decoded RGBA8 publication. Uses the existing .txr codec and
+    /// configured compression/mips; raw-copy mode emits uncompressed RGBA8.
+    /// virtualPath must be a portable textures/ path and includes its suffix.
+    ConversionResult convertPixels(const TextureData& image, const std::string& virtualPath);
 
     // ===== 批量转换（从 IntermediateAsset） =====
     std::vector<ConversionResult::ConvertedResource> convertAll(
@@ -82,10 +88,11 @@ public:
 private:
     std::string sourcePath;
     std::string outputDir;
+    std::string _outputNamespace;
     LoadOption loadOption = IConverter::LoadOption::MeshOnly;
     TextureFormat outputFormat = TextureFormat::BC7;  // 默认 BC7 压缩（离线高质量）
     bool generateMipmaps = true;
-    bool passthrough = true;  // 直接拷贝模式（跳过加载/解码/压缩）
+    bool passthrough = true;  // 保留已有编码块，验证并使用正式 Texture 容器
     bool rawCopy = false;     // dev raw-reference mode（见 setRawCopy）
     std::string usageSuffix = "_d";  // 默认 diffuse
     ayt::math::FGuid lastGuid;

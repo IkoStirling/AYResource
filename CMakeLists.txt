@@ -14,6 +14,7 @@ find_package(Stb REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
 set(AYRESOURCE_IMPORT_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/AYProjectImportRecipe.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AYImportJob.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/IAYConverter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Converter/AnimationConverter.cpp
@@ -166,6 +167,8 @@ if(AY_BUILD_RESOURCE_AUTHORING)
         PRIVATE
             AYLog
             assimp::assimp
+            AYCrypto
+            nlohmann_json::nlohmann_json
             unofficial::libsquish::squish
             basisu::basisu_encoder
     )

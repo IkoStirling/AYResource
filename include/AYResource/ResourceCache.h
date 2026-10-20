@@ -49,6 +49,9 @@ public:
     explicit ResourceCache(const Config& config);
 
     void put(const std::string& path, std::shared_ptr<IResource> resource);
+    /// Replace one path under the cache lock, updating strong/weak/grace
+    /// residency together. Existing borrowers retain their original object.
+    void replace(const std::string& path, std::shared_ptr<IResource> resource);
     std::shared_ptr<IResource> get(const std::string& path);
     std::shared_ptr<IResource> get(const std::string& path) const;
     void remove(const std::string& path);

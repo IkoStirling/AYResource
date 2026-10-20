@@ -17,6 +17,9 @@ add_executable(${MODULE_NAME}
     AYTest_ResourcePipelineP3.cpp
     AYTest_ResourcePipelineP4.cpp
     AYTest_ResourcePipelineP5.cpp
+    AYTest_ImportLifecycle.cpp
+    AYTest_SceneImportRoundTrip.cpp
+    AYTest_TextureDdsImport.cpp
     AYTest_ResourcePipelineP6.cpp
     AYTest_ProjectBuild.cpp
     AYTest_ProjectLogia.cpp
@@ -55,6 +58,7 @@ target_link_libraries(${MODULE_NAME} PRIVATE
     AYResourceCook
     AYProjectBuild
     AYTest
+    assimp::assimp
 )
 if(TARGET AYShader)
     target_link_libraries(${MODULE_NAME} PRIVATE AYShader)
@@ -79,8 +83,8 @@ target_compile_definitions(${MODULE_NAME} PRIVATE
 ay_add_test_tiers(${MODULE_NAME} PREFIX resource TIMEOUT 180
     INTEGRATION_SUITES HotReloadWatcherTests ResourceManagerPhase2Tests
         ResourcePipelineP1Tests ResourcePipelineP2Tests ResourcePipelineP3Tests
-        ResourcePipelineP4Tests ResourcePipelineP5Tests ResourcePipelineP6Tests
-        ProjectBuildTests ProjectLogiaTests FBXConverterTests FBXMaterialConverterTests UvContractTests
+        ResourcePipelineP4Tests ResourcePipelineP5Tests ResourcePipelineP6Tests ImportLifecycleTests
+        ProjectBuildTests ProjectLogiaTests SceneImportRoundTripTests TextureDdsImportTests FBXConverterTests FBXMaterialConverterTests UvContractTests
         FBXParserAnimationTests AnimationConverterTests TextureConverterTests
         TextureIntegrationTests TextureLoaderLooseTests MaterialConverterTests
         TilemapConverterTests UvContractCacheTests)

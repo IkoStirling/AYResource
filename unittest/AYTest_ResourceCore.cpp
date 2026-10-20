@@ -12,6 +12,24 @@ using namespace ayt::resource;
 
 TEST_SUITE(ResourceCacheTests)
 
+    TEST_CASE(ReplaceRetainsBorrowersAndUpdatesStrongWeakResidency) {
+        ResourceCache::Config config;
+        config.maxResourceCount = 1;
+        config.weakGraceSeconds = 0;
+        ResourceCache cache(config);
+        auto previous = std::make_shared<MockResource>("old.mock");
+        auto replacement = std::make_shared<MockResource>("new.mock");
+        cache.put("stable.mock", previous);
+        cache.replace("stable.mock", replacement);
+        CHECK(cache.get("stable.mock") == replacement);
+        CHECK(cache.strongCount() == 1u);
+        CHECK(cache.memoryUsage() == replacement->sizeInBytes());
+        CHECK(previous->getPath() == "old.mock");
+        cache.put("other.mock", std::make_shared<MockResource>());
+        CHECK(cache.get("stable.mock") == replacement); // Weak resurrection uses the replacement.
+        CHECK(cache.memoryUsage() == replacement->sizeInBytes());
+    }
+
     TEST_CASE(DefaultConfig) {
         ResourceCache cache;
         auto config = cache.config();

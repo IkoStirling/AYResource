@@ -169,6 +169,15 @@ public:
     // See docs/ownership-contracts.md (P6).
     void unloadResource(const std::string& filepath);
     void reloadResource(const std::string& filepath);
+
+    /// Refresh a successfully published authoring batch on the submission
+    /// thread. Stage replacements for resident L2 objects before replacing any
+    /// cache entry, then notify the existing L3 hot-reload observer for every
+    /// path. An L2 decode failure preserves all prior cache entries and sends
+    /// no notifications. Unloaded paths remain demand-loaded. Files have
+    /// already been published by the caller; callbacks must not throw.
+    bool refreshPublishedResources(const std::vector<std::string>& paths,
+                                   std::string* error = nullptr);
     void unloadAll();
 
     // ===== Tag management =====

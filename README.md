@@ -1,5 +1,36 @@
 # AYResource
 
+## 导入与重导入（2026-10-21）
+
+作者工具使用 `ImportJob.h` 的 `importAsset`，FBX/glTF/GLB 共用真实 Assimp 场景解析与类型 writer。
+同一输出根的导入由调用方串行执行。转换先写空 staging，验证来源快照与输出后发布；
+失败回滚已有文件。多文件发布不承诺进程崩溃原子性或并发读者的统一快照。
+
+模型/图片缓存校验来源、实际外部依赖、完整设置和输出的 SHA-256；旧无指纹缓存需重建，
+显式 `allowLegacyCache` 只用于兼容既有工具。来源身份与可选输出命名空间可隔离同名模型及贴图。
+项目作者配方存放在 `.ayeditor/imports/source-*.json`，不属于派生缓存；
+`readProjectImportRecipes` 为 Editor/ProjectBuild 共享读取入口，项目相对引用支持目录迁移。
+ProjectBuild 共用这些设置，并在规划时发现模型实际读取的外部 buffer/图片；
+这些输入与配方参与 cook key，规划后变动须重建计划。构建 profile 决定发布输出及贴图 cooking。
+同源重导入保持输出命名空间；安全旧贴图名保留，父目录引用和扁平化冲突使用确定的派生名。
+配方不是运行时资源，sourceId 也不是安全凭证。
+
+
+glTF Auto 使用规范的右手、Y-up、米制基准，并保留显式 metersPerUnit 覆盖；Manual 使用用户轴向。
+材质槽、AO、金属 B/粗糙度 G 和内嵌图片按真实来源转换。DDS 单张 2D 的 UNORM BC1/3/4/5/7
+封装为可读取的 .txr，保留编码块和 mip；拒绝截断、数组、立方体、体积及其他格式。
+已有 Renderer 资源桥目前只上传第零级 mip，保存 mip 链不表示 GPU 已使用完整链。
+音频作者内容、Particle、Stats、确定性 Level 保留各自既有闭包重校验/禁用单次导入缓存策略；
+不能将模型/图片的缓存命中保证推广到所有领域。离线 ProjectBuild 继续负责这些领域的闭包 SHA 缓存。
+
+离线工具同样消费作者设置：import_tool --project <project> --list-recipes，随后用
+--project <project> --recipe <source-id> 执行，可附加 --force 或 --out <alternate>。
+不允许混入 --in 或局部设置覆盖；不会通知另一个编辑器进程的 GPU。
+
+`refreshPublishedResources` 在主线程暂存已驻留 L2 的新资源，再替换缓存并通知现有 GPU observer。
+解码失败保持旧缓存且不通知；已经借出的旧 shared_ptr 仍有效。磁盘发布与运行时刷新是两个步骤。
+UTF-8 的源场景/外部 buffer 和输出路径已有定向检查；尚未保证所有旧运行时/图像 API 的 Unicode 路径。
+
 ## 单材质读取边界（2026-10-20）
 
 `.mat/.aymat` 单材质 decoder 先构造临时值，完整验证 v1/v2/v3 负载后再替换当前对象。

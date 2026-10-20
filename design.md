@@ -1,5 +1,56 @@
 # AYResource — Design (v2.1)
 
+## 2026-10-21 — 来源配方、事务发布和显式驻留资源刷新
+
+ImportJob 在相邻的独占临时目录调用 converter，校验非空 typed 输出及发布路径，备份旧文件后逐个替换。
+失败逆序恢复；恢复失败保留事务目录以便人工恢复。元数据最后发布。主源与 converter 真正打开的依赖
+在读取前采集 SHA-256/大小，转换后再次核对。缓存以内容为准；只改时间戳不重建，保留时间戳修改字节会重建。
+缓存 `.dep` 的 import/version2 记录来源、完整设置、输入/输出指纹；逐资源 `.dep` 仅保存该资源的出边。
+GLTFConverter 复用 FBXConverter 的场景管线，移除生成占位八顶点网格的旧实现。
+
+sourceId 是作者配方身份，outputNamespace 是受限单路径组件。项目内新来源自动分配独立身份，
+已有可恢复的同源旧导入继续使用原路径。迁移后来源路径可变，已绑定身份与命名空间不变。
+资源叶名仍由既有模型/子资源命名决定；不承诺 DCC 重命名子对象后自动修复所有引用。
+作者配方 `ay.import-recipe` v1 与可删除缓存分开，源/输出/root 可为项目相对路径。
+Resource 提供有界 UTF-8 codec/读取器，Editor 负责保存和 UI；ProjectBuild 消费相同配方，
+不允许 Resource 反向依赖 Editor。离线构建已通过26个 ProjectBuildTests（包含模型设置、真实贴图依赖与配方改动）验证。
+
+ResourceCache::replace 同时更新 strong/weak/grace，避免 put 的保留旧值语义让 GPU 看到旧对象。
+refreshPublishedResources 先完整解码驻留集合，失败不发布；成功替换后才通知现有 reload callback。
+不提供跨线程多项缓存的原子读快照，不撤回外部已经借出的旧对象。
+
+### 真实来源闭包与贴图绑定补充
+
+ProjectBuild 在规划阶段通过现有场景 parser 发现 main/buffer/image 输入并采集快照，
+复查稳定后记录 importDependencies；后续计算 key 不重新解析模型，不散列无关旁文件。
+新鲜计划仍会发现新增依赖。执行前重核已知输入和当前配方集合；增删/改作者设置要求重新规划。
+
+glTF 的 G/B 标量分离、AO 与压缩 embedded PNG/JPEG 使用原有 .txr 编解码。
+Assimp 的 mHeight=0 表示压缩字节流长度，而不是零高 RGBA 图。内嵌图片按语义绑定发布，
+不再留下未解析的 *N 引用。单像素轴的 mip 使用真实源宽高；编码器输出大小必须匹配目标格式。
+父目录纹理路径不会进入输出；不安全来源名及碰撞按来源相对键生成确定性后缀。
+命名哈希仅用于消歧，不是内容 GUID 或认证机制。重导入保留既有安全名称。
+
+### 坐标、完整输出与 DDS 边界
+
+glTF Auto 不再走忽略单位覆盖的旧 Assimp 左手分支；以规范 RH/Y-up/+Z-forward/米制构造
+同一个坐标 wrapper，显式单位覆盖保留，未启用的 Manual 轴字段不参与 Auto。导入契约 v24
+使旧派生缓存重建。真实 Assimp 导出的单骨 FBX 测试检查 Mesh skin、Skeleton 和 Animation
+并核对真实转换路径间的依赖，避免根据猜测的骨架/clip 名重建不存在的边。
+
+每类 typed writer 的产物数量必须匹配 IntermediateAsset；场景依赖不能指向未发布的资源。
+原始字节复制只是底层操作，完成的 ImportJob 会解码检查图片/typed texture 后才发布。
+批量 Texture 转换的 1 像素轴和奇数尺寸 mip 以当前层实际宽高下采样，禁止以目标格式相同为由
+跳过发生内容变化的源。缓存 metadata v2 使之前可能发布无效 DDS/raw-image 的缓存失效；
+作者配方仍 v1，旧 metadata v1 可恢复作者设置但不能直接命中。
+
+DDS_HEADER/DX10 只接受单张 2D、UNORM BC1/3/4/5/7，最多16层且不得超过完整 mip 链；
+精确校验块长与 EOF 后，用已有 Texture writer 封装 .txr，不把原 DDS 改后缀冒充 typed 文件。
+拒绝数组/cube/volume/signed/未知格式；不新增运行时格式或 GPU 色彩空间机制。
+参考：[Microsoft DDS_HEADER](https://learn.microsoft.com/en-us/windows/win32/direct3ddds/dds-header)、
+[DDS_HEADER_DXT10](https://learn.microsoft.com/en-us/windows/win32/direct3ddds/dds-header-dxt10)、
+[Khronos glTF specification](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html)。
+
 ## 2026-10-20 — 作者材质读取的原子性
 
 单 Material 的 v1/v2/v3 解码使用有界 memcpy，从任意对齐的完整 bytes 构造临时对象，
@@ -432,7 +483,7 @@ Required of every concrete converter (`MeshConverter`, `MaterialConverter`, `Tex
 | **Preprocess = true** | BC3 / BC7 compress | `.aytex` | Direct GPU upload |
 | **Preprocess = false** | Copy as-is | `.png` / `.jpg` | CPU decode → GPU upload at load |
 
-`ITextureCompressor` is the abstraction over `squish` (BC1/BC3/BC5) and `Basis Universal` (BC7). Used offline only.
+ITextureCompressor abstracts the currently available BC3 (squish) and BC7 (Basis Universal) encoders. The decoded-image import path rejects unsupported BC1/BC5/RGB8 requests instead of writing incorrectly labelled or oversized buffers.
 
 ### 5.5 Material → Phoskia shader reference
 

@@ -1,4 +1,8 @@
 #include "AYResource/ImportJob.h"
+#include "ImportOutputTransaction.h"
+#include "ImportCacheMetadata.h"
+#include "ImportImage.h"
+#include <AYResource/Loader/TextureLoader.h>
 #include <AYAssetFormat/AssetFormat.h>
 
 #include <AYIO/File.h>
@@ -8,7 +12,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cmath>
 #include <stdexcept>
+#include <unordered_map>
 #if defined(AY_RESOURCE_HAS_PARTICLE)
 #include "AYResource/Converter/ParticleConverter.h"
 #endif
@@ -26,7 +32,10 @@ namespace {
 
 bool fileExists(const std::string& p)
 {
-    return !p.empty() && ayt::io::File::exists(p);
+    try {
+        std::error_code error;
+        return !p.empty() && std::filesystem::is_regular_file(detail::importNativePath(std::filesystem::u8path(p)), error) && !error;
+    } catch (...) { return false; }
 }
 
 std::string stemOf(const std::string& path)
@@ -85,6 +94,23 @@ bool cancelled(ImportCancelToken* cancel)
     return cancel != nullptr && cancel->isCancelled();
 }
 
+void writeResourceDependencySidecars(const ConversionResult& result, const std::string& root)
+{
+    std::unordered_map<std::string, std::vector<ConversionResult::Dependency>> edges;
+    for (const auto& dependency : result.dependencies) edges[dependency.from].push_back(dependency);
+    for (const auto& resource : result.resources) {
+        const auto found = edges.find(resource.path);
+        if (found == edges.end() || found->second.empty()) continue;
+        ConversionResult sidecar;
+        sidecar.resources.push_back(resource);
+        sidecar.dependencies = found->second;
+        const auto text = sidecar.toJson();
+        const auto path = joinDirFile(root, looseDependencySidecarPath(resource.path));
+        if (!ayt::io::File::atomicWriteUtf8(path, text.data(), text.size()))
+            throw std::runtime_error("could not write imported resource dependencies: " + resource.path);
+    }
+}
+
 bool tryLoadCachedConversion(const ImportOptions& options,
                              ConversionResult& out,
                              std::string& depPathOut)
@@ -93,7 +119,8 @@ bool tryLoadCachedConversion(const ImportOptions& options,
     // Level imports revalidate complete source and root identity; ProjectBuild owns the SHA cache.
     if(asset_format::matchesPath(options.sourcePath,asset_format::Id::DeterministicLevelSource))return false;
 #endif
-    const std::string baseName = stemOf(options.sourcePath);
+    const std::string baseName = options.outputNamespace.empty()
+        ? stemOf(options.sourcePath) : options.outputNamespace;
     if (baseName.empty()) {
         return false;
     }
@@ -106,18 +133,20 @@ bool tryLoadCachedConversion(const ImportOptions& options,
         depPathOut = depPath;
     }
 
+    const auto metadata = detail::readImportJson(depPath);
     const uint64_t srcMtime = ayt::io::File::lastModifiedTime(options.sourcePath);
     const uint64_t depMtime = ayt::io::File::lastModifiedTime(depPath);
-    if (srcMtime != 0 && depMtime != 0 && depMtime < srcMtime) {
+    if ((!metadata.is_object() || !metadata.contains("import"))
+        && srcMtime != 0 && depMtime != 0 && depMtime < srcMtime) {
         return false;
     }
 
-    const std::string json = ayt::io::File::readAllText(depPath);
-    if (json.empty()) {
+    if (!metadata.is_object()) {
         return false;
     }
 
-    out = ConversionResult::fromJson(json);
+    out = ConversionResult::fromJson(metadata.dump());
+    if (!detail::matchesImportMetadata(options, metadata)) return false;
     if (out.resources.empty()) {
         return false;
     }
@@ -149,7 +178,7 @@ bool tryLoadCachedConversion(const ImportOptions& options,
     // The contract symbol has one out-of-line definition so all cache readers
     // and writers observe the same version even if a stale MSVC object missed
     // a header-only version bump.
-    if (ext == "fbx" && out.importerContractTag != kFbxImporterContractTag) {
+    if (isSceneExtension(ext) && out.importerContractTag != kFbxImporterContractTag) {
         std::fprintf(stderr,
                      "[ImportCache] miss: FBX importer contract cached='%s' required='%s'\n",
                      out.importerContractTag.c_str(), kFbxImporterContractTag);
@@ -230,6 +259,89 @@ bool isImportSupportedExtension(const std::string& sourcePath)
         || ext == "wav" || ext == "mp3" || ext == "ogg";
 }
 
+std::string importDependencySidecarPath(const ImportOptions& options)
+{
+    return joinDirFile(options.outputDir, ayt::asset_format::appendSuffix(
+        options.outputNamespace.empty() ? stemOf(options.sourcePath) : options.outputNamespace,
+        ayt::asset_format::Id::ImportDependency));
+}
+
+bool readImportRecord(const std::string& sidecarPath, ImportRecord& record, std::string* error)
+{
+    try {
+        const auto value = detail::readImportJson(sidecarPath);
+        if (!value.is_object() || !value.contains("import"))
+            throw std::runtime_error("sidecar has no fingerprinted import recipe");
+        const auto& metadata = value.at("import");
+        if (metadata.at("version") != 1 && metadata.at("version") != 2)
+            throw std::runtime_error("unsupported import metadata version");
+        ImportRecord candidate;
+        candidate.sidecarPath = sidecarPath;
+        candidate.options.sourcePath = metadata.at("source").get<std::string>();
+        candidate.options.sourceId = metadata.value("sourceId", std::string{});
+        candidate.options.outputDir = detail::importPathText(std::filesystem::absolute(
+            std::filesystem::u8path(sidecarPath)).parent_path());
+        auto& options = candidate.options;
+        detail::decodeImportSettings(metadata.at("settings"), options);
+        for (const auto& entry : metadata.at("inputs"))
+            candidate.inputPaths.push_back(entry.at("path").get<std::string>());
+        candidate.conversion = ConversionResult::fromJson(value.dump());
+        if (candidate.conversion.resources.empty() || candidate.inputPaths.empty()
+            || candidate.options.sourcePath.empty()) throw std::runtime_error("incomplete import recipe");
+        for (const auto& resource : candidate.conversion.resources)
+            if (!ayt::io::path::isPortableRelative(resource.path))
+                throw std::runtime_error("invalid import resource path");
+        record = std::move(candidate);
+        if (error) error->clear();
+        return true;
+    } catch (const std::exception& failure) {
+        if (error) *error = failure.what();
+        return false;
+    }
+}
+
+bool isImportRecordCurrent(const ImportRecord& record)
+{
+    if (isSceneExtension(importExtensionOf(record.options.sourcePath))
+        && record.conversion.importerContractTag != kFbxImporterContractTag) return false;
+    return detail::matchesImportMetadata(record.options, detail::readImportJson(record.sidecarPath));
+}
+
+std::string serializeImportRecipe(const ImportOptions& options)
+{
+    const detail::ImportJson value = {{"format", "ay.import-recipe"}, {"version", 1},
+        {"source", options.sourcePath}, {"output", options.outputDir},
+        {"sourceId", options.sourceId},
+        {"settings", detail::importSettings(options)}};
+    return value.dump(2) + "\n";
+}
+
+bool parseImportRecipe(const std::string& json, ImportOptions& options, std::string* error)
+{
+    try {
+        if (json.size() > 1024 * 1024) throw std::runtime_error("import recipe exceeds 1 MiB");
+        const auto value = detail::ImportJson::parse(json);
+        if (value.at("format") != "ay.import-recipe" || value.at("version") != 1)
+            throw std::runtime_error("unsupported import recipe format/version");
+        ImportOptions candidate;
+        candidate.sourcePath = value.at("source").get<std::string>();
+        candidate.outputDir = value.at("output").get<std::string>();
+        candidate.sourceId = value.value("sourceId", std::string{});
+        if (candidate.sourcePath.empty() || candidate.outputDir.empty()
+            || candidate.sourcePath.find('\0') != std::string::npos
+            || candidate.outputDir.find('\0') != std::string::npos
+            || candidate.sourceId.find('\0') != std::string::npos || candidate.sourceId.size() > 128)
+            throw std::runtime_error("invalid import recipe source/output path");
+        detail::decodeImportSettings(value.at("settings"), candidate);
+        options = std::move(candidate);
+        if (error) error->clear();
+        return true;
+    } catch (const std::exception& failure) {
+        if (error) *error = failure.what();
+        return false;
+    }
+}
+
 ImportResult importAsset(const ImportOptions& options,
                          ImportProgressFn progress,
                          ImportCancelToken* cancel)
@@ -237,8 +349,8 @@ ImportResult importAsset(const ImportOptions& options,
     ImportResult r;
     report(progress, ImportStage::Validate, 0.0f, "validating");
 
-    if (options.sourcePath.empty()) {
-        r.error = "sourcePath is empty";
+    if (options.sourcePath.empty() || options.sourcePath.find('\0') != std::string::npos) {
+        r.error = "sourcePath is empty or contains NUL";
         report(progress, ImportStage::Failed, 1.0f, r.error);
         return r;
     }
@@ -247,8 +359,22 @@ ImportResult importAsset(const ImportOptions& options,
         report(progress, ImportStage::Failed, 1.0f, r.error);
         return r;
     }
-    if (options.outputDir.empty()) {
-        r.error = "destinationDir is empty";
+    if (options.outputDir.empty() || options.outputDir.find('\0') != std::string::npos) {
+        r.error = "destinationDir is empty or contains NUL";
+        report(progress, ImportStage::Failed, 1.0f, r.error);
+        return r;
+    }
+    if (!detail::validOutputNamespace(options.outputNamespace) || options.sourceId.size() > 128
+        || options.sourceId.find('\0') != std::string::npos) {
+        r.error = "invalid import source identity/output namespace";
+        report(progress, ImportStage::Failed, 1.0f, r.error);
+        return r;
+    }
+    try {
+        ImportOptions verified;
+        detail::decodeImportSettings(detail::importSettings(options), verified);
+    } catch (const std::exception& failure) {
+        r.error = std::string("invalid import settings: ") + failure.what();
         report(progress, ImportStage::Failed, 1.0f, r.error);
         return r;
     }
@@ -269,6 +395,17 @@ ImportResult importAsset(const ImportOptions& options,
     }
 
     report(progress, ImportStage::CheckCache, 0.1f, "checking cache");
+    const auto sidecarName = ayt::asset_format::appendSuffix(
+        options.outputNamespace.empty() ? stemOf(options.sourcePath) : options.outputNamespace,
+        ayt::asset_format::Id::ImportDependency);
+    try {
+        detail::rejectOtherSource(options, detail::readImportJson(
+            joinDirFile(options.outputDir, sidecarName)));
+    } catch (const std::exception& error) {
+        r.error = error.what();
+        report(progress, ImportStage::Failed, 1.0f, r.error);
+        return r;
+    }
     // Particle closure includes external textures; source mtime alone cannot
     // validate it. ProjectBuild owns the content-addressed closure cache.
     if (!options.force && !ayt::asset_format::matchesPath(options.sourcePath, ayt::asset_format::Id::ParticleEffect)
@@ -321,8 +458,14 @@ ImportResult importAsset(const ImportOptions& options,
     }
 
     report(progress, ImportStage::Convert, 0.35f, "converting");
+    std::unique_ptr<detail::ImportOutputTransaction> transaction;
+    detail::ImportJson originalSource;
     try {
-        converter->setOutputDir(options.outputDir);
+        originalSource = detail::fingerprintFile(std::filesystem::u8path(options.sourcePath));
+        transaction = std::make_unique<detail::ImportOutputTransaction>(options.outputDir);
+        if (!converter->setOutputNamespace(options.outputNamespace))
+            throw std::runtime_error("this importer does not support per-source output namespaces");
+        converter->setOutputDir(transaction->stagingRoot());
         converter->setLoadOption(options.loadOption);
         converter->setCookTextures(options.cookTextures);
         if(auto* audio=dynamic_cast<AudioContentConverter*>(converter.get()))audio->setAssetRoot(options.sourceAssetRoot);
@@ -341,7 +484,27 @@ ImportResult importAsset(const ImportOptions& options,
         converter->setMaterialImportPolicy(options.materialPolicy);
         converter->setSourceCoordinatePolicy(options.sourceCoordinates);
         r.conversion = converter->convert();
+        transaction->validate(r.conversion, isSceneExtension(importExtensionOf(options.sourcePath)));
+        // Raw-copy is intentionally a low-level byte operation. A completed
+        // import promises readable texture artifacts, so validate here before
+        // any published file can be replaced.
+        for (const auto& resource : r.conversion.resources) {
+            if (resource.type != "Texture") continue;
+            const auto path=joinDirFile(transaction->stagingRoot(),resource.path);
+            const auto ext=importExtensionOf(resource.path);
+            if (ext=="png" || ext=="jpg" || ext=="jpeg" || ext=="bmp" || ext=="tga") {
+                detail::ImportImage decoded;
+                if (!detail::readImportImage(path,decoded))
+                    throw std::runtime_error("invalid converted image: "+resource.path);
+            } else {
+                std::vector<UInt8> bytes;
+                TextureLoader loader;
+                if (!detail::readImportBytes(path,bytes) || !loader.loadFromBinary(bytes.data(),bytes.size()))
+                    throw std::runtime_error("invalid converted texture: "+resource.path);
+            }
+        }
     } catch (const std::exception& e) {
+        r.conversion = {};
         r.error = std::string("converter threw: ") + e.what();
         report(progress, ImportStage::Failed, 1.0f, r.error);
         return r;
@@ -351,6 +514,7 @@ ImportResult importAsset(const ImportOptions& options,
         // Convert already finished; still report cancel if requested mid-flight
         // after convert returns (best-effort cooperative semantics).
         r.cancelled = true;
+        r.conversion = {};
         r.error = "import cancelled";
         report(progress, ImportStage::Cancelled, 1.0f, r.error);
         return r;
@@ -373,10 +537,31 @@ ImportResult importAsset(const ImportOptions& options,
         }
     }
 
+    try {
+        report(progress, ImportStage::Convert, .9f, "validating source dependencies");
+        if (cancelled(cancel)) {
+            r.cancelled = true;
+            r.conversion = {};
+            r.error = "import cancelled";
+            report(progress, ImportStage::Cancelled, 1.0f, r.error);
+            return r;
+        }
+        if (originalSource != detail::fingerprintFile(std::filesystem::u8path(options.sourcePath)))
+            throw std::runtime_error("source changed during import; retry after saving the source");
+        if (isSceneExtension(importExtensionOf(options.sourcePath)))
+            writeResourceDependencySidecars(r.conversion, transaction->stagingRoot());
+        detail::writeImportMetadata(options, r.conversion, transaction->stagingRoot(), sidecarName);
+        transaction->publish(sidecarName);
+    } catch (const std::exception& error) {
+        r.conversion = {};
+        r.error = std::string("could not publish import: ") + error.what();
+        report(progress, ImportStage::Failed, 1.0f, r.error);
+        return r;
+    }
+
     r.ok = true;
     r.usedCache = false;
-    r.depSidecarPath = joinDirFile(options.outputDir,
-        ayt::asset_format::appendSuffix(stemOf(options.sourcePath), ayt::asset_format::Id::ImportDependency));
+    r.depSidecarPath = importDependencySidecarPath(options);
 #if defined(AY_RESOURCE_HAS_PARTICLE)
     if (dynamic_cast<ParticleConverter*>(converter.get())) {
         for (const auto& resource : r.conversion.resources) {
@@ -427,6 +612,7 @@ ImportBatchResult importAssetBatch(const ImportBatchOptions& options,
         one.cookTextures = options.cookTextures;
         one.materialPolicy = options.materialPolicy;
         one.sourceCoordinates = options.sourceCoordinates;
+        one.allowLegacyCache = options.allowLegacyCache;
 
         ImportProgressFn wrapped;
         if (progress) {

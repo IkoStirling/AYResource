@@ -6,6 +6,9 @@
 #include "AYIO/File.h"
 #include <AYLog.h>
 #include <stb_image.h>
+#include "../ImportImage.h"
+#include "../ImportTexturePath.h"
+#include "../ImportCacheMetadata.h"
 #include <sstream>
 #include <set>
 #include <cstdlib>
@@ -83,11 +86,11 @@ std::string resolveTextureSourcePath(const std::string& source,
     if (source.empty() || source[0] == '*') {
         return {};
     }
-    fs::path path(source);
+    fs::path path = fs::u8path(source);
     if (path.is_relative()) {
-        path = fs::path(sourceDirectory) / path;
+        path = fs::u8path(sourceDirectory) / path;
     }
-    return path.lexically_normal().string();
+    return detail::importPathText(path.lexically_normal());
 }
 
 std::shared_ptr<const DecodedImage> decodeImageCached(
@@ -99,24 +102,16 @@ std::shared_ptr<const DecodedImage> decodeImageCached(
         return found->second;
     }
 
-    int width = 0;
-    int height = 0;
-    int channels = 0;
-    unsigned char* pixels = stbi_load(
-        path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
-    if (!pixels || width <= 0 || height <= 0) {
-        if (pixels) stbi_image_free(pixels);
+    detail::ImportImage decoded;
+    if (!detail::readImportImage(path, decoded)) {
         cache.emplace(path, nullptr);
         return {};
     }
-
     auto image = std::make_shared<DecodedImage>();
-    image->width = width;
-    image->height = height;
-    image->sourceChannels = channels;
-    image->rgba.assign(
-        pixels, pixels + static_cast<std::size_t>(width) * height * 4);
-    stbi_image_free(pixels);
+    image->width = decoded.width;
+    image->height = decoded.height;
+    image->sourceChannels = decoded.sourceChannels;
+    image->rgba = std::move(decoded.rgba);
     cache.emplace(path, image);
     return image;
 }
@@ -240,7 +235,8 @@ void sampleSubmeshAlpha(MaterialAlphaCoverage& coverage,
 }
 
 void inferMaterialSurfaceModes(IntermediateAsset& asset,
-                               const std::string& sourceDirectory)
+                               const std::string& sourceDirectory,
+                               std::vector<ConversionResult::SourceFile>& sourceFiles)
 {
     std::unordered_map<std::string, std::shared_ptr<const DecodedImage>> cache;
     for (std::size_t materialIndex = 0;
@@ -282,7 +278,18 @@ void inferMaterialSurfaceModes(IntermediateAsset& asset,
 
         const std::string imagePath = resolveTextureSourcePath(
             evidence->sourcePath, sourceDirectory);
-        const auto image = decodeImageCached(imagePath, cache);
+        std::shared_ptr<const DecodedImage> image;
+        if (evidence->embeddedIndex >= 0 && std::size_t(evidence->embeddedIndex) < asset.textures.size()) {
+            const auto& embedded = asset.textures[std::size_t(evidence->embeddedIndex)];
+            auto decoded = std::make_shared<DecodedImage>();
+            decoded->width=embedded.width; decoded->height=embedded.height;
+            decoded->sourceChannels=4; decoded->rgba=embedded.imageData;
+            image = std::move(decoded);
+        } else {
+            if (!imagePath.empty() && !cache.contains(imagePath))
+                sourceFiles.push_back(detail::snapshotImportSource(imagePath));
+            image = decodeImageCached(imagePath, cache);
+        }
         if (!image) {
             ayt::log::warn(
                 "[FBXConverter] alpha coverage skipped material[%zu] '%s': "
@@ -518,7 +525,7 @@ void applyMaterialPolicy(std::vector<MaterialData>& materials,
 
 // 写入二进制文件
 static bool writeFile(const std::string& path, const void* data, size_t size) {
-    return ayt::io::File::atomicWrite(path, data, size);
+    return ayt::io::File::atomicWriteUtf8(path, data, size);
 }
 
 FBXConverter::FBXConverter() = default;
@@ -559,6 +566,14 @@ ConversionResult FBXConverter::convert() {
     if (pos != std::string::npos) {
         baseName = baseName.substr(0, pos);
     }
+    if (!_outputNamespace.empty()) baseName = _outputNamespace + "/" + baseName;
+    textureConverter.setOutputNamespace(_outputNamespace);
+    const auto namespaceTexture = [this](std::string& reference) {
+        const std::string prefix = "textures/";
+        if (!_outputNamespace.empty() && reference.rfind(prefix, 0) == 0
+            && reference.rfind(prefix + _outputNamespace + "/", 0) != 0)
+            reference.insert(prefix.size(), _outputNamespace + "/");
+    };
 
     // 1. Parser 解析源文件
     FBXParser parser(sourcePath);
@@ -583,6 +598,8 @@ ConversionResult FBXConverter::convert() {
         return result;
     }
 
+    result.sourceFiles = parser.sourceFiles();
+
     std::string fbxDir;
     const size_t lastSlash = sourcePath.find_last_of("/\\");
     if (lastSlash != std::string::npos) {
@@ -591,8 +608,34 @@ ConversionResult FBXConverter::convert() {
 
     // Automatic evidence is the default; explicit project/import overrides
     // are applied last so users can correct ambiguous authoring data.
-    inferMaterialSurfaceModes(*asset, fbxDir);
+    inferMaterialSurfaceModes(*asset, fbxDir, result.sourceFiles);
     applyMaterialPolicy(asset->materials, _materialPolicy);
+    // Preserve existing safe names. Only collisions gain source-derived
+    // suffixes; source-relative keys remain stable when the whole project moves.
+    std::unordered_map<std::string, std::unordered_set<std::string>> textureOwners;
+    const auto sourceKey = [&fbxDir](const MaterialData::TextureSource& source) {
+        return (source.embeddedIndex >= 0 ? source.sourcePath
+            : detail::sceneTextureSourceKey(source.sourcePath, fbxDir))
+            + "|channel=" + std::to_string(source.sourceChannel);
+    };
+    for (const auto& material : asset->materials) for (const auto& source : material.textureSources)
+        textureOwners[source.virtualPath].insert(sourceKey(source));
+    for (auto& material : asset->materials) for (auto& source : material.textureSources) {
+        if (textureOwners.at(source.virtualPath).size() < 2) continue;
+        const auto oldPath = source.virtualPath;
+        const auto dot = source.virtualPath.find_last_of('.');
+        if (dot == std::string::npos || dot < source.usageSuffix.size())
+            throw std::runtime_error("invalid colliding texture output path");
+        source.virtualPath.insert(dot - source.usageSuffix.size(),
+            "_" + detail::sceneTextureSourceHash(sourceKey(source)));
+        for (auto& parameter : material.parameters)
+            if (parameter.name == source.parameterName && parameter.texturePath == oldPath)
+                parameter.texturePath = source.virtualPath;
+    }
+    for (auto& material : asset->materials) {
+        for (auto& parameter : material.parameters) namespaceTexture(parameter.texturePath);
+        for (auto& source : material.textureSources) namespaceTexture(source.virtualPath);
+    }
 
     for (size_t i = 0; i < asset->materials.size(); ++i) {
         const MaterialData& material = asset->materials[i];
@@ -611,6 +654,8 @@ ConversionResult FBXConverter::convert() {
     // 3. 转换 Mesh
     if (!asset->meshes.empty()) {
         auto meshResources = meshConverter.convertAll(asset->meshes, baseName);
+        if (meshResources.size() != asset->meshes.size())
+            throw std::runtime_error("incomplete mesh conversion");
         for (auto& res : meshResources) {
             result.resources.push_back(res);
         }
@@ -620,6 +665,8 @@ ConversionResult FBXConverter::convert() {
     // 4. 转换 Material
     if (!asset->materials.empty()) {
         auto matResources = materialConverter.convertAll(asset->materials, baseName);
+        if (matResources.size() != asset->materials.size())
+            throw std::runtime_error("incomplete material conversion");
         for (auto& res : matResources) {
             result.resources.push_back(res);
         }
@@ -633,16 +680,41 @@ ConversionResult FBXConverter::convert() {
         // image referenced as base color and opacity has two different GPU
         // sampling contracts and therefore two independently named assets.
         std::set<std::string> processedTextures;
+        std::unordered_map<std::string, std::string> outputOwners;
 
         for (const auto& mat : asset->materials) {
             for (const auto& source : mat.textureSources) {
-                if (!processedTextures.insert(source.virtualPath).second) {
-                    continue;
+                const auto identity = sourceKey(source);
+                const auto [owner, firstOwner] = outputOwners.emplace(source.virtualPath, identity);
+                if (!firstOwner && owner->second != identity)
+                    throw std::runtime_error("distinct source images collide at " + source.virtualPath);
+                if (!processedTextures.insert(source.virtualPath).second) continue;
+                ConversionResult texResult;
+                if (source.embeddedIndex >= 0) {
+                    if (std::size_t(source.embeddedIndex) >= asset->textures.size())
+                        throw std::runtime_error("missing decoded embedded image");
+                    auto image = asset->textures[std::size_t(source.embeddedIndex)];
+                    if (source.sourceChannel >= 0) {
+                        for (std::size_t pixel=0; pixel<image.imageData.size(); pixel+=4) {
+                            const auto scalar=image.imageData[pixel+std::size_t(source.sourceChannel)];
+                            image.imageData[pixel]=image.imageData[pixel+1]=image.imageData[pixel+2]=scalar;
+                            image.imageData[pixel+3]=255;
+                        }
+                    }
+                    texResult = textureConverter.convertPixels(image, source.virtualPath);
+                } else {
+                    auto texName = source.virtualPath.substr(std::string("textures/").size());
+                    texName.resize(texName.find_last_of('.'));
+                    if (!source.usageSuffix.empty() && texName.ends_with(source.usageSuffix))
+                        texName.resize(texName.size()-source.usageSuffix.size());
+                    texResult = textureConverter.convertFromPath(source.sourcePath, texName, fbxDir,
+                        source.usageSuffix, source.sourceChannel);
                 }
-                const std::string texName =
-                    makeTextureStemFromSourcePath(source.sourcePath);
-                auto texResult = textureConverter.convertFromPath(
-                    source.sourcePath, texName, fbxDir, source.usageSuffix);
+                if (texResult.resources.empty()
+                    || texResult.resources.front().path != source.virtualPath)
+                    throw std::runtime_error("could not convert material texture: " + source.sourcePath);
+                result.sourceFiles.insert(result.sourceFiles.end(),
+                    texResult.sourceFiles.begin(), texResult.sourceFiles.end());
                 for (auto& res : texResult.resources) {
                     result.resources.push_back(res);
                 }
@@ -667,6 +739,8 @@ ConversionResult FBXConverter::convert() {
 
                 // 转换纹理（虚拟路径 = makeTextureVirtualPath）
                 auto texResult = textureConverter.convertFromPath(texPath, texName, fbxDir);
+                result.sourceFiles.insert(result.sourceFiles.end(),
+                    texResult.sourceFiles.begin(), texResult.sourceFiles.end());
                 for (auto& res : texResult.resources) {
                     result.resources.push_back(res);
                 }
@@ -674,17 +748,14 @@ ConversionResult FBXConverter::convert() {
         }
     }
 
-    // 5. 转换 Texture（embedded 纹理）
-    if (!asset->textures.empty()) {
-        auto texResources = textureConverter.convertAll(asset->textures, baseName);
-        for (auto& res : texResources) {
-            result.resources.push_back(res);
-        }
-    }
+    // Embedded images are emitted per semantic binding above. Publishing one
+    // unrelated texture_N asset would leave material *N references unresolved.
 
     // 5b. 转换 Skeleton
     if (!asset->skeletons.empty()) {
         auto skelResources = skeletonConverter.convertAll(asset->skeletons, baseName);
+        if (skelResources.size() != asset->skeletons.size())
+            throw std::runtime_error("incomplete skeleton conversion");
         for (auto& res : skelResources) {
             result.resources.push_back(res);
         }
@@ -693,6 +764,8 @@ ConversionResult FBXConverter::convert() {
     // 5c. R-02: 转换 Animation (从 scene->mAnimations 提取)
     if (!asset->animations.empty()) {
         auto animResources = animationConverter.convertAll(asset->animations, baseName);
+        if (animResources.size() != asset->animations.size())
+            throw std::runtime_error("incomplete animation conversion");
         for (auto& res : animResources) {
             result.resources.push_back(res);
         }
@@ -765,61 +838,25 @@ ConversionResult FBXConverter::convert() {
         }
     }
 
-    // 7b. R-02: 生成 mesh → skeleton, skeleton → animation 依赖关系
-    // mesh 路径: meshes/{baseName}_{mesh.name|idx}.aymesh (与 MeshConverter 输出保持一致)
-    // skel 路径: skeletons/{baseName}_{Skeleton}.ayskel (与 SkeletonConverter 输出保持一致)
-    // anim 路径: animations/{baseName}_{take}.ayanm (与 AnimationConverter 输出保持一致)
-    // 注: 仅当有 skin weight 的 mesh 才需要 mesh→skel 边;Phase 0 的 attributeMask 已被 MeshConverter
-    // 用上,但 IntermediateAsset::MeshData 是否暴露 attributeMask?目前保守按"任一 mesh 都加边",
-    // runtime looseDependency 会按 from 路径匹配 — 多余的边只会被忽略,不会破坏加载。
-    if (!asset->skeletons.empty()) {
-        std::string skelPath = ayt::asset_format::appendSuffix(
-            "skeletons/" + baseName + "_Skeleton",
-            ayt::asset_format::Id::Skeleton);
-
-        for (size_t mi = 0; mi < asset->meshes.size(); ++mi) {
-            const auto& mesh = asset->meshes[mi];
-            const std::string meshPath = makeMeshVirtualPath(mi, mesh);
-
-            ConversionResult::Dependency dep;
-            dep.from = meshPath;
-            dep.to = skelPath;
-            result.dependencies.push_back(dep);
-        }
-
-        // skeleton → animation: 每个 anim 可以播放到任何 skeleton,加 (skel, anim) 边
-        // 实际运行 AN-01 时会按 anim 自带的 skeleton binding 字段匹配,这里只覆盖 loose-file path
-        if (!asset->animations.empty()) {
-            // 取所有 animation 的输出 path (从 animationConverter 已生成的 resources 里反向收集)
-            // 简化: 用 baseName + "_take_<index>" 重建
-            for (size_t ai = 0; ai < asset->animations.size(); ++ai) {
-                const auto& anim = asset->animations[ai];
-                std::string take = anim.name.empty() ? ("take_" + std::to_string(ai)) : anim.name;
-                // 简单 sanitize, 与 AnimationConverter::sanitizeTakeName 保持一致语义
-                for (char& c : take) {
-                    if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?'
-                        || c == '"' || c == '<' || c == '>' || c == '|' || c == ' ' || c == '\t') {
-                        c = '_';
-                    }
-                }
-                size_t lead = 0;
-                while (lead < take.size() && take[lead] == '.') ++lead;
-                if (lead > 0) take.erase(0, lead);
-
-                ConversionResult::Dependency dep;
-                dep.from = skelPath;
-                dep.to = ayt::asset_format::appendSuffix(
-                    "animations/" + baseName + "_" + take,
-                    ayt::asset_format::Id::Animation);
-                result.dependencies.push_back(dep);
-            }
-        }
+    // Bind dependencies to the writers' actual paths. Reconstructing names
+    // here loses sanitized/unique animation names and skeleton naming changes.
+    const auto skeleton = std::find_if(result.resources.begin(),result.resources.end(),
+        [](const auto& resource){return resource.type=="Skeleton";});
+    if(skeleton!=result.resources.end()){
+        for(const auto& resource:result.resources)
+            if(resource.type=="Mesh")result.dependencies.push_back({resource.path,skeleton->path});
+        for(const auto& rig:result.resources)if(rig.type=="Skeleton")
+            for(const auto& clip:result.resources)if(clip.type=="Animation")
+                result.dependencies.push_back({rig.path,clip.path});
     }
 
     result.textureMode = _cookTextures ? "cook" : "raw";
+    for (auto& dependency : result.dependencies) {
+        namespaceTexture(dependency.from);
+        namespaceTexture(dependency.to);
+    }
     result.materialPolicyTag = _materialPolicy.tag;
-    // Keep this sidecar discriminator coupled to the complete cooked FBX v7
-    // coordinate, skinning, material-slot and opacity-alias contract.
+    // Couple cache reuse to the complete scene importer contract.
     result.importerContractTag = kFbxImporterContractTag;
     result.sourceCoordinateTag =
         sourceCoordinatePolicyCacheTag(_sourceCoordinates);

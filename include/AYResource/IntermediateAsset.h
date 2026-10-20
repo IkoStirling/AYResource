@@ -258,6 +258,9 @@ struct MaterialData {
         Float32 uvRotation = 0.0f;
         UInt32 flags = 0;
         bool hasUvTransform = false;
+        // Import-only source decoding; no new runtime texture/material format.
+        int embeddedIndex = -1;
+        int sourceChannel = -1; // -1=RGBA, 0..3=scalar replicated to RGB.
     };
     // Semantic-preserving source bindings.  texturePaths remains for old
     // producers/tests; FBXConverter prefers this record so different slots

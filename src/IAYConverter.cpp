@@ -23,6 +23,7 @@
 #include <cstring>
 #include <iomanip>
 #include <sstream>
+#include <nlohmann/json.hpp>
 #endif
 
 namespace ayt::resource
@@ -30,85 +31,9 @@ namespace ayt::resource
 
 #if !defined(AY_RESOURCE_BUILD_CONVERTER_FACTORY)
 const char kFbxImporterContractTag[] =
-        "fbx-auto-wrapper-basis-animation-mesh-bind-space-contract-v22";
+        "fbx-auto-wrapper-basis-animation-mesh-bind-space-contract-v24";
 
-namespace {
 
-bool parseJsonStringField(const std::string& json, size_t searchFrom, const char* key, std::string& out)
-{
-    // Accept both `"key": "` and `"key":"` (space optional after colon).
-    const std::string keyTok = std::string("\"") + key + "\":";
-    size_t pos = json.find(keyTok, searchFrom);
-    if (pos == std::string::npos) {
-        return false;
-    }
-    pos += keyTok.size();
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) {
-        ++pos;
-    }
-    if (pos >= json.size() || json[pos] != '"') {
-        return false;
-    }
-    const size_t valueStart = pos + 1;
-    const size_t valueEnd = json.find('"', valueStart);
-    if (valueEnd == std::string::npos) {
-        return false;
-    }
-    out = json.substr(valueStart, valueEnd - valueStart);
-    return true;
-}
-
-// F2.3: ConvertedResource.size is now uint64_t; parse with strtoull.
-bool parseJsonUInt64Field(const std::string& json, size_t searchFrom, const char* key, uint64_t& out)
-{
-    const std::string keyTok = std::string("\"") + key + "\":";
-    size_t pos = json.find(keyTok, searchFrom);
-    if (pos == std::string::npos) {
-        return false;
-    }
-    pos += keyTok.size();
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) {
-        ++pos;
-    }
-    if (pos >= json.size() || (json[pos] < '0' || json[pos] > '9')) {
-        return false;
-    }
-    char* end = nullptr;
-    const unsigned long long v = std::strtoull(json.c_str() + pos, &end, 10);
-    if (end == json.c_str() + pos) {
-        return false;
-    }
-    out = static_cast<uint64_t>(v);
-    return true;
-}
-
-// Walk one JSON array of objects starting at `arrayOpen` ('['). Invokes
-// `fn(objStart)` for each `{...}` until the matching `]`.
-template <typename Fn>
-void forEachJsonObjectInArray(const std::string& json, size_t arrayOpen, Fn&& fn)
-{
-    size_t pos = arrayOpen;
-    while (pos < json.size()) {
-        const size_t objStart = json.find('{', pos);
-        if (objStart == std::string::npos) {
-            break;
-        }
-        const size_t objEnd = json.find('}', objStart);
-        if (objEnd == std::string::npos) {
-            break;
-        }
-        fn(objStart);
-        pos = objEnd + 1;
-        const size_t nextObj = json.find('{', pos);
-        const size_t arrayEnd = json.find(']', pos);
-        if (arrayEnd != std::string::npos
-            && (nextObj == std::string::npos || arrayEnd < nextObj)) {
-            break;
-        }
-    }
-}
-
-} // namespace
 
 std::string sourceCoordinatePolicyCacheTag(const SourceCoordinatePolicy& policy)
 {
@@ -173,94 +98,71 @@ std::unique_ptr<IConverter> IConverter::create(const std::string& sourcePath) {
 
 #if !defined(AY_RESOURCE_BUILD_CONVERTER_FACTORY)
 std::string ConversionResult::toJson() const {
-    std::ostringstream oss;
-    oss << "{\n";
-    if (!textureMode.empty()) {
-        oss << "  \"textureMode\": \"" << textureMode << "\",\n";
+    using Json = nlohmann::json;
+    Json value = {{"resources", Json::array()}, {"dependencies", Json::array()}};
+    for (const auto& resource : resources) {
+        Json entry = {{"path", resource.path}, {"type", resource.type}, {"size", resource.size}};
+        if (!resource.role.empty()) entry["role"] = resource.role;
+        value["resources"].push_back(std::move(entry));
     }
-    if (!materialPolicyTag.empty()) {
-        oss << "  \"materialPolicyTag\": \"" << materialPolicyTag << "\",\n";
+    for (const auto& dependency : dependencies)
+        value["dependencies"].push_back({{"from", dependency.from}, {"to", dependency.to}});
+    if (!textureMode.empty()) value["textureMode"] = textureMode;
+    if (!materialPolicyTag.empty()) value["materialPolicyTag"] = materialPolicyTag;
+    if (!importerContractTag.empty()) value["importerContractTag"] = importerContractTag;
+    if (!sourceCoordinateTag.empty()) value["sourceCoordinateTag"] = sourceCoordinateTag;
+    if (!sourceFiles.empty()) {
+        value["sourceFiles"] = Json::array();
+        for (const auto& source : sourceFiles) value["sourceFiles"].push_back(
+            {{"path", source.path}, {"sha256", source.sha256}, {"size", source.size}});
     }
-    if (!importerContractTag.empty()) {
-        oss << "  \"importerContractTag\": \"" << importerContractTag << "\",\n";
-    }
-    if (!sourceCoordinateTag.empty()) {
-        oss << "  \"sourceCoordinateTag\": \"" << sourceCoordinateTag << "\",\n";
-    }
-    oss << "  \"resources\": [\n";
-    for (size_t i = 0; i < resources.size(); i++) {
-        const auto& res = resources[i];
-        oss << "    {\"path\": \"" << res.path << "\", \"type\": \"" << res.type << "\"";
-        if (!res.role.empty()) {
-            oss << ", \"role\": \"" << res.role << "\"";
-        }
-        oss << ", \"size\": " << res.size << "}";
-        if (i + 1 < resources.size()) oss << ",";
-        oss << "\n";
-    }
-    oss << "  ],\n";
-    oss << "  \"dependencies\": [\n";
-    for (size_t i = 0; i < dependencies.size(); i++) {
-        const auto& dep = dependencies[i];
-        oss << "    {\"from\": \"" << dep.from << "\", \"to\": \"" << dep.to << "\"}";
-        if (i + 1 < dependencies.size()) oss << ",";
-        oss << "\n";
-    }
-    oss << "  ]\n";
-    oss << "}\n";
-    return oss.str();
+    return value.dump(2) + "\n";
 }
 
-ConversionResult ConversionResult::fromJson(const std::string& json) {
+ConversionResult ConversionResult::fromJson(const std::string& text) {
+    using Json = nlohmann::json;
     ConversionResult result;
-
-    // Optional textureMode field; absent = legacy sidecar (accepted under
-    // both import modes). Parse it before resources so a mode mismatch can
-    // be decided in tryLoadCachedConversion.
-    (void)parseJsonStringField(json, 0, "textureMode", result.textureMode);
-    (void)parseJsonStringField(json, 0, "materialPolicyTag",
-                               result.materialPolicyTag);
-    (void)parseJsonStringField(json, 0, "importerContractTag",
-                               result.importerContractTag);
-    (void)parseJsonStringField(json, 0, "sourceCoordinateTag",
-                               result.sourceCoordinateTag);
-
-    // Resources MUST be parsed — Importer cache reuse checks hasMesh/hasSkel
-    // on this array. A previous implementation only read dependencies, so
-    // every restart forced a full FBX reconvert ("missing Mesh/Skeleton").
-    const size_t resPos = json.find("\"resources\"");
-    if (resPos != std::string::npos) {
-        const size_t arrayOpen = json.find('[', resPos);
-        if (arrayOpen != std::string::npos) {
-            forEachJsonObjectInArray(json, arrayOpen, [&](size_t objStart) {
-                ConvertedResource res;
-                if (!parseJsonStringField(json, objStart, "path", res.path)
-                    || !parseJsonStringField(json, objStart, "type", res.type)) {
-                    return;
-                }
-                (void)parseJsonStringField(json, objStart, "role", res.role);
-                (void)parseJsonUInt64Field(json, objStart, "size", res.size);
-                result.resources.push_back(std::move(res));
-            });
+    const auto value = Json::parse(text, nullptr, false);
+    if (!value.is_object()) return {};
+    try {
+        result.textureMode = value.value("textureMode", std::string{});
+        result.materialPolicyTag = value.value("materialPolicyTag", std::string{});
+        result.importerContractTag = value.value("importerContractTag", std::string{});
+        result.sourceCoordinateTag = value.value("sourceCoordinateTag", std::string{});
+        if (value.contains("sourceFiles")) {
+            if (!value.at("sourceFiles").is_array()) return {};
+            for (const auto& source : value.at("sourceFiles")) {
+                if (source.is_string()) result.sourceFiles.push_back({source.get<std::string>(), {}, 0});
+                else result.sourceFiles.push_back({source.at("path").get<std::string>(),
+                    source.at("sha256").get<std::string>(), source.at("size").get<std::uint64_t>()});
+            }
         }
-    }
-
-    const size_t depsPos = json.find("\"dependencies\"");
-    if (depsPos != std::string::npos) {
-        const size_t arrayOpen = json.find('[', depsPos);
-        if (arrayOpen != std::string::npos) {
-            forEachJsonObjectInArray(json, arrayOpen, [&](size_t objStart) {
-                Dependency dep;
-                if (parseJsonStringField(json, objStart, "from", dep.from)
-                    && parseJsonStringField(json, objStart, "to", dep.to)) {
-                    result.dependencies.push_back(std::move(dep));
-                }
-            });
+        if (value.contains("resources") && !value.at("resources").is_array()) return {};
+        for (const auto& entry : value.value("resources", Json::array())) {
+            ConvertedResource resource;
+            resource.path = entry.at("path").get<std::string>();
+            resource.type = entry.at("type").get<std::string>();
+            resource.role = entry.value("role", std::string{});
+            if (entry.contains("size")) {
+                const auto& size = entry.at("size");
+                if (!size.is_number_integer() || (size.is_number_integer()
+                    && !size.is_number_unsigned() && size.get<std::int64_t>() < 0)) return {};
+                resource.size = size.get<std::uint64_t>();
+            }
+            if (resource.path.empty() || resource.path.find('\0') != std::string::npos
+                || resource.type.empty() || resource.type.find('\0') != std::string::npos) return {};
+            result.resources.push_back(std::move(resource));
         }
-    }
-
+        if (value.contains("dependencies")) {
+            if (!value.at("dependencies").is_array()) return {};
+            for (const auto& entry : value.at("dependencies"))
+                result.dependencies.push_back({entry.at("from").get<std::string>(),
+                    entry.at("to").get<std::string>()});
+        }
+    } catch (...) { return {}; }
     return result;
 }
+
 #endif
 
 } // namespace ayt::resource

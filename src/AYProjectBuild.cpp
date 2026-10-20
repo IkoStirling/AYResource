@@ -6,6 +6,8 @@
 #include "ProjectLogiaContent.h"
 
 #include "AYResource/ImportJob.h"
+#include <AYResource/Converter/FBXParser.h>
+#include "ImportCacheMetadata.h"
 #include "AYResource/ResourceBootstrap.h"
 #include "AYResource/ResourceRegistry.h"
 #include <AYAssetFormat/AssetFormat.h>
@@ -804,6 +806,42 @@ std::vector<fs::path> sourceClosure(const fs::path& source, const fs::path& asse
     return paths;
 }
 
+bool inspectSceneImportDependencies(const fs::path& source, std::vector<std::string>& paths,
+                                    std::string& error)
+{
+    try {
+        const auto before = detail::snapshotImportSource(portable(source));
+        FBXParser parser(portable(source));
+        parser.setLoadOption(IConverter::LoadOption::MeshOnly);
+        if (!parser.parse(portable(source))) {
+            error = "Cannot inspect model source dependencies.";
+            return false;
+        }
+        auto asset = parser.getResult();
+        if (!asset) { error = "Model inspection returned no asset."; return false; }
+        auto snapshots = parser.sourceFiles();
+        snapshots.push_back(before);
+        std::set<std::string> seen;
+        for (const auto& material : asset->materials) for (const auto& texture : material.textureSources) {
+            if (texture.embeddedIndex >= 0 || texture.sourcePath.empty()) continue;
+            auto path = fs::u8path(texture.sourcePath);
+            if (path.is_relative()) path = source.parent_path() / path;
+            const auto snapshot = detail::snapshotImportSource(detail::importPathText(path.lexically_normal()));
+            if (seen.insert(snapshot.path).second) snapshots.push_back(snapshot);
+        }
+        std::set<std::string> unique;
+        for (const auto& snapshot : snapshots) {
+            if (detail::snapshotImportSource(snapshot.path) != snapshot) {
+                error = "Model dependency changed during planning; retry.";
+                return false;
+            }
+            unique.insert(snapshot.path);
+        }
+        paths.assign(unique.begin(), unique.end());
+        return true;
+    } catch (const std::exception& failure) { error = failure.what(); return false; }
+}
+
 std::string cacheDiscriminator(const ProjectBuildProfile& profile,
                                const ProjectBuildAsset& asset)
 {
@@ -815,6 +853,7 @@ std::string cacheDiscriminator(const ProjectBuildProfile& profile,
         {"logicalPath", asset.logicalPath},
         {"transform", transformName(asset.transform)},
         {"cookTextures", asset.cookTextures},
+        {"importRecipe", asset.importRecipe},
         {"fbxImporterContract", std::string(kFbxImporterContractTag)},
     };
     if(asset_format::matchesPath(asset.sourcePath,asset_format::Id::AudioChartSource)||asset_format::matchesPath(asset.sourcePath,asset_format::Id::AudioPerformanceSource))value["audioContentImporterContract"]="audio-content-bundle-v1";
@@ -836,8 +875,12 @@ std::string computeCacheKey(const ProjectBuildProfile& profile,
 {
     auto root=fs::path(asset.sourcePath);
     for(const auto& part:fs::path(asset.logicalPath)) { (void)part; root=root.parent_path(); }
-    const auto closure=sourceClosure(asset.sourcePath,root);
+    std::vector<fs::path> closure;
+    if (!asset.importDependencies.empty()) {
+        for (const auto& path : asset.importDependencies) closure.push_back(fs::u8path(path));
+    } else closure=sourceClosure(asset.sourcePath,root);
     if(closure.empty()) return {};
+    if (!asset.importRecipePath.empty()) closure.push_back(asset.importRecipePath);
     return hashFiles(closure,
                      cacheDiscriminator(profile, asset));
 }
@@ -1429,6 +1472,9 @@ std::string ProjectBuildPlan::serialize(bool pretty) const
             {"cacheKey", asset.cacheKey},
             {"scriptDependencies", asset.scriptDependencies},
             {"resourceDependencies", asset.resourceDependencies},
+            {"importRecipePath", asset.importRecipePath},
+            {"importRecipe", asset.importRecipe},
+            {"importDependencies", asset.importDependencies},
             {"matchedRule", asset.matchedRule == static_cast<std::size_t>(-1)
                 ? Json(nullptr) : Json(asset.matchedRule)},
         });
@@ -1466,6 +1512,13 @@ ProjectBuildPlan ProjectBuildPlanner::create(
     if (!fs::is_directory(assetsRoot)) {
         diagnostic(plan.diagnostics, ProjectBuildDiagnostic::Severity::Error,
                    profile.content.assetRoot, "Asset root is not a directory.");
+        return plan;
+    }
+    std::string recipeError;
+    const auto importRecipes = readProjectImportRecipes(portable(root), &recipeError);
+    if (!recipeError.empty()) {
+        diagnostic(plan.diagnostics, ProjectBuildDiagnostic::Severity::Error,
+            ".ayeditor/imports", recipeError);
         return plan;
     }
     std::vector<fs::path> files;
@@ -1543,7 +1596,27 @@ ProjectBuildPlan ProjectBuildPlanner::create(
             asset.chunk = "core";
         }
         if (asset.transform == ProjectAssetTransform::Cook) {
-            asset.cacheKey = computeCacheKey(profile, asset);
+            for (const auto& recipe : importRecipes) {
+                std::error_code equivalentError;
+                if (!fs::equivalent(fs::u8path(recipe.options.sourcePath), file, equivalentError)
+                    || equivalentError) continue;
+                if (!asset.importRecipe.empty()) {
+                    diagnostic(plan.diagnostics, ProjectBuildDiagnostic::Severity::Error,
+                        asset.logicalPath, "Multiple authoring recipes refer to this cooked source.");
+                    break;
+                }
+                asset.importRecipe = serializeImportRecipe(recipe.options);
+                asset.importRecipePath = recipe.path;
+            }
+            const auto extension = lower(file.extension().string());
+            bool inspected = true;
+            if (extension == ".gltf" || extension == ".glb" || extension == ".fbx") {
+                std::string inspectionError;
+                inspected = inspectSceneImportDependencies(file, asset.importDependencies, inspectionError);
+                if (!inspected) diagnostic(plan.diagnostics, ProjectBuildDiagnostic::Severity::Error,
+                    asset.logicalPath, inspectionError);
+            }
+            asset.cacheKey = inspected ? computeCacheKey(profile, asset) : std::string{};
             if (asset.cacheKey.empty()) {
                 diagnostic(plan.diagnostics,
                            ProjectBuildDiagnostic::Severity::Error,
@@ -1588,6 +1661,33 @@ ProjectBuildResult ProjectBuildExecutor::execute(
     }
     const fs::path releaseAssetsRoot = fs::path(plan.projectRoot)
         / plan.profile.content.assetRoot;
+    for (const auto& asset : plan.assets) {
+        if (asset.transform == ProjectAssetTransform::Cook
+            && (!asset.importRecipe.empty() || !asset.importDependencies.empty())
+            && asset.cacheKey != computeCacheKey(plan.profile, asset)) {
+            result.error = "Import source or authoring recipe changed after planning: "
+                + asset.logicalPath + "; create a fresh build plan.";
+            return result;
+        }
+    }
+    std::string recipeError;
+    const auto currentRecipes = readProjectImportRecipes(plan.projectRoot, &recipeError);
+    if (!recipeError.empty()) { result.error = recipeError; return result; }
+    for (const auto& asset : plan.assets) {
+        if (asset.transform != ProjectAssetTransform::Cook) continue;
+        std::string current;
+        for (const auto& recipe : currentRecipes) {
+            std::error_code equivalentError;
+            if (!fs::equivalent(fs::u8path(recipe.options.sourcePath), fs::u8path(asset.sourcePath),
+                    equivalentError) || equivalentError) continue;
+            if (!current.empty()) { result.error = "Ambiguous source authoring recipes."; return result; }
+            current = serializeImportRecipe(recipe.options);
+        }
+        if (current != asset.importRecipe) {
+            result.error = "Import authoring recipes changed after planning: " + asset.logicalPath;
+            return result;
+        }
+    }
     std::vector<ProjectBuildDiagnostic> releaseDiagnostics;
     validateAudioContent(plan,releaseDiagnostics);
     for(const auto& asset:plan.assets)if(asset.transform==ProjectAssetTransform::Cook&&audioContentSource(asset.sourcePath)&&asset.cacheKey!=computeCacheKey(plan.profile,asset)){
@@ -1825,13 +1925,18 @@ ProjectBuildResult ProjectBuildExecutor::execute(
                 return result;
             }
             ImportOptions import;
+            if (!asset.importRecipe.empty()
+                && !parseImportRecipe(asset.importRecipe, import, &result.error)) {
+                result.error = "Invalid planned import recipe: " + result.error;
+                return result;
+            }
             import.sourcePath = asset.sourcePath;
             // Existing converters append portable separators to this string;
             // do not expose Windows extended spelling through that interface.
             // The level converter reacquires native paths at each physical access.
             import.outputDir = (temporaryPath / "files").string();
             import.force = true;
-            import.requireCharacterAssets = false;
+            if (asset.importRecipe.empty()) import.requireCharacterAssets = false;
             import.cookTextures = asset.cookTextures;
             import.sourceAssetRoot = releaseAssetsRoot.string();
             ImportResult imported = importAsset(import);

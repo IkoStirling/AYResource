@@ -489,6 +489,49 @@ void ResourceManager::reloadResource(const std::string& filepath) {
     }
 }
 
+bool ResourceManager::refreshPublishedResources(const std::vector<std::string>& paths,
+                                                std::string* error)
+{
+    struct Replacement {
+        std::string path;
+        std::shared_ptr<IResource> resource;
+    };
+    std::vector<std::string> normalized;
+    std::vector<Replacement> replacements;
+    try {
+        std::unordered_set<std::string> seen;
+        for (const auto& requested : paths) {
+            const auto path = normalizeResourcePath(requested);
+            if (path.empty() || !seen.insert(path).second) continue;
+            normalized.push_back(path);
+            const auto previous = _cache.get(path);
+            if (!previous) continue;
+            const auto loaded = ResourceRegistry::loadByPath(path);
+            if (!loaded || !loaded->isLoaded()) {
+                if (error) *error = "published resource could not be decoded: " + path;
+                return false;
+            }
+            for (const auto& tag : previous->getTags()) loaded->addTag(tag);
+            replacements.push_back({path, loaded});
+        }
+    } catch (const std::exception& failure) {
+        if (error) *error = failure.what();
+        return false;
+    }
+    for (const auto& replacement : replacements) {
+        _cache.replace(replacement.path, replacement.resource);
+        std::lock_guard<std::mutex> lock(_loadsMutex);
+        _resourceTypes[replacement.path] = replacement.resource->getType();
+        _loadStates[replacement.path] = ResourceLoadState::Ready;
+    }
+    // Every resident L2 replacement is visible before any observer uploads L3.
+    for (const auto& path : normalized) {
+        if (_userHotReloadCb) _userHotReloadCb(path);
+    }
+    if (error) error->clear();
+    return true;
+}
+
 void ResourceManager::unloadAll() {
     _hotReloadWatcher.unwatchAll();
     _cache.clear();
