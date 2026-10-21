@@ -1,5 +1,22 @@
 # AYResource
 
+## 作者刷新结果（2026-10-22）
+
+`ResourceManager::refreshPublishedResourcesWithReport`保留既有CPU批次准备/替换规则，
+再返回每条规范路径的消费者结果。`cpuRefreshed`只表示CPU阶段完成；
+`Updated`、`Retained`、`NotResident`、`NotHandled`、`Unconfirmed`、`Failed`分别表达消费者状态。
+文件发布、CPU替换和GPU更新仍为不同事务。报告只持有值，不延长任何GPU资源寿命。
+
+高级Host用`setRefreshObserver`替换现有单一通知slot，并保存注册token；
+关闭时调用`clearRefreshObserver(token)`，不会清掉后来注册的回调。
+旧`setOnHotReload`与bool刷新入口保留；void回调结果标为`Unconfirmed`。
+回调复制后调用，允许通知内替换；异常标为`Failed`，不能推断消费者已完全回滚。
+所有注册、通知与清理仍在submission owner线程，没有新增并发或多消费者总线。
+诊断/标签及每路径结果数量有界；限制与CPU/GPU契约见[所有权说明](docs/ownership-contracts.md)。
+通用实现8例/100断言、完整模块384项中372通过/12项可选FBX夹具跳过、4631断言通过。
+六个相关ASan套件64例/486断言通过。Renderer两后端及实际Editor拒绝/修复通过；
+Editor后补来源隔离另行验收，不与上述通用Resource结果混算。
+
 ## 纹理采样与容器兼容（2026-10-22）
 
 Texture writer 写 `.txr` v2：36字节旧头、16字节 sampler、原编码 mip 数据；读取器兼容 v1并恢复历史默认采样。
@@ -39,7 +56,8 @@ ProjectBuild 共用这些设置，并在规划时发现模型实际读取的外�
 glTF Auto 使用规范的右手、Y-up、米制基准，并保留显式 metersPerUnit 覆盖；Manual 使用用户轴向。
 材质槽、AO、金属 B/粗糙度 G 和内嵌图片按真实来源转换。DDS 单张 2D 的 UNORM BC1/3/4/5/7
 封装为可读取的 .txr，保留编码块和 mip；拒绝截断、数组、立方体、体积及其他格式。
-已有 Renderer 资源桥目前只上传第零级 mip，保存 mip 链不表示 GPU 已使用完整链。
+Renderer资源桥现已上传完整mip链；有效但不完整的链明确回退基础级，单层不自动生成层级。
+具体设备格式/采样回退由Renderer决定，CPU保存成功仍不等于驻留GPU刷新成功。
 音频作者内容、Particle、Stats、确定性 Level 保留各自既有闭包重校验/禁用单次导入缓存策略；
 不能将模型/图片的缓存命中保证推广到所有领域。离线 ProjectBuild 继续负责这些领域的闭包 SHA 缓存。
 

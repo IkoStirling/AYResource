@@ -15,6 +15,7 @@
 #include "AYStorage/IPackageReader.h"
 #include "AYResource/AsyncLoader.h"
 #include "AYResource/HotReloadWatcher.h"
+#include "AYResource/ResourceRefresh.h"
 #include <AYIO/Path.h>
 
 namespace ayt::resource
@@ -175,7 +176,9 @@ public:
     /// cache entry, then notify the existing L3 hot-reload observer for every
     /// path. An L2 decode failure preserves all prior cache entries and sends
     /// no notifications. Unloaded paths remain demand-loaded. Files have
-    /// already been published by the caller; callbacks must not throw.
+    /// already been published by the caller. This bool describes CPU refresh,
+    /// not consumer/GPU success. Observer exceptions are contained; use the
+    /// reporting entry when consumer acknowledgement matters.
     /// Refreshes reported loose paths and their canonical physical spelling,
     /// including previously loaded absolute loose aliases of those files even
     /// after L2 eviction. Discovery does not eagerly reload evicted CPU objects;
@@ -183,6 +186,14 @@ public:
     /// Cache identity and package/virtual key rules remain unchanged.
     bool refreshPublishedResources(const std::vector<std::string>& paths,
                                    std::string* error = nullptr);
+    /// Advanced authoring boundary, on the submission owner thread only.
+    /// Preserves refreshPublishedResources' CPU transaction and reports each
+    /// consumer outcome separately. CPU failure sends no notifications; consumer
+    /// rejection never rolls back already published files or CPU replacements.
+    /// Legacy void observers are Unconfirmed. Observer exceptions are Failed,
+    /// with no claim that the consumer retained or updated all of its state.
+    ResourceRefreshReport refreshPublishedResourcesWithReport(
+        const std::vector<std::string>& paths);
     void unloadAll();
 
     // ===== Tag management =====
@@ -207,6 +218,16 @@ public:
     /// This is the only automatic L2→L3 sync path (Renderer: onResourceFileChanged).
     /// Not called from unload*/trimCache.
     void setOnHotReload(HotReloadWatcher::FileChangeCallback callback);
+    using RefreshObserver = std::function<std::vector<ResourceConsumerRefresh>(const std::string&)>;
+    /// Replace the same single observer slot used by setOnHotReload. Returns
+    /// a registration token, or zero for an empty callback. Owner-thread only;
+    /// callback replacement during a notification affects subsequent paths.
+    /// The callback is copied before invocation. Returned diagnostics are
+    /// bounded to 1024 bytes, variant labels to 128, and outcomes to 64/path.
+    uint64_t setRefreshObserver(std::string consumer, RefreshObserver callback);
+    /// Clear only if token still owns the current slot. Never clears a later
+    /// legacy or reporting registration. Not a concurrency/lifetime fence.
+    bool clearRefreshObserver(uint64_t token);
     /// When true (default), successful loads auto-watch the loose file path.
     void setAutoWatchLoadedResources(bool enabled);
     bool autoWatchLoadedResources() const { return _autoWatchLoaded; }
@@ -283,6 +304,9 @@ private:
     void _onResourceLoaded(const std::string& filepath, std::shared_ptr<IResource> resource);
     std::shared_ptr<IResource> _installPlaceholder(const std::string& filepath);
     void _handleHotReload(const std::string& filepath);
+    ResourcePathRefresh _notifyResourceChanged(const std::string& path);
+    bool _refreshPublishedResources(const std::vector<std::string>& paths,
+                                    std::string* error, ResourceRefreshReport* report);
     std::shared_ptr<ayt::storage::IPackageReader> _getOrOpenPak(const std::string& pakPath);
     std::shared_ptr<IResource> _loadFromDatabase(const std::string& filepath);
 
@@ -319,6 +343,10 @@ private:
     // Guards recursive dep loads against cycles (mesh→mat→…→mesh).
     std::unordered_set<std::string> _loadingPaths;
     HotReloadWatcher::FileChangeCallback _userHotReloadCb;
+    RefreshObserver _refreshObserver;
+    std::string _refreshConsumer;
+    uint64_t _refreshObserverToken = 0;
+    uint64_t _refreshObserverSequence = 0;
     bool _autoWatchLoaded = true;
     // Directory containing the opened ship DB (for relative pak resolution).
     std::string _dbBaseDir;

@@ -18,6 +18,7 @@ add_executable(${MODULE_NAME}
     AYTest_ResourcePipelineP4.cpp
     AYTest_ResourcePipelineP5.cpp
     AYTest_ImportLifecycle.cpp
+    AYTest_ResourceRefresh.cpp
     AYTest_SceneImportRoundTrip.cpp
     AYTest_TextureDdsImport.cpp
     AYTest_ResourcePipelineP6.cpp
@@ -84,7 +85,7 @@ target_compile_definitions(${MODULE_NAME} PRIVATE
 ay_add_test_tiers(${MODULE_NAME} PREFIX resource TIMEOUT 180
     INTEGRATION_SUITES HotReloadWatcherTests ResourceManagerPhase2Tests
         ResourcePipelineP1Tests ResourcePipelineP2Tests ResourcePipelineP3Tests
-        ResourcePipelineP4Tests ResourcePipelineP5Tests ResourcePipelineP6Tests ImportLifecycleTests
+        ResourcePipelineP4Tests ResourcePipelineP5Tests ResourcePipelineP6Tests ImportLifecycleTests ResourceRefreshTests
         ProjectBuildTests ProjectLogiaTests SceneImportRoundTripTests TextureDdsImportTests FBXConverterTests FBXMaterialConverterTests UvContractTests
         FBXParserAnimationTests AnimationConverterTests TextureConverterTests
         TextureIntegrationTests TextureLoaderLooseTests MaterialConverterTests

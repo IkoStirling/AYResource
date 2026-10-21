@@ -1,5 +1,27 @@
 # AYResource — Design (v2.1)
 
+## 2026-10-22 — 分层刷新确认
+
+轻量`ResourceRefresh.h`定义消费者状态及拥有字符串/值的报告，不依赖Renderer或bgfx。
+原两参数bool方法代理到同一内部CPU批次实现；报告入口在CPU失败时返回错误且不含消费者结果，
+成功则逐规范路径同步通知。CPU事务不因为消费者`Retained`或`Failed`回滚。
+
+legacy与reporting回调共享一个slot；reporting注册使用单调token，清理仅匹配当前token。
+token耗尽显式抛错，不回绕复用。legacy替换清零当前所有权但不重置序列。
+通知前复制functor与消费者名，回调内替换不会销毁执行中的对象，下一路径采用新slot。
+这不是并发析构保护，所有操作仍要求同一owner线程。
+
+消费者异常转为`Failed`，空结果为`Unconfirmed`；legacy正常返回也只能标为`Unconfirmed`。
+最多保留64项结果，超量时末项为明确`Failed`；消费者/变体标签最多128字节，诊断最多1024字节。
+这些是报告保留预算，不是限制第三方callback内部的分配，也不是设备OOM恢复保证。
+报告的opaque id/context不构成资源租约或跨上下文有效性证明。
+
+本阶段完整Resource384项中372通过、12个可选FBX夹具跳过，4631断言无失败；
+六个相关ASan套件64例486断言无失败/跳过，配置关闭Renderer/Shader作者模块。
+报告在根`out/render-sampling-20261021/refresh-{resource-final,asan-final-*}`。
+ASan首次因默认PATH缺运行库未启动，另一次cmd路径拼接也未执行测试；
+最终在同一VS环境完成，启动失败与通过结果分别保留，不当作生产缺陷或累计通过。
+
 ## 2026-10-22 — Texture v2 与采样作者配方
 
 `ITexture::VERSION=2`；writer 保持历史 magic `0x48545841` 和36字节头布局，插入16字节 packed sampler：

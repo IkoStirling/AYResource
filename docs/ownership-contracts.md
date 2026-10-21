@@ -42,6 +42,31 @@ Frame pump: `Renderer::pollResourceHotReload()` → `ResourceManager::update`.
 
 If gameplay needs L3 drop when L2 unloads, call Renderer `destroy*` explicitly — do not assume Manager unload tears down GPU.
 
+### Authoring publication and acknowledgement (2026-10-22)
+
+`refreshPublishedResources` explicitly refreshes published loose assets. It prepares
+every resident CPU replacement before committing any, then notifies normalized
+paths and known physical aliases. CPU decode failure keeps old entries and sends
+no notification. This differs from the automatic watch path's unload-first policy.
+
+`refreshPublishedResourcesWithReport` adds synchronous consumer outcomes without
+changing the legacy bool's CPU meaning. `Updated` acknowledges one variant;
+`Retained` means that consumer kept its prior resource; `Failed` means its complete
+state is unknown. Unloaded paths need no forced upload (`NotResident`), unsupported
+types are `NotHandled`, and a legacy void callback is `Unconfirmed`.
+Consumer failure never rolls back published files or the completed CPU batch.
+
+`setRefreshObserver` and `setOnHotReload` replace the same single slot. A reporting
+registration returns a unique token; `clearRefreshObserver` only clears that token's
+current slot. A copied executing callback may replace itself; later paths observe
+the new registration. Registration, dispatch and cleanup are owner-thread-only,
+not a concurrent destruction fence or a multi-consumer bus. Labels/diagnostics and
+retained result counts are bounded as documented on the public setter.
+Reports own no CPU resource pin or GPU lease. Both native D3D11/D3D12 validations
+confirmed a CPU-valid 16385x1 replacement is retained on the GPU with matching
+stable ids/context, old mip readbacks and Scene pixels; repaired files update on
+retry. Later Editor source-warning isolation has its own acceptance scope.
+
 ## 3. Include boundary (game / ECS)
 
 | May include | Must not include |

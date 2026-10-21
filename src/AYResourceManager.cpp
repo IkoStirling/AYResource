@@ -15,6 +15,8 @@
 #include <cstdio>
 #include <string>
 #include <filesystem>
+#include <limits>
+#include <stdexcept>
 
 namespace ayt::resource {
 void ResourceManager::setDebugCaptureEnabled(bool enabled){std::lock_guard<std::mutex> lock(_loadsMutex);_debugCapture=enabled;if(!enabled){_debugProgress.clear();_debugReloads.clear();}}
@@ -327,9 +329,7 @@ void ResourceManager::_handleHotReload(const std::string& filepath) {
         (void)_installPlaceholder(path);
     }
 
-    if (_userHotReloadCb) {
-        _userHotReloadCb(path);
-    }
+    (void)_notifyResourceChanged(path);
 }
 
 std::shared_ptr<IResource> ResourceManager::_installPlaceholder(const std::string& filepath) {
@@ -492,6 +492,21 @@ void ResourceManager::reloadResource(const std::string& filepath) {
 
 bool ResourceManager::refreshPublishedResources(const std::vector<std::string>& paths, std::string* error)
 {
+    return _refreshPublishedResources(paths, error, nullptr);
+}
+
+ResourceRefreshReport ResourceManager::refreshPublishedResourcesWithReport(
+    const std::vector<std::string>& paths)
+{
+    ResourceRefreshReport report;
+    report.cpuRefreshed = _refreshPublishedResources(paths, &report.error, &report);
+    if (!report.cpuRefreshed) report.paths.clear();
+    return report;
+}
+
+bool ResourceManager::_refreshPublishedResources(const std::vector<std::string>& paths,
+                                                 std::string* error, ResourceRefreshReport* report)
+{
     struct Replacement
     {
         std::string path;
@@ -573,6 +588,7 @@ bool ResourceManager::refreshPublishedResources(const std::vector<std::string>& 
                 loaded->addTag(tag);
             replacements.push_back({path, loaded});
         }
+        if (report) report->paths.resize(normalized.size());
     }
     catch (const std::exception& failure)
     {
@@ -588,10 +604,10 @@ bool ResourceManager::refreshPublishedResources(const std::vector<std::string>& 
         _loadStates[replacement.path] = ResourceLoadState::Ready;
     }
     // Every resident L2 replacement is visible before any observer uploads L3.
-    for (const auto& path : normalized)
+    for (size_t index = 0; index < normalized.size(); ++index)
     {
-        if (_userHotReloadCb)
-            _userHotReloadCb(path);
+        auto result = _notifyResourceChanged(normalized[index]);
+        if (report) report->paths[index] = std::move(result);
     }
     if (error)
         error->clear();
@@ -732,6 +748,78 @@ void ResourceManager::unwatchResource(const std::string& filepath) {
 
 void ResourceManager::setOnHotReload(HotReloadWatcher::FileChangeCallback callback) {
     _userHotReloadCb = std::move(callback);
+    _refreshObserver = {};
+    _refreshConsumer.clear();
+    _refreshObserverToken = 0;
+}
+
+uint64_t ResourceManager::setRefreshObserver(std::string consumer, RefreshObserver callback)
+{
+    if (!callback) {
+        setOnHotReload({});
+        return 0;
+    }
+    if (_refreshObserverSequence == std::numeric_limits<uint64_t>::max())
+        throw std::overflow_error("resource refresh observer token exhausted");
+    if (consumer.size() > 128) consumer.resize(128);
+    _refreshObserver = std::move(callback);
+    _refreshConsumer = std::move(consumer);
+    _userHotReloadCb = {};
+    _refreshObserverToken = ++_refreshObserverSequence;
+    return _refreshObserverToken;
+}
+
+bool ResourceManager::clearRefreshObserver(uint64_t token)
+{
+    if (!token || token != _refreshObserverToken) return false;
+    setOnHotReload({});
+    return true;
+}
+
+ResourcePathRefresh ResourceManager::_notifyResourceChanged(const std::string& path)
+{
+    ResourcePathRefresh result;
+    result.path = path;
+    result.outcomes.reserve(64);
+    try {
+        // Keep the executing functor alive even when it replaces/clears the
+        // slot from inside the callback. No lock spans arbitrary user code.
+        const auto observer = _refreshObserver;
+        const auto legacy = _userHotReloadCb;
+        result.consumer = observer ? _refreshConsumer : legacy ? "legacy" : "";
+        if (observer) {
+            result.outcomes = observer(path);
+            if (result.outcomes.size() > 64) {
+                result.outcomes.resize(64);
+                result.outcomes.back() = {ResourceRefreshState::Failed, {}, 0, 0,
+                    "consumer returned more than 64 outcomes; complete state is unconfirmed"};
+            }
+            if (result.outcomes.empty())
+                result.outcomes.push_back({ResourceRefreshState::Unconfirmed, {}, 0, 0,
+                    "consumer returned no outcomes"});
+        } else if (legacy) {
+            legacy(path);
+            result.outcomes.push_back({ResourceRefreshState::Unconfirmed, {}, 0, 0,
+                "legacy observer has no result acknowledgement"});
+        } else {
+            result.outcomes.push_back({ResourceRefreshState::NotHandled, {}, 0, 0,
+                "no consumer registered"});
+        }
+    } catch (const std::exception& failure) {
+        result.outcomes.clear();
+        result.outcomes.push_back({ResourceRefreshState::Failed, {}, 0, 0, failure.what()});
+    } catch (...) {
+        result.outcomes.clear();
+        result.outcomes.push_back({ResourceRefreshState::Failed, {}, 0, 0,
+            "consumer raised an unknown exception; complete state is unconfirmed"});
+    }
+    for (auto& outcome : result.outcomes) {
+        if (static_cast<unsigned>(outcome.state) > static_cast<unsigned>(ResourceRefreshState::Failed))
+            outcome = {ResourceRefreshState::Failed, {}, 0, 0, "consumer returned an invalid outcome state"};
+        if (outcome.variant.size() > 128) outcome.variant.resize(128);
+        if (outcome.diagnostic.size() > 1024) outcome.diagnostic.resize(1024);
+    }
+    return result;
 }
 
 void ResourceManager::setAutoWatchLoadedResources(bool enabled) {
