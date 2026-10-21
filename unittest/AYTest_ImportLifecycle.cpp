@@ -22,6 +22,7 @@
 #include <set>
 #include <limits>
 #include <cmath>
+#include <cstdlib>
 #if defined(_WIN32)
 #include <Windows.h>
 #endif
@@ -369,6 +370,97 @@ TEST_CASE(published_refresh_updates_resident_mesh_before_notifying_gpu_observer)
     manager.setAutoWatchLoadedResources(true);
 }
 
+TEST_CASE(published_refresh_handles_reported_directory_alias_and_physical_cache_keys_without_losing_old_borrowers)
+{
+    ImportFixture fixture;fixture.triangle();const auto first=importAsset(fixture.options());CHECK(first.ok);
+    const auto alias=fixture.root/"ImportedAlias";
+#if defined(_WIN32)
+    const auto command=L"cmd /d /c mklink /J \""+alias.wstring()+L"\" \""+fixture.output().wstring()+L"\" >nul 2>&1";
+    if(_wsystem(command.c_str())!=0){SKIP_TEST("Directory junction creation is unavailable");return;}
+#else
+    std::error_code linkError;fs::create_directory_symlink(fixture.output(),alias,linkError);
+    if(linkError){SKIP_TEST("Directory symlink creation is unavailable");return;}
+#endif
+    auto& manager=ResourceManager::instance();manager.unloadAll();manager.setAutoWatchLoadedResources(false);
+    const auto physical=(fixture.output()/fixture.meshPath(first)).string(),reported=(alias/fixture.meshPath(first)).string();
+    auto before=manager.load<Mesh>(physical),aliasBefore=manager.load<Mesh>(reported);CHECK(before&&aliasBefore);
+    if(!before||!aliasBefore){manager.unloadAll();manager.setAutoWatchLoadedResources(true);return;}
+    before->addTag({"physical-tag"});aliasBefore->addTag({"alias-tag"});fixture.triangle(2);auto options=fixture.options();options.force=true;CHECK(importAsset(options).ok);
+    int notifications=0;bool fresh=true;manager.setOnHotReload([&](const std::string&){++notifications;
+        fresh=fresh&&manager.load<Mesh>(physical)!=before&&manager.load<Mesh>(reported)!=aliasBefore;});
+    // Report only the physical spelling: the loaded junction spelling must
+    // still be replaced/notified before observers see either cache entry.
+    std::string error;CHECK(manager.refreshPublishedResources({physical,physical},&error));CHECK(error.empty());CHECK(notifications==2);CHECK(fresh);
+    const auto current=manager.load<Mesh>(physical),aliasCurrent=manager.load<Mesh>(reported);CHECK(current->hasTag({"physical-tag"}));CHECK(aliasCurrent->hasTag({"alias-tag"}));
+    CHECK(before->isLoaded()&&aliasBefore->isLoaded());fixture.write(fs::path(physical),"bad published mesh");notifications=0;
+    CHECK_FALSE(manager.refreshPublishedResources({reported},&error));CHECK(notifications==0);CHECK(manager.load<Mesh>(physical)==current);CHECK(manager.load<Mesh>(reported)==aliasCurrent);
+    manager.setOnHotReload({});manager.unloadAll();manager.setAutoWatchLoadedResources(true);
+}
+
+TEST_CASE(published_refresh_notifies_known_evicted_aliases_without_eagerly_loading_them)
+{
+    ImportFixture fixture;
+    fixture.triangle();
+    const auto first = importAsset(fixture.options());
+    CHECK(first.ok);
+    if (!first.ok) return;
+    const auto alias = fixture.root / "EvictedAlias";
+#if defined(_WIN32)
+    const auto command = L"cmd /d /c mklink /J \"" + alias.wstring()
+        + L"\" \"" + fixture.output().wstring() + L"\" >nul 2>&1";
+    if (_wsystem(command.c_str()) != 0) {
+        SKIP_TEST("Directory junction creation is unavailable"); return;
+    }
+#else
+    std::error_code linkError;
+    fs::create_directory_symlink(fixture.output(), alias, linkError);
+    if (linkError) { SKIP_TEST("Directory symlink creation is unavailable"); return; }
+#endif
+    auto& manager = ResourceManager::instance();
+    manager.unloadAll();
+    manager.setAutoWatchLoadedResources(false);
+    ResourceCache::Config tiny;
+    tiny.maxResourceCount = 1;
+    tiny.weakGraceSeconds = 0;
+    manager.setCacheConfig(tiny);
+    const auto physical = fixture.output() / fixture.meshPath(first);
+    const auto reported = alias / fixture.meshPath(first);
+    std::weak_ptr<Mesh> expired;
+    {
+        const auto loaded = manager.load<Mesh>(reported.string());
+        CHECK(loaded != nullptr);
+        expired = loaded;
+    }
+    const auto otherPath = fixture.output() / "Other.msh";
+    fixture.write(otherPath, fixture.read(physical));
+    const auto other = manager.load<Mesh>(otherPath.string());
+    CHECK(other != nullptr);
+    CHECK(expired.expired());
+    fixture.triangle(2);
+    auto options = fixture.options(); options.force = true;
+    const auto changed = importAsset(options);
+    CHECK_MSG(changed.ok, changed.error.c_str());
+    std::vector<std::string> notifications;
+    manager.setOnHotReload([&](const auto& path) { notifications.push_back(path); });
+    std::string error;
+    CHECK_MSG(manager.refreshPublishedResources({physical.string()}, &error), error.c_str());
+    const auto aliasKey = reported.lexically_normal().generic_u8string();
+    CHECK(std::any_of(notifications.begin(), notifications.end(), [&](const auto& path) {
+        return fs::u8path(path).lexically_normal().generic_u8string() == aliasKey;
+    }));
+    CHECK(notifications.size() == 2u);
+    CHECK(expired.expired());
+    CHECK_FALSE(manager.isLoaded(reported.string()));
+    CHECK(manager.getResourceCount() == 1u);
+    const auto demanded = manager.load<Mesh>(reported.string());
+    CHECK(demanded != nullptr);
+    if (demanded) CHECK_FLOAT_EQ(demanded->getBounds().getMin().x, -2, .0001f);
+    manager.setOnHotReload({});
+    manager.unloadAll();
+    manager.setCacheConfig(ResourceCache::Config{});
+    manager.setAutoWatchLoadedResources(true);
+}
+
 TEST_CASE(failed_published_refresh_preserves_all_resident_entries_and_sends_no_notification)
 {
     ImportFixture fixture;
@@ -590,6 +682,50 @@ TEST_CASE(invalid_namespace_does_not_write_outside_the_import_root)
 }
 
 #if defined(_WIN32)
+TEST_CASE(publication_retries_a_transient_metadata_reader_without_replacing_unrelated_files)
+{
+    ImportFixture fixture;
+    fixture.write(fixture.output() / "A.bin", "previous-a");
+    fixture.write(fixture.output() / "source.dep", "previous-metadata");
+    fixture.write(fixture.output() / "Unrelated.bin", "keep");
+    detail::ImportOutputTransaction transaction(fixture.output().string());
+    fixture.write(fs::u8path(transaction.stagingRoot()) / "A.bin", "new-a");
+    fixture.write(fs::u8path(transaction.stagingRoot()) / "source.dep", "new-metadata");
+    HANDLE reader = ::CreateFileW((fixture.output() / "source.dep").c_str(), GENERIC_READ,
+        FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    CHECK(reader != INVALID_HANDLE_VALUE);
+    if (reader == INVALID_HANDLE_VALUE) return;
+    std::size_t retries = 0;
+    bool metadataWasLast = false;
+    bool published = false;
+    std::string failure;
+    try {
+        transaction.publish("source.dep", [&](std::size_t attempt, const std::error_code& error) {
+            ++retries;
+            CHECK(attempt >= 2u);
+            CHECK(ayt::io::detail::isWindowsPublishContention(error));
+            metadataWasLast = fixture.read(fixture.output() / "A.bin") == "new-a"
+                && fixture.read(fixture.output() / "source.dep") == "previous-metadata";
+            // Release only after the real filesystem operation encountered the
+            // held reader, so this regression does not depend on a timed sleep.
+            if (reader != INVALID_HANDLE_VALUE) {
+                ::CloseHandle(reader);
+                reader = INVALID_HANDLE_VALUE;
+            }
+        });
+        published = true;
+    } catch (const std::exception& error) {
+        failure = error.what();
+    }
+    if (reader != INVALID_HANDLE_VALUE) ::CloseHandle(reader);
+    CHECK_MSG(published, failure.c_str());
+    CHECK(retries > 0u);
+    CHECK(metadataWasLast);
+    CHECK(fixture.read(fixture.output() / "A.bin") == "new-a");
+    CHECK(fixture.read(fixture.output() / "source.dep") == "new-metadata");
+    CHECK(fixture.read(fixture.output() / "Unrelated.bin") == "keep");
+}
+
 TEST_CASE(publication_failure_after_a_replacement_rolls_back_previous_files)
 {
     ImportFixture fixture;

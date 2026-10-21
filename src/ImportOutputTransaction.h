@@ -3,6 +3,7 @@
 #include "AYResource/IConverter.h"
 #include "ImportNativePath.h"
 #include <AYIO/PathSafety.h>
+#include <AYIO/detail/PublicationRetry.h>
 
 #include <atomic>
 #include <algorithm>
@@ -12,6 +13,7 @@
 #include <string>
 #include <vector>
 #include <set>
+#include <functional>
 
 namespace ayt::resource::detail {
 
@@ -77,7 +79,9 @@ public:
             }
         }
     }
-    void publish(const std::string& finalMarker = {})
+    // Implementation-only diagnostic hook; a notice must not throw.
+    using RetryNotice = std::function<void(std::size_t, const std::error_code&)>;
+    void publish(const std::string& finalMarker = {}, RetryNotice onRetry = {})
     {
         namespace fs = std::filesystem;
         struct Entry { fs::path relative; bool hadPrevious = false; bool installed = false; };
@@ -107,6 +111,18 @@ public:
             const bool secondMetadata = second.relative.extension() == ".dep";
             return firstMetadata == secondMetadata ? first.relative < second.relative : !firstMetadata;
         });
+        const auto notice = [&](std::size_t attempt, const std::error_code& error) {
+            if (onRetry) onRetry(attempt, error);
+        };
+        const auto renameFile = [&](const fs::path& source, const fs::path& target) {
+            return ayt::io::detail::retryPublishFileOperation(
+                [&](std::error_code& error) { fs::rename(source, target, error); }, notice);
+        };
+        const auto checkedRename = [&](const fs::path& source, const fs::path& target) {
+            const auto result = renameFile(source, target);
+            if (result.error) throw std::runtime_error(ayt::io::detail::publishFileError(
+                "publish import file", source, target, result));
+        };
         try {
             for (auto& entry : entries) {
                 const auto destination = _output / entry.relative;
@@ -114,22 +130,24 @@ public:
                 if (fs::exists(destination)) {
                     const auto backup = _work / "previous" / entry.relative;
                     fs::create_directories(backup.parent_path());
-                    fs::rename(destination, backup);
+                    checkedRename(destination, backup);
                     entry.hadPrevious = true;
                 }
-                fs::rename(_stage / entry.relative, destination);
+                checkedRename(_stage / entry.relative, destination);
                 entry.installed = true;
             }
         } catch (...) {
             for (auto entry = entries.rbegin(); entry != entries.rend(); ++entry) {
-                std::error_code error;
                 const auto destination = _output / entry->relative;
-                if (entry->installed) fs::remove(destination, error);
-                if (error) _retain = true;
-                error.clear();
-                if (entry->hadPrevious)
-                    fs::rename(_work / "previous" / entry->relative, destination, error);
-                if (error) _retain = true;
+                if (entry->installed) {
+                    const auto removed = ayt::io::detail::retryPublishFileOperation(
+                        [&](std::error_code& error) { fs::remove(destination, error); }, notice);
+                    if (removed.error) _retain = true;
+                }
+                if (entry->hadPrevious) {
+                    const auto restored = renameFile(_work / "previous" / entry->relative, destination);
+                    if (restored.error) _retain = true;
+                }
             }
             if (_retain) throw std::runtime_error("import publication rollback failed; recovery retained at "
                 + _work.string());

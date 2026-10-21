@@ -176,6 +176,11 @@ public:
     /// path. An L2 decode failure preserves all prior cache entries and sends
     /// no notifications. Unloaded paths remain demand-loaded. Files have
     /// already been published by the caller; callbacks must not throw.
+    /// Refreshes reported loose paths and their canonical physical spelling,
+    /// including previously loaded absolute loose aliases of those files even
+    /// after L2 eviction. Discovery does not eagerly reload evicted CPU objects;
+    /// observers may demand-load them. Explicit unload forgets the alias key.
+    /// Cache identity and package/virtual key rules remain unchanged.
     bool refreshPublishedResources(const std::vector<std::string>& paths,
                                    std::string* error = nullptr);
     void unloadAll();

@@ -142,6 +142,8 @@ std::vector<ProjectImportRecipe> readProjectImportRecipes(
 /// Model/image cache metadata fingerprints actual source dependencies, outputs and complete
 /// settings. Imports sharing an output root must be serialized by the caller.
 /// Publication is not a crash-atomic multi-file snapshot for concurrent readers.
+/// Windows file publication/rollback retries transient contention within the
+/// existing AYIO bounded policy; persistent errors still fail and roll back.
 ImportResult importAsset(const ImportOptions& options,
                          ImportProgressFn progress = {},
                          ImportCancelToken* cancel = nullptr);

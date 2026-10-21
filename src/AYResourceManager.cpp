@@ -14,6 +14,7 @@
 #include <unordered_set>
 #include <cstdio>
 #include <string>
+#include <filesystem>
 
 namespace ayt::resource {
 void ResourceManager::setDebugCaptureEnabled(bool enabled){std::lock_guard<std::mutex> lock(_loadsMutex);_debugCapture=enabled;if(!enabled){_debugProgress.clear();_debugReloads.clear();}}
@@ -489,46 +490,111 @@ void ResourceManager::reloadResource(const std::string& filepath) {
     }
 }
 
-bool ResourceManager::refreshPublishedResources(const std::vector<std::string>& paths,
-                                                std::string* error)
+bool ResourceManager::refreshPublishedResources(const std::vector<std::string>& paths, std::string* error)
 {
-    struct Replacement {
+    struct Replacement
+    {
         std::string path;
         std::shared_ptr<IResource> resource;
     };
     std::vector<std::string> normalized;
     std::vector<Replacement> replacements;
-    try {
+    try
+    {
         std::unordered_set<std::string> seen;
-        for (const auto& requested : paths) {
-            const auto path = normalizeResourcePath(requested);
-            if (path.empty() || !seen.insert(path).second) continue;
-            normalized.push_back(path);
+        std::unordered_set<std::string> physicalTargets;
+        const auto physicalPath = [](const std::string& path) {
+            std::error_code pathError;
+            const auto canonical =
+                std::filesystem::weakly_canonical(std::filesystem::u8path(path), pathError);
+            if (pathError)
+                return std::string{};
+            const auto utf8 = canonical.generic_u8string();
+            return normalizeResourcePath(
+                std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size()));
+        };
+        const auto identity = [](std::string path) {
+#if defined(_WIN32)
+            for (auto& byte : path)
+                if (byte >= 'A' && byte <= 'Z')
+                    byte += 'a' - 'A';
+#endif
+            return path;
+        };
+        const auto append = [&](const std::string& path) {
+            if (!path.empty() && seen.insert(path).second)
+                normalized.push_back(path);
+        };
+        for (const auto& requested : paths)
+        {
+            if (requested.empty())
+                continue;
+            append(normalizeResourcePath(requested));
+            const auto physical = physicalPath(requested);
+            if (!physical.empty())
+            {
+                append(physical);
+                physicalTargets.insert(identity(physical));
+            }
+        }
+        // A project recipe may already use the physical spelling while L2/L3
+        // were loaded through a junction. Snapshot known keys under the lock,
+        // then perform filesystem work without holding it. Virtual/package
+        // keys are not rewritten. Previously loaded aliases still need an L3
+        // notification after L2 eviction; discovery itself does not load them.
+        std::vector<std::string> known;
+        {
+            std::lock_guard<std::mutex> lock(_loadsMutex);
+            known.reserve(_resourceTypes.size());
+            for (const auto& [path, type] : _resourceTypes)
+                known.push_back(path);
+        }
+        std::sort(known.begin(), known.end());
+        for (const auto& path : known)
+        {
+            if (seen.contains(path) || !std::filesystem::u8path(path).is_absolute())
+                continue;
+            if (physicalTargets.contains(identity(physicalPath(path))))
+                append(path);
+        }
+        for (const auto& path : normalized)
+        {
             const auto previous = _cache.get(path);
-            if (!previous) continue;
+            if (!previous)
+                continue;
             const auto loaded = ResourceRegistry::loadByPath(path);
-            if (!loaded || !loaded->isLoaded()) {
-                if (error) *error = "published resource could not be decoded: " + path;
+            if (!loaded || !loaded->isLoaded())
+            {
+                if (error)
+                    *error = "published resource could not be decoded: " + path;
                 return false;
             }
-            for (const auto& tag : previous->getTags()) loaded->addTag(tag);
+            for (const auto& tag : previous->getTags())
+                loaded->addTag(tag);
             replacements.push_back({path, loaded});
         }
-    } catch (const std::exception& failure) {
-        if (error) *error = failure.what();
+    }
+    catch (const std::exception& failure)
+    {
+        if (error)
+            *error = failure.what();
         return false;
     }
-    for (const auto& replacement : replacements) {
+    for (const auto& replacement : replacements)
+    {
         _cache.replace(replacement.path, replacement.resource);
         std::lock_guard<std::mutex> lock(_loadsMutex);
         _resourceTypes[replacement.path] = replacement.resource->getType();
         _loadStates[replacement.path] = ResourceLoadState::Ready;
     }
     // Every resident L2 replacement is visible before any observer uploads L3.
-    for (const auto& path : normalized) {
-        if (_userHotReloadCb) _userHotReloadCb(path);
+    for (const auto& path : normalized)
+    {
+        if (_userHotReloadCb)
+            _userHotReloadCb(path);
     }
-    if (error) error->clear();
+    if (error)
+        error->clear();
     return true;
 }
 
