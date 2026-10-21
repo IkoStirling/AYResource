@@ -47,7 +47,7 @@ inline ImportJson importSettings(const ImportOptions& options)
 {
     const auto& material = options.materialPolicy;
     const auto& coordinates = options.sourceCoordinates;
-    return {{"loadOption", static_cast<int>(options.loadOption)},
+    ImportJson settings = {{"loadOption", static_cast<int>(options.loadOption)},
         {"cookTextures", options.cookTextures},
         {"requireCharacterAssets", options.requireCharacterAssets},
         {"requireAnimationAssets", options.requireAnimationAssets},
@@ -66,6 +66,16 @@ inline ImportJson importSettings(const ImportOptions& options)
             {"handedness", static_cast<int>(coordinates.handedness)},
             {"uvOrigin", static_cast<int>(coordinates.uvOrigin)},
             {"metersPerUnit", coordinates.metersPerUnit}, {"tag", coordinates.tag}}}};
+    if (options.overrideTextureSampler || !options.keepTextureMipmaps) {
+        const auto& sampler = options.textureSampler;
+        settings["textureSampling"] = {{"override",options.overrideTextureSampler},
+            {"keepMipmaps",options.keepTextureMipmaps},
+            {"min",static_cast<int>(sampler.minFilter)}, {"mag",static_cast<int>(sampler.magFilter)},
+            {"wrapU",static_cast<int>(sampler.wrapU)}, {"wrapV",static_cast<int>(sampler.wrapV)},
+            {"wrapW",static_cast<int>(sampler.wrapW)}, {"anisotropy",sampler.anisotropy},
+            {"lodBias",sampler.lodBias}};
+    }
+    return settings;
 }
 
 inline int importEnum(const ImportJson& value, int minimum, int maximum)
@@ -81,6 +91,25 @@ inline void decodeImportSettings(const ImportJson& settings, ImportOptions& opti
     if (loadOption < 0 || loadOption > 2) throw std::runtime_error("invalid import load option");
     options.loadOption = static_cast<IConverter::LoadOption>(loadOption);
     options.cookTextures = settings.at("cookTextures").get<bool>();
+    options.overrideTextureSampler = false;
+    options.keepTextureMipmaps = true;
+    options.textureSampler = {};
+    if (settings.contains("textureSampling")) {
+        const auto& sampling = settings.at("textureSampling");
+        options.overrideTextureSampler = sampling.at("override").get<bool>();
+        options.keepTextureMipmaps = sampling.at("keepMipmaps").get<bool>();
+        auto& sampler = options.textureSampler;
+        sampler.minFilter = static_cast<TextureFilter>(importEnum(sampling.at("min"),0,4));
+        sampler.magFilter = static_cast<TextureFilter>(importEnum(sampling.at("mag"),0,4));
+        sampler.wrapU = static_cast<TextureWrap>(importEnum(sampling.at("wrapU"),0,3));
+        sampler.wrapV = static_cast<TextureWrap>(importEnum(sampling.at("wrapV"),0,3));
+        sampler.wrapW = static_cast<TextureWrap>(importEnum(sampling.at("wrapW"),0,3));
+        sampler.anisotropy = sampling.at("anisotropy").get<float>();
+        sampler.lodBias = sampling.at("lodBias").get<float>();
+        if (!std::isfinite(sampler.anisotropy) || sampler.anisotropy < 1 || sampler.anisotropy > 16
+            || !std::isfinite(sampler.lodBias) || sampler.lodBias < -16 || sampler.lodBias > 16)
+            throw std::runtime_error("invalid texture sampling settings");
+    }
     options.requireCharacterAssets = settings.at("requireCharacterAssets").get<bool>();
     options.requireAnimationAssets = settings.at("requireAnimationAssets").get<bool>();
     options.sourceAssetRoot = settings.at("sourceAssetRoot").get<std::string>();

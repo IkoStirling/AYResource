@@ -15,6 +15,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <stb_image.h>
 
 using namespace ayt::resource;
 
@@ -156,6 +157,24 @@ TEST_CASE(load_aytex_still_works_alongside_loose)
     CHECK(texture->getHeight() == 2);
     CHECK(texture->getFormat() == TextureFormat::RGBA8);
     cleanup();
+}
+
+TEST_CASE(large_advertised_png_dimensions_are_refused_before_pixel_decode)
+{
+#if defined(AY_TEXTURE_LOOSE_FORMATS)
+    cleanup();std::filesystem::create_directories(kRoot);
+    std::vector<UInt8> bytes(std::begin(k4x4RedPng),std::end(k4x4RedPng));
+    bytes[16]=bytes[17]=bytes[20]=bytes[21]=0;
+    bytes[18]=bytes[22]=0x27;bytes[19]=bytes[23]=0x10; // 10000x10000, 400 MB decoded RGBA8.
+    int width=0,height=0,components=0;
+    CHECK(stbi_info_from_memory(bytes.data(),static_cast<int>(bytes.size()),&width,&height,&components)!=0);
+    CHECK(width==10000 && height==10000);
+    const auto path=kRoot+"/large-advertised.png";
+    {std::ofstream stream(path,std::ios::binary);stream.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));}
+    TextureLoader loader;CHECK(loader.load(path)==nullptr);cleanup();
+#else
+    SKIP_TEST("Loose images disabled");
+#endif
 }
 
 TEST_SUITE_END

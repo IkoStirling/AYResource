@@ -108,7 +108,10 @@ private:
 // ===== Inline implementations =====
 
 inline const UInt8* Texture::getMipmapData(UInt32 mipLevel) const {
-    if (mipLevel >= _mipOffsets.size()) {
+    if (mipLevel >= _mipOffsets.size() || mipLevel >= _mipSizes.size()
+        || _mipOffsets[mipLevel] > _imageData.size()
+        || _mipSizes[mipLevel] > _imageData.size() - _mipOffsets[mipLevel]
+        || _mipSizes[mipLevel] == 0) {
         return nullptr;
     }
     return _imageData.data() + _mipOffsets[mipLevel];

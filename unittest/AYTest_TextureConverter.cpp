@@ -14,7 +14,7 @@ TEST_SUITE(TextureFormatTests)
 
     TEST_CASE(TextureConstants) {
         CHECK(ITexture::MAGIC == 0x48545841);  // 'AYTX'
-        CHECK(ITexture::VERSION == 1);
+        CHECK(ITexture::VERSION == 2);
     }
 
     TEST_CASE(TextureFormatValues) {

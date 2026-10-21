@@ -1,5 +1,26 @@
 # AYResource — Design (v2.1)
 
+## 2026-10-22 — Texture v2 与采样作者配方
+
+`ITexture::VERSION=2`；writer 保持历史 magic `0x48545841` 和36字节头布局，插入16字节 packed sampler：
+min/mag/wrapU/wrapV/wrapW/sRGB各1字节、reserved UInt16=0、anisotropy Float32、lodBias Float32。
+均沿用当前 little-endian 资产约定；imageDataSize只计编码图像，偏移为52。v1图像偏移36，sampler取历史默认。
+新运行时可读旧资源，旧严格版本读者不能读 v2；不批量改写既有文件，显式保存/重导入才写新版本。
+
+读取先复制 packed 头并验证 magic/version、正尺寸、合法完整或前缀层级、格式、每层准确字节数和 EOF，
+再验证 sampler 有效枚举、sRGB 0/1、reserved0、anisotropy有限1..16、lodBias有限-16..16。
+图像总数据≤256 MiB。所有临时解析成功后才替换对象字段；失败不破坏原像素、sampler和 loaded 状态。
+保存核对完整且连续的 mip 表；失败保留 outData。computeMipSize 在乘法前检查 UInt32 上限，未知格式返回0。
+公开 mip buffer 读取核对偏移和长度，测试创建器拒绝溢出尺寸/零棋盘大小。
+Loose 图片先读取有界文件并检查维度，再进行像素解码；与 cooked 容器共享256 MiB字节预算。
+
+ImportOptions 追加采样覆盖和层级保留字段；不扩展 IConverter vtable。
+ImportJob 在 converter 完成后、最终指纹和事务发布前，对 typed Texture 应用设置并重新编码；
+raw 图片明确拒绝有覆盖的请求。来源 sRGB 被保留，不能用全模型覆盖把法线/标量贴图强制变成颜色贴图。
+keepTextureMipmaps=false 只保留已有基础层；true不补齐 DDS。resource.size随重新编码更新，原像素 GUID 策略保留。
+作者 recipe 保持version1，textureSampling为可选字段；默认未覆盖设置不写字段以兼容旧缓存语义。
+非默认设置参与指纹、恢复、批量传播与离线计划。GPU设备能力、所有权和回退由 Renderer 负责。
+
 ## 2026-10-21 — 来源配方、事务发布和显式驻留资源刷新
 
 ImportJob 在相邻的独占临时目录调用 converter，校验非空 typed 输出及发布路径，备份旧文件后逐个替换。

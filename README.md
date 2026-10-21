@@ -1,5 +1,18 @@
 # AYResource
 
+## 纹理采样与容器兼容（2026-10-22）
+
+Texture writer 写 `.txr` v2：36字节旧头、16字节 sampler、原编码 mip 数据；读取器兼容 v1并恢复历史默认采样。
+过滤、各轴寻址、各向异性、sRGB 与 LOD bias 均可往返；具体 GPU 支持及回退由 AYRenderer 决定。
+编解码检查有效枚举/有限数、尺寸/层级、精确布局及256 MiB数据上限；失败加载保留旧对象，失败保存保留输出缓冲。
+`TextureSampling.h` 只包含轻量采样值，不依赖资源管理器或 GPU。
+
+作者通过 ImportOptions 的 `overrideTextureSampler` / `textureSampler` 和 `keepTextureMipmaps` 设置输出。
+覆盖在 staging 对 typed 纹理生效，保留来源 sRGB；关闭层级保留会裁去基础层之后的数据。
+不为 DDS 生成缺失层级；raw 图片无法保存这些设置，需要选择 cooked 输出。
+共享 recipe v1以可选字段保存设置；设置变化参与缓存指纹、批量导入和 ProjectBuild。
+未覆盖的旧配方保持原语义。加载 CPU sampler 不意味着设备端会即时更新，发布/驻留刷新仍由 Host 显式驱动。
+
 ## 导入与重导入（2026-10-21）
 
 作者工具使用 `ImportJob.h` 的 `importAsset`，FBX/glTF/GLB 共用真实 Assimp 场景解析与类型 writer。

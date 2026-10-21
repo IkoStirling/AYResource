@@ -34,6 +34,7 @@ add_executable(${MODULE_NAME}
     AYTest_FBXParserAnimation.cpp
     AYTest_AnimationConverter.cpp
     AYTest_TextureConverter.cpp
+    AYTest_TextureSampling.cpp
     AYTest_TextureLoaderLoose.cpp
     AYTest_MaterialConverter.cpp
     AYTest_VirtualAssetPath_P0.cpp

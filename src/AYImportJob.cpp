@@ -3,6 +3,7 @@
 #include "ImportCacheMetadata.h"
 #include "ImportImage.h"
 #include <AYResource/Loader/TextureLoader.h>
+#include <AYResource/assetsImpl/Texture.h>
 #include <AYAssetFormat/AssetFormat.h>
 
 #include <AYIO/File.h>
@@ -490,19 +491,39 @@ ImportResult importAsset(const ImportOptions& options,
         // Raw-copy is intentionally a low-level byte operation. A completed
         // import promises readable texture artifacts, so validate here before
         // any published file can be replaced.
-        for (const auto& resource : r.conversion.resources) {
+        for (auto& resource : r.conversion.resources) {
             if (resource.type != "Texture") continue;
             const auto path=joinDirFile(transaction->stagingRoot(),resource.path);
             const auto ext=importExtensionOf(resource.path);
             if (ext=="png" || ext=="jpg" || ext=="jpeg" || ext=="bmp" || ext=="tga") {
+                if (options.overrideTextureSampler || !options.keepTextureMipmaps)
+                    throw std::runtime_error("texture sampling overrides require cooked texture output");
                 detail::ImportImage decoded;
                 if (!detail::readImportImage(path,decoded))
                     throw std::runtime_error("invalid converted image: "+resource.path);
             } else {
                 std::vector<UInt8> bytes;
                 TextureLoader loader;
-                if (!detail::readImportBytes(path,bytes) || !loader.loadFromBinary(bytes.data(),bytes.size()))
+                if (!detail::readImportBytes(path,bytes))
                     throw std::runtime_error("invalid converted texture: "+resource.path);
+                const auto texture = std::dynamic_pointer_cast<Texture>(loader.loadFromBinary(bytes.data(),bytes.size()));
+                if (!texture) throw std::runtime_error("invalid converted texture: "+resource.path);
+                if (options.overrideTextureSampler || !options.keepTextureMipmaps) {
+                    if (options.overrideTextureSampler) {
+                        auto sampler = options.textureSampler;
+                        sampler.sRGB = texture->getSampler().sRGB;
+                        texture->setSampler(sampler);
+                    }
+                    if (!options.keepTextureMipmaps && texture->getMipmapCount() > 1) {
+                        const auto count = texture->getMipmapSize(0);
+                        std::vector<UInt8> base(texture->getMipmapData(0),texture->getMipmapData(0)+count);
+                        texture->setImageData(std::move(base)); texture->setMipmapLayout({0},{count});
+                    }
+                    if (!texture->saveToBinary(bytes)
+                        || !ayt::io::File::atomicWriteUtf8(path,bytes.data(),bytes.size()))
+                        throw std::runtime_error("could not stage texture sampling settings: "+resource.path);
+                    resource.size = bytes.size();
+                }
             }
         }
     } catch (const std::exception& e) {
@@ -615,6 +636,9 @@ ImportBatchResult importAssetBatch(const ImportBatchOptions& options,
         one.materialPolicy = options.materialPolicy;
         one.sourceCoordinates = options.sourceCoordinates;
         one.allowLegacyCache = options.allowLegacyCache;
+        one.overrideTextureSampler = options.overrideTextureSampler;
+        one.textureSampler = options.textureSampler;
+        one.keepTextureMipmaps = options.keepTextureMipmaps;
 
         ImportProgressFn wrapped;
         if (progress) {

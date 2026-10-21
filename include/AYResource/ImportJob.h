@@ -1,6 +1,7 @@
 #pragma once
 
 #include <AYResource/IConverter.h>
+#include <AYResource/TextureSampling.h>
 
 #include <atomic>
 #include <cstddef>
@@ -79,6 +80,14 @@ struct ImportOptions {
     /// filename. Keep this when relinking a moved/renamed model or image.
     /// Does not map renamed model subobjects or changed texture output modes.
     std::string outputBaseName;
+    /// Import-wide sampler override for typed textures. Raw image outputs
+    /// cannot persist it; choose cooked textures or keep the override disabled.
+    /// The source texture's sRGB metadata remains unchanged.
+    bool overrideTextureSampler = false;
+    TextureSampler textureSampler;
+    /// Keep supplied/generated mip levels. False strips typed texture outputs
+    /// to base-only; true does not generate missing DDS levels.
+    bool keepTextureMipmaps = true;
 };
 
 struct ImportResult {
@@ -139,6 +148,9 @@ std::vector<ProjectImportRecipe> readProjectImportRecipes(
 /// Import into an isolated staging directory, validate, then publish with
 /// rollback on failure. Resource paths remain stable while source/subobject
 /// names, namespace and output texture mode stay unchanged.
+/// Texture sampler/mip overrides are applied to typed outputs before final
+/// fingerprints and publication. Raw image outputs refuse overrides rather
+/// than silently dropping settings; DDS levels are preserved or reduced, never generated.
 /// Model/image cache metadata fingerprints actual source dependencies, outputs and complete
 /// settings. Imports sharing an output root must be serialized by the caller.
 /// Publication is not a crash-atomic multi-file snapshot for concurrent readers.
@@ -160,6 +172,9 @@ struct ImportBatchOptions {
     MaterialImportPolicy materialPolicy;
     SourceCoordinatePolicy sourceCoordinates;
     bool allowLegacyCache = false;
+    bool overrideTextureSampler = false;
+    TextureSampler textureSampler;
+    bool keepTextureMipmaps = true;
 };
 
 struct ImportBatchResult {
