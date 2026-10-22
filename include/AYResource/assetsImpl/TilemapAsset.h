@@ -9,12 +9,11 @@ namespace ayt::resource
 
 // ===== Tilemap — 2D tilemap resource implementation =====
 //
-// Decoded form of a `.aytilemap` L1 file (design.md AY2D §9.1). Holds the
-// tile-id array (one of tileIds16/tileIds32 per pack mode), grid metadata,
-// and the blocked (solid) tile-id list. Lives in the AYResource L2 cache,
-// handed out via ITilemap. The AYPhysics2DBridge adapter copies this into
-// the AY2D `ayt::ay2d::Tilemap` POD (which is what physics + rendering
-// actually consume).
+// Decoded form of a `.aytilemap` L1 file (current v3). Holds packed tile IDs,
+// grid metadata, per-tile collision flags, layers, atlas visuals and semantic
+// shadows. Lives in the AYResource L2 cache, handed out via ITilemap. The
+// AYPhysics2DBridge copies collision data into the AY2D Tilemap POD; the
+// formal Scene renderer consumes ITilemap and builds GPU resources separately.
 //
 // Named `TilemapAsset` (not `Tilemap`) to avoid collision with the AY2D
 // runtime `ayt::ay2d::Tilemap` POD at consumer call sites that open both

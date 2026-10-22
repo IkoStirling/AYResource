@@ -87,16 +87,16 @@ struct TilemapVisualEntry {
 
 // ===== ITilemap — 2D tilemap resource interface (L2 cache hand-out)
 //
-// design.md (AY2D §9.1 / §9.3): `.aytilemap` is an L1 disk file (magic 'AYTM',
-// v2) decoded by AYResource into this L2 interface. Carries the tile-id array,
-// grid dimensions, tile pixel size, pack mode, default tile id, and the
-// per-tile-id collision-flags table (the collision metadata the
-// AYPhysics2DBridge consumes to build static bodies / one-way platforms /
-// slopes). No GPU handle lives here (L3 is AYRenderer's job).
+// `.aytilemap` is an L1 disk file (magic 'AYTM', current v3; v1/v2 readable)
+// decoded by AYResource into this L2 interface. It carries grid metadata,
+// packed tile IDs and per-tile collision flags. V3 also carries layers,
+// atlases, exact source rectangles, tint and semantic shadow masks. The
+// AYPhysics2DBridge copies collision data into its AY2D Tilemap; the formal
+// Scene renderer reads ITilemap directly and builds GPU resources separately.
 //
 // The flags table is the source of truth for
 // `ayt::ay2d::Tilemap::tileCollisionFlags` (AY2D §13.20 / R3): the loader
-// reads it from disk, the bridge adapter copies it into the AY2D POD so
+// reads it from disk, and the bridge adapter copies it into the AY2D POD so
 // `ITileCollisionQuery::flagsAt` returns the real per-tile flags.
 class ITilemap : public IResource {
 public:
