@@ -22,6 +22,9 @@
 #if defined(AY_RESOURCE_HAS_STATS)
 #include "AYResource/Converter/StatsConverter.h"
 #endif
+#if defined(AY_RESOURCE_HAS_ROOMS)
+#include <AY2DEditor/RoomAssemblyConverter2D.h>
+#endif
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)
 #include "AYResource/Converter/DeterministicLevelConverter2D.h"
 #endif
@@ -247,6 +250,9 @@ bool isImportSupportedExtension(const std::string& sourcePath)
 #endif
 #if defined(AY_RESOURCE_HAS_STATS)
     if(ayt::asset_format::matchesPath(sourcePath, ayt::asset_format::Id::StatsSource)) return true;
+#endif
+#if defined(AY_RESOURCE_HAS_ROOMS)
+    if(ayt::asset_format::matchesPath(sourcePath, ayt::asset_format::Id::RoomAssembly2D)) return true;
 #endif
     const std::string ext = importExtensionOf(sourcePath);
 #if defined(AY_RESOURCE_HAS_PARTICLE)
@@ -479,6 +485,10 @@ ImportResult importAsset(const ImportOptions& options,
 #if defined(AY_RESOURCE_HAS_STATS)
         if(auto* stats=dynamic_cast<StatsConverter*>(converter.get()))
             stats->setAssetRoot(options.sourceAssetRoot);
+#endif
+#if defined(AY_RESOURCE_HAS_ROOMS)
+        if(auto* rooms=dynamic_cast<RoomAssemblyConverter2D*>(converter.get()))
+            rooms->setAssetRoot(options.sourceAssetRoot);
 #endif
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)
         if(auto* level=dynamic_cast<DeterministicLevelConverter2D*>(converter.get()))

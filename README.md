@@ -215,6 +215,15 @@ Affected ProjectBuild/import/bootstrap/decoder/loader suites passed 49/49
 Reports: out/audio-completion-20261016/content-credits-final.json and
 resource-integration-final.json. AYAssetFormat_Tests and both editor builds passed.
 
+## 2D room recipe build integration (2026-10-26)
+
+When AY2D authoring and AYResource authoring targets are enabled together,
+ProjectBuild selects `.ayrooms.json` for automatic Cook into `.rmb`, stores the
+result in its content-addressed cache and registers the cooked
+`RoomAssembly2D` type. Invalid sources and cached envelopes are refused before
+publication. CookShip validates `.rmb` before packing. The runtime loader is
+provided by optional `AY2DRoomResources` registration.
+
 具体 Material::setTextureReference 供作者工具重定位既有纹理引用，保留 Texture2D/3D/Cube 类型；
 拒绝缺失、非纹理参数及 NUL 路径，不改变失败前的值。它不是新的运行时资源获取入口。
 证据 MaterialFileTests，普通与 MSVC ASan 材质文件组均通过7例/357断言。

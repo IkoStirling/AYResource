@@ -1223,3 +1223,13 @@ Affected ProjectBuild/import/bootstrap/decoder/loader suites passed 49/49
 (472 checks). Standard import_tool cooked a piano arrangement successfully.
 Reports: out/audio-completion-20261016/content-credits-final.json and
 resource-integration-final.json. AYAssetFormat_Tests and both editor builds passed.
+
+## Room assembly source-to-package route (2026-10-26)
+
+The optional AY2D authoring integration registers `.ayrooms.json` with the
+generic importer and `.rmb` with the runtime resource registry. The converter
+audits the authored seed and emits one AYRM v1 envelope at the source-relative
+path. ProjectBuild includes the converter contract in cache identity, rechecks
+the source before execution, and validates cached output path/type and bytes.
+CookShip validates final envelopes before replacing an existing package. Game
+state and generated room objects remain outside the asset pipeline.

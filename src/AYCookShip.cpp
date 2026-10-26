@@ -20,6 +20,11 @@
 #if defined(AY_RESOURCE_HAS_STATS)
 #include <AYStats/RecipeAsset.h>
 #endif
+#if defined(AY_RESOURCE_HAS_ROOMS)
+#include <AY2DEditor/RoomAssemblyCook2D.h>
+#include <fstream>
+#include <vector>
+#endif
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)
 #include <AYEntity/DeterministicLevelCooked2D.h>
 #include <fstream>
@@ -201,6 +206,41 @@ CookShipResult cookShipPackage(const CookShipOptions& options)
             if(!validateStats(entry)) return result;
     }
     if(statsScanError) {result.error="Stats input scan failed: "+statsScanError.message();return result;}
+#endif
+
+#if defined(AY_RESOURCE_HAS_ROOMS)
+    auto validateRoom=[&](const fs::directory_entry& entry) {
+        if (!entry.is_regular_file() || ResourceRegistry::getTypeFromPath(
+                entry.path().string())!="RoomAssembly2D") return true;
+        std::error_code ec;
+        const auto length=entry.file_size(ec);
+        if(ec || length>ayt::ay2d::editor::kRoomAssemblyCooked2DMaxBytes) {
+            result.error="Invalid cooked room size: "+entry.path().string();return false;
+        }
+        std::ifstream input(entry.path(),std::ios::binary);
+        std::vector<std::uint8_t> bytes(static_cast<std::size_t>(length));
+        if(!input.read(reinterpret_cast<char*>(bytes.data()),
+                static_cast<std::streamsize>(bytes.size()))
+            || input.peek()!=std::char_traits<char>::eof() || input.bad()) {
+            result.error="Cannot read cooked room: "+entry.path().string();return false;
+        }
+        ayt::ay2d::RoomAssemblyConfig2D parsed;
+        std::string error;
+        if(!ayt::ay2d::editor::decodeRoomAssemblyCooked2D(bytes,parsed,error)) {
+            result.error="Invalid cooked room: "+entry.path().string()+": "+error;
+            return false;
+        }
+        return true;
+    };
+    std::error_code roomScanError;
+    if(options.recursive) {
+        for(const auto& entry:fs::recursive_directory_iterator(root,roomScanError))
+            if(!validateRoom(entry))return result;
+    } else {
+        for(const auto& entry:fs::directory_iterator(root,roomScanError))
+            if(!validateRoom(entry))return result;
+    }
+    if(roomScanError) {result.error="Room input scan failed: "+roomScanError.message();return result;}
 #endif
 
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)

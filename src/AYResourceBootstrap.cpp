@@ -89,6 +89,11 @@ bool initializeLoaders()
         for (const auto alias : ayt::asset_format::describe(Id::StatsRecipes).readAliases)
             ResourceRegistry::registerExtension(std::string(alias), "StatsRecipes");
 #endif
+#if defined(AY_RESOURCE_HAS_ROOMS)
+        ResourceRegistry::registerExtension(
+            std::string(ayt::asset_format::suffix(Id::RoomAssemblyCooked2D)),
+            "RoomAssembly2D");
+#endif
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)
         // Packaging metadata only; the optional AYEntity loader is explicitly registered by the host.
         const auto levelSuffix=std::string(ayt::asset_format::suffix(Id::DeterministicLevelCooked));

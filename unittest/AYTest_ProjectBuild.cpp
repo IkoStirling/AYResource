@@ -1,4 +1,5 @@
 #include "AYResource/ProjectBuild.h"
+#include "AYResource/CookShip.h"
 #include <AYResource/ImportJob.h>
 #include <AYResource/Loader/MeshLoader.h>
 #include <AYResource/assetsImpl/Mesh.h>
@@ -785,6 +786,68 @@ TEST_CASE(repeated_build_reuses_content_addressed_cook_result)
     CHECK(second.cookedCount == 1u);
     CHECK(second.cacheHitCount == 1u);
 }
+
+#if defined(AY_RESOURCE_HAS_ROOMS)
+TEST_CASE(room_recipe_project_build_cooks_and_caches_registered_asset)
+{
+    ProjectBuildCleanup cleanup{"ayproject_room_recipe_test"};
+    const fs::path example = fs::path(__FILE__).parent_path().parent_path()
+        / "../AY2D/demo/RoomWalk.ayrooms.json";
+    std::ifstream input(example, std::ios::binary);
+    CHECK(static_cast<bool>(input));
+    const std::string recipe{std::istreambuf_iterator<char>(input), {}};
+    CHECK(writeText(cleanup.root / "Assets/levels/room.ayrooms.json", recipe));
+    auto profile = nlohmann::json::parse(profileJson());
+    profile["content"]["rules"] = nlohmann::json::array({
+        {{"match", "levels/**/*.ayrooms.json"},
+         {"transform", "cook"}, {"storage", "loose"}}});
+    CHECK(writeText(cleanup.root / "BuildProfiles/test.aybuild.json",
+                    profile.dump(2)));
+    std::string error;
+    auto loaded = ProjectBuildProfile::load(
+        (cleanup.root / "BuildProfiles/test.aybuild.json").string(), &error);
+    const auto plan = ProjectBuildPlanner::create(loaded, cleanup.root.string());
+    CHECK_MSG(plan.valid(), error.c_str());
+    const auto first = ProjectBuildExecutor::execute(plan);
+    CHECK_MSG(first.ok, first.error.c_str());
+    CHECK(first.cookedCount == 1u);
+    CHECK(fs::is_regular_file(cleanup.root /
+        "out/package/test/Content/levels/room.rmb"));
+    const auto second = ProjectBuildExecutor::execute(plan);
+    CHECK_MSG(second.ok, second.error.c_str());
+    CHECK(second.cacheHitCount == 1u);
+
+    const auto cooked = cleanup.root /
+        "out/package/test/Content/levels/room.rmb";
+    const auto shipRoot = cleanup.root / "ship-assets";
+    fs::create_directories(shipRoot / "levels");
+    fs::copy_file(cooked, shipRoot / "levels/room.rmb");
+    CookShipOptions ship;
+    ship.assetsRoot = shipRoot.string();
+    ship.outputDir = (cleanup.root / "ship").string();
+    ship.compression = ayt::storage::CompressionAlgo::None;
+    const auto packaged = cookShipPackage(ship);
+    CHECK_MSG(packaged.ok, packaged.error.c_str());
+    CHECK(packaged.fileCount == 1u);
+    std::ifstream cookedInput(cooked, std::ios::binary);
+    std::vector<std::uint8_t> bytes{
+        std::istreambuf_iterator<char>(cookedInput), {}};
+    cookedInput.close();
+    CHECK(!bytes.empty());
+    bytes.back() ^= 1u;
+    CHECK(writeBytes(shipRoot / "levels/room.rmb", bytes));
+    const auto rejectedShip = cookShipPackage(ship);
+    CHECK_FALSE(rejectedShip.ok);
+    CHECK(fs::is_regular_file(packaged.pakPath));
+    const auto cacheFile = cleanup.root / ".cookCache/objects"
+        / plan.assets.front().cacheKey.substr(0, 2)
+        / plan.assets.front().cacheKey / "files/levels/room.rmb";
+    CHECK(writeBytes(cacheFile, bytes));
+    const auto rejectedCache = ProjectBuildExecutor::execute(plan);
+    CHECK_FALSE(rejectedCache.ok);
+    CHECK(fs::is_regular_file(cooked));
+}
+#endif
 
 TEST_CASE(existing_code_artifact_is_staged_and_published_for_editor_run)
 {

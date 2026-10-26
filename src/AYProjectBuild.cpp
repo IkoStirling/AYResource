@@ -26,6 +26,10 @@
 #if defined(AY_RESOURCE_HAS_STATS)
 #include <AYStats/RecipeAsset.h>
 #endif
+#if defined(AY_RESOURCE_HAS_ROOMS)
+#include <AY2DEditor/RoomAssemblyCook2D.h>
+#include <AY2DEditor/RoomAssemblyDocument2D.h>
+#endif
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)
 #include <AYEntity/DeterministicLevelCooked2D.h>
 #endif
@@ -863,6 +867,10 @@ std::string cacheDiscriminator(const ProjectBuildProfile& profile,
     if(ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::StatsSource))
         value["statsImporterContract"]="stats-recipe-asset-v1";
 #endif
+#if defined(AY_RESOURCE_HAS_ROOMS)
+    if(ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::RoomAssembly2D))
+        value["roomImporterContract"]="room-assembly-cooked-v1";
+#endif
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)
     if(asset_format::matchesPath(asset.sourcePath,asset_format::Id::DeterministicLevelSource))
         value["detLevelImporterContract"]="deterministic-level-cooked-v1";
@@ -931,6 +939,54 @@ void validateDetLevelContent(const ProjectBuildPlan& plan,
             }
         } catch(const std::exception& exception) {error=exception.what();}
         if(!error.empty())diagnostic(diagnostics,ProjectBuildDiagnostic::Severity::Error,asset.logicalPath,error);
+    }
+}
+#endif
+
+#if defined(AY_RESOURCE_HAS_ROOMS)
+bool validateRoomFile(const fs::path& path, bool cooked, std::string& error) {
+    std::error_code ec;
+    if (!fs::is_regular_file(fs::symlink_status(path, ec)) || ec) {
+        error = "Room recipe must be an ordinary file"; return false;
+    }
+    const auto size = fs::file_size(path, ec);
+    const auto limit = cooked ? ayt::ay2d::editor::kRoomAssemblyCooked2DMaxBytes
+        : 4u * 1024u * 1024u;
+    if (ec || size > limit) {error = "Room recipe exceeds bounded size"; return false;}
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {error = "Cannot open room recipe"; return false;}
+    std::string bytes(static_cast<std::size_t>(size), '\0');
+    if (!input.read(bytes.data(), static_cast<std::streamsize>(size))
+        || input.peek() != std::char_traits<char>::eof() || input.bad()) {
+        error = "Room recipe changed during read"; return false;
+    }
+    ayt::ay2d::RoomAssemblyConfig2D config;
+    if (cooked) {
+        const auto binary = std::span<const std::uint8_t>(
+            reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
+        if (!ayt::ay2d::editor::decodeRoomAssemblyCooked2D(binary, config, error)) return false;
+    } else if (!ayt::ay2d::editor::loadRoomAssemblyDocument2D(bytes, config, error))
+        return false;
+    const std::array<std::uint64_t, 1> seeds{config.seed};
+    const auto audit = ayt::ay2d::auditRoomAssemblySeeds2D(config, seeds);
+    if (!audit.valid) {error = audit.diagnostic; return false;}
+    return true;
+}
+void validateRoomContent(const ProjectBuildPlan& plan,
+                         std::vector<ProjectBuildDiagnostic>& diagnostics) {
+    for (const auto& asset : plan.assets) {
+        if (asset.transform == ProjectAssetTransform::Exclude) continue;
+        const bool source = asset_format::matchesPath(asset.sourcePath,
+            asset_format::Id::RoomAssembly2D);
+        const bool cooked = asset_format::matchesPath(asset.sourcePath,
+            asset_format::Id::RoomAssemblyCooked2D);
+        if (!source && !cooked) continue;
+        std::string error;
+        if (source && asset.transform != ProjectAssetTransform::Cook)
+            error = "Room authoring recipe requires Cook to .rmb";
+        else (void)validateRoomFile(asset.sourcePath, cooked, error);
+        if (!error.empty()) diagnostic(diagnostics,
+            ProjectBuildDiagnostic::Severity::Error, asset.logicalPath, error);
     }
 }
 #endif
@@ -1641,6 +1697,9 @@ ProjectBuildPlan ProjectBuildPlanner::create(
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)
     validateDetLevelContent(plan,plan.diagnostics);
 #endif
+#if defined(AY_RESOURCE_HAS_ROOMS)
+    validateRoomContent(plan,plan.diagnostics);
+#endif
     validateAudioContent(plan,plan.diagnostics);
     validateActorContent(plan, plan.diagnostics);
     detail::discoverProjectLogia(plan);
@@ -1752,6 +1811,23 @@ ProjectBuildResult ProjectBuildExecutor::execute(
            && asset_format::matchesPath(asset.sourcePath,asset_format::Id::DeterministicLevelSource)
            && asset.cacheKey!=computeCacheKey(plan.profile,asset)) {
             result.error="Deterministic level inputs changed after planning; create a fresh build plan.";return result;
+        }
+    }
+#endif
+#if defined(AY_RESOURCE_HAS_ROOMS)
+    validateRoomContent(plan,releaseDiagnostics);
+    if(std::any_of(releaseDiagnostics.begin(),releaseDiagnostics.end(),[](const auto& item) {
+        return item.severity==ProjectBuildDiagnostic::Severity::Error;
+    })) {
+        result.diagnostics.insert(result.diagnostics.end(),releaseDiagnostics.begin(),releaseDiagnostics.end());
+        result.error="Room content validation rejected the project build.";return result;
+    }
+    for(const auto& asset:plan.assets) {
+        if(asset.transform==ProjectAssetTransform::Cook
+            && asset_format::matchesPath(asset.sourcePath,asset_format::Id::RoomAssembly2D)
+            && asset.cacheKey!=computeCacheKey(plan.profile,asset)) {
+            result.error="Room recipe changed after planning; create a fresh build plan.";
+            return result;
         }
     }
 #endif
@@ -1964,6 +2040,22 @@ ProjectBuildResult ProjectBuildExecutor::execute(
             }
         }
 #endif
+#if defined(AY_RESOURCE_HAS_ROOMS)
+        if(asset_format::matchesPath(asset.sourcePath,asset_format::Id::RoomAssembly2D)) {
+            const auto matched=asset_format::matchPath(asset.logicalPath);
+            const auto expected=asset_format::appendSuffix(
+                std::string_view(asset.logicalPath).substr(0,
+                    asset.logicalPath.size()-matched->suffix.size()),
+                asset_format::Id::RoomAssemblyCooked2D);
+            if(conversion.importerContractTag!="room-assembly-cooked-v1"
+                || conversion.resources.size()!=1 || !conversion.dependencies.empty()
+                || conversion.resources.front().type!="RoomAssembly2D"
+                || conversion.resources.front().path!=expected) {
+                result.error="Invalid room recipe cached conversion identity: "+asset.logicalPath;
+                return result;
+            }
+        }
+#endif
         for (const auto& resource : conversion.resources) {
             if(audioContentSource(asset.sourcePath)){
                 const auto matched=asset_format::matchPath(asset.logicalPath);const auto expected=asset_format::appendSuffix(std::string_view(asset.logicalPath).substr(0,asset.logicalPath.size()-matched->suffix.size()),asset_format::Id::AudioContent);
@@ -1978,6 +2070,17 @@ ProjectBuildResult ProjectBuildExecutor::execute(
             }
             StagedFile outputFile;
             outputFile.diskPath = nativeFilesystemPath(objectRoot / "files" / resource.path);
+#if defined(AY_RESOURCE_HAS_ROOMS)
+            if(resource.type=="RoomAssembly2D") {
+                std::string error;
+                if(!asset_format::isCanonicalPath(resource.path,
+                        asset_format::Id::RoomAssemblyCooked2D)
+                    || !validateRoomFile(outputFile.diskPath,true,error)) {
+                    result.error="Invalid cooked room cache output: "+resource.path+": "+error;
+                    return result;
+                }
+            }
+#endif
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)
             if(resource.type=="DeterministicLevel2D" || asset_format::matchesPath(resource.path,asset_format::Id::DeterministicLevelCooked)) {
                 std::string error;entity::DetLevel2D cachedLevel;

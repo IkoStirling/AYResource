@@ -14,6 +14,9 @@
 #if defined(AY_RESOURCE_HAS_STATS)
 #include "AYResource/Converter/StatsConverter.h"
 #endif
+#if defined(AY_RESOURCE_HAS_ROOMS)
+#include <AY2DEditor/RoomAssemblyConverter2D.h>
+#endif
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)
 #include "AYResource/Converter/DeterministicLevelConverter2D.h"
 #endif
@@ -64,6 +67,10 @@ std::unique_ptr<IConverter> IConverter::create(const std::string& sourcePath) {
 #if defined(AY_RESOURCE_HAS_STATS)
     if (format && format->descriptor->id == ayt::asset_format::Id::StatsSource)
         return std::make_unique<StatsConverter>(sourcePath);
+#endif
+#if defined(AY_RESOURCE_HAS_ROOMS)
+    if (format && format->descriptor->id == ayt::asset_format::Id::RoomAssembly2D)
+        return std::make_unique<RoomAssemblyConverter2D>(sourcePath);
 #endif
     if (format && format->descriptor->id == ayt::asset_format::Id::TilemapSource)
         return std::make_unique<TilemapConverter>(sourcePath);
