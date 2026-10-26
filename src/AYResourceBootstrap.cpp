@@ -94,6 +94,12 @@ bool initializeLoaders()
             std::string(ayt::asset_format::suffix(Id::RoomAssemblyCooked2D)),
             "RoomAssembly2D");
 #endif
+#if defined(AY_RESOURCE_HAS_SEQUENCE)
+        // Metadata only: AYSequence::Resources owns the optional loader.
+        ResourceRegistry::registerExtension(
+            std::string(ayt::asset_format::suffix(Id::SceneSequenceCooked)),
+            "SceneSequence");
+#endif
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)
         // Packaging metadata only; the optional AYEntity loader is explicitly registered by the host.
         const auto levelSuffix=std::string(ayt::asset_format::suffix(Id::DeterministicLevelCooked));

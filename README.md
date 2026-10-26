@@ -1,5 +1,14 @@
 # AYResource
 
+## 可选场景序列发布（2026-10-26）
+
+启用 AYSequence 作者构建后，ProjectBuild 把显式 Cook 的 `.seq` 发布为
+`.sqc`，将 Scene/Animation/Audio 引用作为单独资源留在原 Assets 相对路径。
+规划与执行阶段检查引用是否存在、是否被排除或转换，依赖字节进入缓存键；
+暂存后再核对 `.sqc` 签名和实际发布闭包。CookShip 拒绝损坏的 `.sqc` 或
+缺少依赖的输入树，失败不会替换既有包。普通运行时 AYResource 不引入
+AYSequence Core；加载器由 AYSequence::Resources 可选注册。
+
 ## 作者刷新结果（2026-10-22）
 
 `ResourceManager::refreshPublishedResourcesWithReport`保留既有CPU批次准备/替换规则，

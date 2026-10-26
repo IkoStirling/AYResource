@@ -3,6 +3,11 @@
 #include <AYResource/ImportJob.h>
 #include <AYResource/Loader/MeshLoader.h>
 #include <AYResource/assetsImpl/Mesh.h>
+#include <AYResource/assetsImpl/Audio.h>
+#if defined(AY_RESOURCE_HAS_SEQUENCE)
+#include <AYSequence/SequenceAssetIO.h>
+#include <AYSequence/SequenceCooked.h>
+#endif
 #include "AYTest.h"
 #ifdef AY_RESOURCE_TEST_SHADER
 #include <AYShader/ShaderBuild.h>
@@ -845,6 +850,84 @@ TEST_CASE(room_recipe_project_build_cooks_and_caches_registered_asset)
     CHECK(writeBytes(cacheFile, bytes));
     const auto rejectedCache = ProjectBuildExecutor::execute(plan);
     CHECK_FALSE(rejectedCache.ok);
+    CHECK(fs::is_regular_file(cooked));
+}
+#endif
+
+#if defined(AY_RESOURCE_HAS_SEQUENCE)
+TEST_CASE(sequence_project_build_cooks_caches_and_rejects_missing_dependencies)
+{
+    ProjectBuildCleanup cleanup{"ayproject_sequence_recipe_test"};
+    ayt::sequence::Sequence authored;
+    authored.id="opening";authored.duration=2;
+    const auto source=cleanup.root/"Assets/scenes/opening.seq";
+    fs::create_directories(source.parent_path());
+    ayt::sequence::Diagnostic sequenceError;
+    CHECK(ayt::sequence::saveSequence(source.string(),authored,&sequenceError));
+    auto profile=nlohmann::json::parse(profileJson());
+    profile["content"]["rules"]=nlohmann::json::array({
+        {{"match","scenes/**/*.seq"},{"transform","cook"},{"storage","loose"}}});
+    CHECK(writeText(cleanup.root/"BuildProfiles/test.aybuild.json",profile.dump(2)));
+    std::string error;
+    const auto loaded=ProjectBuildProfile::load(
+        (cleanup.root/"BuildProfiles/test.aybuild.json").string(),&error);
+    const auto plan=ProjectBuildPlanner::create(loaded,cleanup.root.string());
+    CHECK_MSG(plan.valid(),error.c_str());
+    if(!plan.valid())return;
+    const auto first=ProjectBuildExecutor::execute(plan);
+    CHECK_MSG(first.ok,first.error.c_str());
+    if(!first.ok)return;
+    const auto cooked=cleanup.root/"out/package/test/Content/scenes/opening.sqc";
+    CHECK(fs::is_regular_file(cooked));
+    std::ifstream input(cooked,std::ios::binary);
+    std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(input),{}};
+    input.close();
+    ayt::sequence::Sequence decoded;
+    CHECK(ayt::sequence::decodeCookedSequence(bytes,decoded,nullptr,&sequenceError));
+    CHECK(decoded.id=="opening");
+    const auto second=ProjectBuildExecutor::execute(plan);
+    CHECK_MSG(second.ok,second.error.c_str());
+    CHECK(second.cacheHitCount==1u);
+    const auto shipRoot=cleanup.root/"ship-assets";
+    fs::create_directories(shipRoot/"scenes");
+    fs::copy_file(cooked,shipRoot/"scenes/opening.sqc");
+    CookShipOptions ship;ship.assetsRoot=shipRoot.string();
+    ship.outputDir=(cleanup.root/"ship").string();
+    ship.compression=ayt::storage::CompressionAlgo::None;
+    const auto packaged=cookShipPackage(ship);
+    CHECK_MSG(packaged.ok,packaged.error.c_str());
+    bytes.back()^=1u;
+    CHECK(writeBytes(shipRoot/"scenes/opening.sqc",bytes));
+    CHECK_FALSE(cookShipPackage(ship).ok);
+    authored.audioCues.push_back({"missing","audio/voice.aud",0.5,1});
+    CHECK(ayt::sequence::saveSequence(source.string(),authored,&sequenceError));
+    const auto missing=ProjectBuildPlanner::create(loaded,cleanup.root.string());
+    CHECK_FALSE(missing.valid());
+    CHECK(fs::is_regular_file(cooked));
+    Audio voice;voice.createSilence(32);
+    std::vector<std::uint8_t> audioBytes;
+    CHECK(voice.saveToBinary(audioBytes));
+    const auto audioPath=cleanup.root/"Assets/audio/voice.aud";
+    CHECK(writeBytes(audioPath,audioBytes));
+    const auto withAudio=ProjectBuildPlanner::create(loaded,cleanup.root.string());
+    CHECK_MSG(withAudio.valid(),"A published sequence dependency must be accepted");
+    if(!withAudio.valid())return;
+    const auto builtWithAudio=ProjectBuildExecutor::execute(withAudio);
+    CHECK_MSG(builtWithAudio.ok,builtWithAudio.error.c_str());
+    CHECK(fs::is_regular_file(cleanup.root/"out/package/test/Content/audio/voice.aud"));
+    fs::create_directories(shipRoot/"audio");
+    fs::copy_file(cooked,shipRoot/"scenes/opening.sqc",
+                  fs::copy_options::overwrite_existing);
+    fs::copy_file(audioPath,shipRoot/"audio/voice.aud");
+    const auto dependencyPackaged=cookShipPackage(ship);
+    CHECK_MSG(dependencyPackaged.ok,dependencyPackaged.error.c_str());
+    fs::remove(shipRoot/"audio/voice.aud");
+    CHECK_FALSE(cookShipPackage(ship).ok);
+    voice.createSilence(64);audioBytes.clear();
+    CHECK(voice.saveToBinary(audioBytes));
+    CHECK(writeBytes(audioPath,audioBytes));
+    const auto changed=ProjectBuildExecutor::execute(withAudio);
+    CHECK_FALSE(changed.ok);
     CHECK(fs::is_regular_file(cooked));
 }
 #endif

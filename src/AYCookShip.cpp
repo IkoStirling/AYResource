@@ -25,6 +25,12 @@
 #include <fstream>
 #include <vector>
 #endif
+#if defined(AY_RESOURCE_HAS_SEQUENCE)
+#include <AYSequence/SequenceCooked.h>
+#include <AYSequence/SequenceDependencies.h>
+#include <fstream>
+#include <vector>
+#endif
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)
 #include <AYEntity/DeterministicLevelCooked2D.h>
 #include <fstream>
@@ -241,6 +247,43 @@ CookShipResult cookShipPackage(const CookShipOptions& options)
             if(!validateRoom(entry))return result;
     }
     if(roomScanError) {result.error="Room input scan failed: "+roomScanError.message();return result;}
+#endif
+
+#if defined(AY_RESOURCE_HAS_SEQUENCE)
+    auto validateSequence=[&](const fs::directory_entry& entry) {
+        if(!entry.is_regular_file() || !ayt::asset_format::matchesPath(
+                entry.path().string(),ayt::asset_format::Id::SceneSequenceCooked))return true;
+        std::error_code ec;const auto length=entry.file_size(ec);
+        if(ec || length>32u+16u*1024u*1024u) {
+            result.error="Invalid cooked sequence size: "+entry.path().string();return false;
+        }
+        std::ifstream input(entry.path(),std::ios::binary);
+        std::vector<std::uint8_t> bytes(static_cast<std::size_t>(length));
+        if(!input.read(reinterpret_cast<char*>(bytes.data()),
+                       static_cast<std::streamsize>(bytes.size()))
+           || input.peek()!=std::char_traits<char>::eof() || input.bad()) {
+            result.error="Cannot read cooked sequence: "+entry.path().string();return false;
+        }
+        sequence::Sequence authored;sequence::SequenceCookedMetadata metadata;
+        sequence::SequenceDependencyManifest manifest;sequence::Diagnostic error;
+        if(!sequence::decodeCookedSequence(bytes,authored,&metadata,&error)
+           || !sequence::buildSequenceDependencyManifest(authored,root,manifest,&error)
+           || metadata.dependencySignature!=manifest.signature) {
+            result.error="Invalid cooked sequence or missing dependency: "
+                +entry.path().string()+": "+error.message;return false;
+        }
+        return true;
+    };
+    std::error_code sequenceScanError;
+    if(options.recursive) {
+        for(const auto& entry:fs::recursive_directory_iterator(root,sequenceScanError))
+            if(!validateSequence(entry))return result;
+    } else {
+        for(const auto& entry:fs::directory_iterator(root,sequenceScanError))
+            if(!validateSequence(entry))return result;
+    }
+    if(sequenceScanError) {result.error="Sequence input scan failed: "
+        +sequenceScanError.message();return result;}
 #endif
 
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)

@@ -1,5 +1,14 @@
 # AYResource — Design (v2.1)
 
+## Sequence 作者资源发布边界（2026-10-26）
+
+可选 AYSequenceAssetIO/AYSequenceCookIntegration 只链接作者工具目标，
+Resource runtime 只登记 `.sqc` 类型元数据。`.seq` 的转换器返回一件
+`SceneSequence` cooked 资源和每个引用的独立依赖边；不把场景、动画或音频
+塞进包封。ProjectBuild 的 sourceClosure 让引用文件内容影响缓存身份，
+规划与执行两次核对可发布路径，缓存命中仍需比对转换契约、图和实际包封
+签名。CookShip 在替换目录或 Pak 前重新验证引用闭包。
+
 ## 2026-10-22 — 分层刷新确认
 
 轻量`ResourceRefresh.h`定义消费者状态及拥有字符串/值的报告，不依赖Renderer或bgfx。

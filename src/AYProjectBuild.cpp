@@ -30,6 +30,11 @@
 #include <AY2DEditor/RoomAssemblyCook2D.h>
 #include <AY2DEditor/RoomAssemblyDocument2D.h>
 #endif
+#if defined(AY_RESOURCE_HAS_SEQUENCE)
+#include <AYSequence/SequenceAssetIO.h>
+#include <AYSequence/SequenceCooked.h>
+#include <AYSequence/SequenceDependencies.h>
+#endif
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)
 #include <AYEntity/DeterministicLevelCooked2D.h>
 #endif
@@ -767,6 +772,20 @@ void validateAudioContent(const ProjectBuildPlan& plan,std::vector<ProjectBuildD
 std::vector<fs::path> sourceClosure(const fs::path& source, const fs::path& assetRoot)
 {
     std::vector<fs::path> paths{source};
+#if defined(AY_RESOURCE_HAS_SEQUENCE)
+    if(asset_format::matchesPath(source.string(),asset_format::Id::SceneSequence)) {
+        sequence::Sequence authored;sequence::Diagnostic error;
+        sequence::SequenceDependencyManifest manifest;
+        if(!sequence::loadSequence(source.string(),authored,&error)
+           || !sequence::buildSequenceDependencyManifest(authored,assetRoot,manifest,&error))
+            return {};
+        for(const auto& dependency:manifest.entries)
+            paths.push_back(assetRoot/fs::u8path(dependency.path));
+        std::sort(paths.begin(),paths.end());
+        paths.erase(std::unique(paths.begin(),paths.end()),paths.end());
+        return paths;
+    }
+#endif
     if(asset_format::matchesPath(source.string(),asset_format::Id::AudioChartSource)||asset_format::matchesPath(source.string(),asset_format::Id::AudioPerformanceSource)){
         try{const auto inspected=inspectAudioContentSource(source,assetRoot);paths.insert(paths.end(),inspected.dependencies.begin(),inspected.dependencies.end());std::sort(paths.begin(),paths.end());return paths;}catch(...){return {};}
     }
@@ -870,6 +889,10 @@ std::string cacheDiscriminator(const ProjectBuildProfile& profile,
 #if defined(AY_RESOURCE_HAS_ROOMS)
     if(ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::RoomAssembly2D))
         value["roomImporterContract"]="room-assembly-cooked-v1";
+#endif
+#if defined(AY_RESOURCE_HAS_SEQUENCE)
+    if(asset_format::matchesPath(asset.sourcePath,asset_format::Id::SceneSequence))
+        value["sequenceImporterContract"]="scene-sequence-cooked-v1";
 #endif
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)
     if(asset_format::matchesPath(asset.sourcePath,asset_format::Id::DeterministicLevelSource))
@@ -987,6 +1010,78 @@ void validateRoomContent(const ProjectBuildPlan& plan,
         else (void)validateRoomFile(asset.sourcePath, cooked, error);
         if (!error.empty()) diagnostic(diagnostics,
             ProjectBuildDiagnostic::Severity::Error, asset.logicalPath, error);
+    }
+}
+#endif
+
+#if defined(AY_RESOURCE_HAS_SEQUENCE)
+bool inspectSequenceFile(const fs::path& path, bool cooked,
+                         sequence::Sequence& output,
+                         sequence::SequenceCookedMetadata* metadata,
+                         std::string& error) {
+    std::error_code ec;
+    if(!fs::is_regular_file(fs::symlink_status(path,ec)) || ec) {
+        error="Sequence must be an ordinary file";return false;
+    }
+    sequence::Diagnostic diagnostic;
+    if(!cooked) {
+        if(!sequence::loadSequence(path.string(),output,&diagnostic)) {
+            error=diagnostic.message;return false;
+        }
+        return true;
+    }
+    const auto size=fs::file_size(path,ec);
+    if(ec || size>32u+16u*1024u*1024u) {
+        error="Cooked sequence exceeds bounded size";return false;
+    }
+    std::ifstream input(path,std::ios::binary);
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+    if(!input.read(reinterpret_cast<char*>(bytes.data()),
+                   static_cast<std::streamsize>(bytes.size()))
+       || input.peek()!=std::char_traits<char>::eof() || input.bad()) {
+        error="Cooked sequence changed during read";return false;
+    }
+    if(!sequence::decodeCookedSequence(bytes,output,metadata,&diagnostic)) {
+        error=diagnostic.message;return false;
+    }
+    return true;
+}
+
+void validateSequenceContent(const ProjectBuildPlan& plan,
+                             std::vector<ProjectBuildDiagnostic>& diagnostics) {
+    const auto root=fs::path(plan.projectRoot)/plan.profile.content.assetRoot;
+    std::map<std::string,const ProjectBuildAsset*> byPath;
+    for(const auto& asset:plan.assets)byPath.emplace(asset.logicalPath,&asset);
+    for(const auto& asset:plan.assets) {
+        if(asset.transform==ProjectAssetTransform::Exclude)continue;
+        const bool source=asset_format::matchesPath(asset.sourcePath,
+            asset_format::Id::SceneSequence);
+        const bool cooked=asset_format::matchesPath(asset.sourcePath,
+            asset_format::Id::SceneSequenceCooked);
+        if(!source && !cooked)continue;
+        std::string error;
+        sequence::Sequence authored;
+        sequence::SequenceCookedMetadata metadata;
+        sequence::SequenceDependencyManifest manifest;
+        sequence::Diagnostic diagnosticValue;
+        if(source && asset.transform!=ProjectAssetTransform::Cook)
+            error="Sequence authoring requires Cook to .sqc";
+        else if(!inspectSequenceFile(asset.sourcePath,cooked,authored,&metadata,error)){}
+        else if(!sequence::buildSequenceDependencyManifest(authored,root,
+                    manifest,&diagnosticValue))
+            error=diagnosticValue.message;
+        else if(cooked && metadata.dependencySignature!=manifest.signature)
+            error="Cooked sequence dependency signature no longer matches Assets";
+        else for(const auto& dependency:manifest.entries) {
+            const auto found=byPath.find(dependency.path);
+            if(found==byPath.end() || found->second->transform==ProjectAssetTransform::Exclude
+               || found->second->transform==ProjectAssetTransform::Cook) {
+                error="Missing, excluded or transformed sequence dependency: "
+                    +dependency.path;break;
+            }
+        }
+        if(!error.empty())diagnostic(diagnostics,
+            ProjectBuildDiagnostic::Severity::Error,asset.logicalPath,error);
     }
 }
 #endif
@@ -1700,6 +1795,9 @@ ProjectBuildPlan ProjectBuildPlanner::create(
 #if defined(AY_RESOURCE_HAS_ROOMS)
     validateRoomContent(plan,plan.diagnostics);
 #endif
+#if defined(AY_RESOURCE_HAS_SEQUENCE)
+    validateSequenceContent(plan,plan.diagnostics);
+#endif
     validateAudioContent(plan,plan.diagnostics);
     validateActorContent(plan, plan.diagnostics);
     detail::discoverProjectLogia(plan);
@@ -1827,6 +1925,23 @@ ProjectBuildResult ProjectBuildExecutor::execute(
             && asset_format::matchesPath(asset.sourcePath,asset_format::Id::RoomAssembly2D)
             && asset.cacheKey!=computeCacheKey(plan.profile,asset)) {
             result.error="Room recipe changed after planning; create a fresh build plan.";
+            return result;
+        }
+    }
+#endif
+#if defined(AY_RESOURCE_HAS_SEQUENCE)
+    validateSequenceContent(plan,releaseDiagnostics);
+    if(std::any_of(releaseDiagnostics.begin(),releaseDiagnostics.end(),[](const auto& item) {
+        return item.severity==ProjectBuildDiagnostic::Severity::Error;
+    })) {
+        result.diagnostics.insert(result.diagnostics.end(),releaseDiagnostics.begin(),releaseDiagnostics.end());
+        result.error="Sequence content validation rejected the project build.";return result;
+    }
+    for(const auto& asset:plan.assets) {
+        if(asset.transform==ProjectAssetTransform::Cook
+           && asset_format::matchesPath(asset.sourcePath,asset_format::Id::SceneSequence)
+           && asset.cacheKey!=computeCacheKey(plan.profile,asset)) {
+            result.error="Sequence or referenced content changed after planning; create a fresh build plan.";
             return result;
         }
     }
@@ -2056,6 +2171,31 @@ ProjectBuildResult ProjectBuildExecutor::execute(
             }
         }
 #endif
+#if defined(AY_RESOURCE_HAS_SEQUENCE)
+        if(asset_format::matchesPath(asset.sourcePath,asset_format::Id::SceneSequence)) {
+            auto expected=fs::path(asset.logicalPath);
+            expected.replace_extension(asset_format::suffix(asset_format::Id::SceneSequenceCooked));
+            sequence::Sequence authored;sequence::Diagnostic error;
+            sequence::SequenceDependencyManifest manifest;
+            const auto root=fs::path(plan.projectRoot)/plan.profile.content.assetRoot;
+            if(!sequence::loadSequence(asset.sourcePath,authored,&error)
+               || !sequence::buildSequenceDependencyManifest(authored,root,manifest,&error)
+               || conversion.importerContractTag!="scene-sequence-cooked-v1"
+               || conversion.resources.size()!=1
+               || conversion.resources.front().type!="SceneSequence"
+               || conversion.resources.front().path!=expected.generic_string()
+               || conversion.dependencies.size()!=manifest.entries.size()) {
+                result.error="Invalid sequence cached conversion identity: "+asset.logicalPath;
+                return result;
+            }
+            for(std::size_t i=0;i<manifest.entries.size();++i)
+                if(conversion.dependencies[i].from!=expected.generic_string()
+                   || conversion.dependencies[i].to!=manifest.entries[i].path) {
+                    result.error="Invalid sequence cached dependency graph: "+asset.logicalPath;
+                    return result;
+                }
+        }
+#endif
         for (const auto& resource : conversion.resources) {
             if(audioContentSource(asset.sourcePath)){
                 const auto matched=asset_format::matchPath(asset.logicalPath);const auto expected=asset_format::appendSuffix(std::string_view(asset.logicalPath).substr(0,asset.logicalPath.size()-matched->suffix.size()),asset_format::Id::AudioContent);
@@ -2077,6 +2217,25 @@ ProjectBuildResult ProjectBuildExecutor::execute(
                         asset_format::Id::RoomAssemblyCooked2D)
                     || !validateRoomFile(outputFile.diskPath,true,error)) {
                     result.error="Invalid cooked room cache output: "+resource.path+": "+error;
+                    return result;
+                }
+            }
+#endif
+#if defined(AY_RESOURCE_HAS_SEQUENCE)
+            if(resource.type=="SceneSequence") {
+                std::string error;sequence::Sequence decoded;
+                sequence::SequenceCookedMetadata metadata;
+                sequence::SequenceDependencyManifest manifest;
+                sequence::Diagnostic diagnosticValue;
+                const auto root=fs::path(plan.projectRoot)/plan.profile.content.assetRoot;
+                if(!asset_format::isCanonicalPath(resource.path,
+                        asset_format::Id::SceneSequenceCooked)
+                   || !inspectSequenceFile(outputFile.diskPath,true,decoded,&metadata,error)
+                   || !sequence::buildSequenceDependencyManifest(decoded,root,
+                        manifest,&diagnosticValue)
+                   || metadata.dependencySignature!=manifest.signature) {
+                    result.error="Invalid cooked sequence cache output: "+resource.path+": "
+                        +(error.empty()?diagnosticValue.message:error);
                     return result;
                 }
             }
@@ -2135,6 +2294,36 @@ ProjectBuildResult ProjectBuildExecutor::execute(
         [](const StagedFile& a, const StagedFile& b) {
             return a.logicalPath == b.logicalPath;
         }), staged.end());
+
+#if defined(AY_RESOURCE_HAS_SEQUENCE)
+    // A cooked Sequence is useful only when every authored dependency is
+    // published at its stable Assets-relative path in the same output.
+    std::set<std::string> sequenceStagedPaths;
+    for(const auto& file:staged)sequenceStagedPaths.insert(file.logicalPath);
+    const auto sequenceRoot=fs::path(plan.projectRoot)/plan.profile.content.assetRoot;
+    for(auto& file:staged)if(asset_format::matchesPath(file.logicalPath,
+            asset_format::Id::SceneSequenceCooked)) {
+        sequence::Sequence authored;sequence::SequenceCookedMetadata metadata;
+        sequence::SequenceDependencyManifest manifest;
+        sequence::Diagnostic diagnosticValue;std::string error;
+        if(!inspectSequenceFile(file.diskPath,true,authored,&metadata,error)
+           || !sequence::buildSequenceDependencyManifest(authored,sequenceRoot,
+                manifest,&diagnosticValue)
+           || metadata.dependencySignature!=manifest.signature) {
+            result.error="Invalid staged sequence: "+file.logicalPath+": "
+                +(error.empty()?diagnosticValue.message:error);return result;
+        }
+        file.type="SceneSequence";
+        file.dependencies.clear();
+        for(const auto& dependency:manifest.entries) {
+            if(!sequenceStagedPaths.contains(dependency.path)) {
+                result.error="Unpublished sequence dependency: "+dependency.path;
+                return result;
+            }
+            file.dependencies.push_back({file.logicalPath,dependency.path});
+        }
+    }
+#endif
 
 #if defined(AY_RESOURCE_HAS_PARTICLE)
     // The converter graph and actual payload must both close over staged files.
