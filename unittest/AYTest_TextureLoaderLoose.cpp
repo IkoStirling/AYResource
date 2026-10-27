@@ -15,6 +15,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <vector>
 #include <stb_image.h>
 
 using namespace ayt::resource;
@@ -111,6 +112,34 @@ TEST_CASE(load_loose_png_decodes_single_level_rgba8)
     }
     cleanup();
 #endif
+}
+
+TEST_CASE(explicit_package_png_bytes_decode_without_loose_extension_lookup)
+{
+    TextureLoader loader;
+    auto loaded = std::dynamic_pointer_cast<Texture>(loader.loadFromBinary(
+        k4x4RedPng, sizeof(k4x4RedPng)));
+    CHECK(loaded != nullptr);
+    CHECK(loaded && loaded->getWidth() == 4);
+    CHECK(loaded && loaded->getHeight() == 4);
+    CHECK(loaded && loaded->getFormat() == TextureFormat::RGBA8);
+    CHECK(loader.loadFromBinary(nullptr, 1) == nullptr);
+    auto damaged = std::vector<unsigned char>(
+        std::begin(k4x4RedPng), std::end(k4x4RedPng));
+    damaged.resize(24);
+    CHECK(loader.loadFromBinary(damaged.data(), damaged.size()) == nullptr);
+}
+
+TEST_CASE(explicit_typed_loose_png_uses_same_byte_decoder)
+{
+    cleanup();
+    const auto path = kRoot + "/selected/raw.png";
+    CHECK(writePng(path));
+    TextureLoader loader;
+    auto texture = std::dynamic_pointer_cast<Texture>(loader.load(path));
+    CHECK(texture != nullptr);
+    CHECK(texture && texture->getWidth() == 4);
+    cleanup();
 }
 
 TEST_CASE(load_loose_missing_file_returns_null)

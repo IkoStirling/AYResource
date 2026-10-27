@@ -1,5 +1,11 @@
 # AYResource
 
+选中 `.pup` 作者角色时，ProjectBuild 将文档与去重后的 PNG/JPEG/BMP/TGA
+贴图作为同存储 Raw 闭包发布。原始图片以 `Texture` 类型索引，
+`TextureLoader` 可从显式 Pak 字节或已登记的 loose 记录解码单级 RGBA8
+贴图；这与 Debug 开启的松散图片扩展名扫描是两个入口。运行时角色文档由可选
+`AY2DPuppetResources` 注册，游戏仍负责贴图驻留与层实体绑定。
+
 ## 区域作者内容发布
 
 启用 AYScene 与资源作者构建后，ProjectBuild 将选中的 `.region.json` 作为

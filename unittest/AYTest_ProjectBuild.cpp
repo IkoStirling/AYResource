@@ -30,6 +30,10 @@
 #endif
 #if defined(AY_RESOURCE_HAS_PUPPET)
 #include <AY2DEditor/ParametricSpriteDocument2D.h>
+#include <AY2D/ParametricSpriteResource2D.h>
+#include <AYResource/ResourceManager.h>
+#include <AYResource/AssetPath.h>
+#include <AYResource/assetsImpl/Texture.h>
 #endif
 #include "AYTest.h"
 #ifdef AY_RESOURCE_TEST_SHADER
@@ -1956,6 +1960,27 @@ TEST_CASE(parametric_sprite_project_publication_pins_complete_texture_closure)
         if(file.at("path")=="avatars/face.pup")
             manifestClosed=file.at("resourceDependencies").size()==2;
     CHECK(manifestClosed);
+    CHECK(ayt::ay2d::registerParametricSpriteResource2D());
+    auto& resources=ResourceManager::instance();
+    resources.unloadAll();
+    resources.setDatabase({});
+    CHECK(resources.openDatabase((published/"resources.db").string()));
+    ayt::resource::setAssetRoot(published.string());
+    const auto looseKey=ayt::resource::resolveAssetPath({},"avatars/face.pup");
+    const auto looseRig=resources.load<ayt::ay2d::ParametricSpriteResource2D>(
+        looseKey);
+    CHECK(looseRig != nullptr);
+    std::vector<ayt::ay2d::ParametricSpriteTextureLease2D> looseLeases;
+    std::string leaseError;
+    const bool looseAcquired=looseRig &&
+        ayt::ay2d::acquireParametricSpriteTextures2D(resources,*looseRig,
+            published.string(),looseLeases,leaseError);
+    CHECK_MSG(looseAcquired,leaseError.c_str());
+    CHECK(looseLeases.size()==2);
+    resources.unloadAll();
+    resources.setDatabase({});
+    ayt::resource::setAssetRoot({});
+    CHECK(looseLeases.size()==2 && looseLeases[0].texture->isLoaded());
 
     CHECK(writeBytes(assets/"puppet-textures/blink.png",makeImportPng(true)));
     const auto stale=ProjectBuildExecutor::execute(plan);
@@ -1979,6 +2004,34 @@ TEST_CASE(parametric_sprite_project_publication_pins_complete_texture_closure)
         CHECK(pak->getEntry("puppet-textures/base.png").has_value());
         CHECK(pak->getEntry("puppet-textures/blink.png").has_value());
     }
+    resources.unloadAll();
+    resources.setDatabase({});
+    const auto content=cleanup.root/"out/package/test/Content";
+    CHECK(resources.openDatabase((content/"resources.db").string()));
+    ayt::resource::setAssetRoot(content.string());
+    const auto puppetPath=ayt::resource::resolveAssetPath({},"avatars/face.pup");
+    CHECK(resources.hasDatabaseResource(puppetPath));
+    CHECK_FALSE(fs::exists(fs::path(puppetPath)));
+    const auto loaded=resources.load<ayt::ay2d::ParametricSpriteResource2D>(
+        puppetPath);
+    CHECK(loaded != nullptr);
+    CHECK(loaded && loaded->rig().layerCount()==1);
+    CHECK(loaded && loaded->texturePaths().size()==2);
+    const auto texturePath=ayt::resource::resolveAssetPath({},
+        "puppet-textures/base.png");
+    const auto texture=resources.load<ayt::resource::Texture>(texturePath);
+    CHECK(texture != nullptr);
+    CHECK(texture && texture->getWidth()>0);
+    std::vector<ayt::ay2d::ParametricSpriteTextureLease2D> leases;
+    leaseError.clear();
+    const bool acquired=loaded && ayt::ay2d::acquireParametricSpriteTextures2D(
+        resources,*loaded,content.string(),leases,leaseError);
+    CHECK_MSG(acquired,leaseError.c_str());
+    CHECK(leases.size()==2);
+    CHECK(leases.size()==2 && leases[0].texture && leases[1].texture);
+    resources.unloadAll();
+    resources.setDatabase({});
+    ayt::resource::setAssetRoot({});
     auto excluded=profile;
     ProjectBuildRule omit;
     omit.match="puppet-textures/blink.png";

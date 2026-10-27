@@ -15,7 +15,13 @@ public:
     bool canLoad(const std::string& path) const override;
     const char* getResourceType() const override { return "Texture"; }
 
+    /// Loads cooked textures or an explicitly selected raw image path. In
+    /// Release, extension registration stays disabled, so a database type
+    /// or direct loader call must select raw images.
     std::shared_ptr<IResource> load(const std::string& path) override;
+    /// Decode a cooked Texture envelope, or an explicitly typed package
+    /// PNG/JPEG/BMP/TGA image as one RGBA8 mip. This does not enable loose
+    /// extension discovery in Release.
     std::shared_ptr<IResource> loadFromBinary(const void* data, size_t size) override;
     std::shared_ptr<IResource> loadAsync(const std::string& path,
         std::function<void(std::shared_ptr<IResource>)> callback = {}) override;

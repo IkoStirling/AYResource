@@ -2672,6 +2672,8 @@ ProjectBuildResult ProjectBuildExecutor::execute(
             if (asset_format::matchesPath(asset.logicalPath,
                     asset_format::Id::ParametricSpriteDocument2D))
                 rawType = "ParametricSpriteDocument2D";
+            else if (puppetClosure.bound.contains(asset.logicalPath))
+                rawType = "Texture";
 #endif
 #if defined(AY_RESOURCE_HAS_REGIONS)
             if (asset_format::matchesPath(asset.logicalPath,

@@ -1299,5 +1299,14 @@ to be selected Raw in the same storage mode and Pak chunk. Each source receives
 a single-file content key; execution rechecks the authored closure and keys,
 and frozen staging reinspects copies before package publication. The manifest
 records document-to-texture dependencies and labels the raw document type.
+Selected bound raw image records are explicitly labeled `Texture` even when
+release builds disable loose-image extension registration. TextureLoader
+decodes bounded raw image bytes from explicit Pak records or typed loose
+records into one RGBA8 mip; extension-based loose image discovery stays behind
+the dev flag.
+Malformed cooked texture envelopes are not reinterpreted as raw images.
 This is a deliberate exception allowing an Authoring source inside a selected
-game package; it adds no cooked puppet format or automatic runtime loader.
+game package; it adds no cooked puppet format. The optional AY2DPuppetResources
+loader resolves the document, and the Host owns texture leases and Sprite
+entity binding. ProjectBuild/ResourceManager Pak-only tests cover the document
+and texture acquisition path.

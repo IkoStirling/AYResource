@@ -4,9 +4,8 @@
 #include "AYMath/MathTypes.h"
 #include "AYMath/MathUtils.h"
 #include "AYIO/File.h"
-// Dev loose png/jpg/... decode. Declaration only — STB_IMAGE_IMPLEMENTATION
-// is defined once in Converter/TextureConverter.cpp (stb is a per-TU
-// header; including the header here links against that implementation).
+// Raw image decode for explicitly selected package bytes and dev loose files.
+// STB_IMAGE_IMPLEMENTATION is defined once in Loader/StbImage.cpp.
 #include <stb_image.h>
 #define NOMINMAX
 #include <cctype>
@@ -36,11 +35,41 @@ std::string lowerExtensionOf(const std::string& path)
     return ext;
 }
 
-#if defined(AY_TEXTURE_LOOSE_FORMATS)
-// Dev/editor authoring formats decodable by stb_image. Mirrors the
-// AY_AUDIO_LOOSE_FORMATS gating: cook pipeline owns .aytex; dev texture
-// references keep the source extension (.png/.jpg/...) and are decoded
-// here as single-level RGBA8. Cooked .txr files may provide a complete mip chain.
+// Raw images are decoded for explicitly typed package or loose records.
+// Extension-based ResourceRegistry discovery remains dev-only.
+std::shared_ptr<Texture> decodeImageBytes(const void* data, size_t size)
+{
+    if (!data || size == 0 || size > textureByteLimit
+        || size > static_cast<size_t>(std::numeric_limits<int>::max()))
+        return nullptr;
+    const auto* bytes = static_cast<const stbi_uc*>(data);
+    int w = 0, h = 0, comp = 0;
+    if (!stbi_info_from_memory(bytes, static_cast<int>(size), &w, &h, &comp)
+        || w <= 0 || h <= 0 || UInt64(w) * h * 4u > textureByteLimit)
+        return nullptr;
+    unsigned char* pixels = stbi_load_from_memory(bytes,
+        static_cast<int>(size), &w, &h, &comp, STBI_rgb_alpha);
+    if (!pixels || w <= 0 || h <= 0 || UInt64(w) * h * 4u > textureByteLimit) {
+        stbi_image_free(pixels);
+        return nullptr;
+    }
+    auto texture = std::make_shared<Texture>();
+    texture->_width = static_cast<UInt32>(w);
+    texture->_height = static_cast<UInt32>(h);
+    texture->_format = TextureFormat::RGBA8;
+    texture->_mipmapCount = 1;
+    const auto pixelBytes = static_cast<UInt32>(w) *
+        static_cast<UInt32>(h) * 4u;
+    texture->setImageData(pixels, pixelBytes);
+    stbi_image_free(pixels);
+    texture->setMipmapLayout(std::vector<UInt32>{0},
+                             std::vector<UInt32>{pixelBytes});
+    texture->setLoaded(true);
+    return texture;
+}
+
+// Explicit typed loose records use the same bounded byte decoder in every
+// configuration; ResourceRegistry extension discovery remains dev-only.
 bool isLooseTextureExtension(const std::string& ext)
 {
     return ext == ".png" || ext == ".jpg" || ext == ".jpeg"
@@ -63,34 +92,8 @@ std::shared_ptr<Texture> loadLooseImage(const std::string& path)
         return nullptr;
     }
 
-    int w = 0;
-    int h = 0;
-    int comp = 0;
-    if (!stbi_info_from_memory(fileBytes.data(),static_cast<int>(fileBytes.size()),&w,&h,&comp)
-        || w <= 0 || h <= 0 || UInt64(w)*h*4u > textureByteLimit) return nullptr;
-    unsigned char* pixels = stbi_load_from_memory(
-        fileBytes.data(), static_cast<int>(fileBytes.size()),
-        &w, &h, &comp, STBI_rgb_alpha);
-    if (pixels == nullptr || w <= 0 || h <= 0 || UInt64(w)*h*4u > textureByteLimit) {
-        stbi_image_free(pixels);
-        return nullptr;
-    }
-
-    auto texture = std::make_shared<Texture>();
-    texture->_width  = static_cast<UInt32>(w);
-    texture->_height = static_cast<UInt32>(h);
-    texture->_format = TextureFormat::RGBA8;
-    texture->_mipmapCount = 1;
-    const UInt32 pixelBytes =
-        static_cast<UInt32>(w) * static_cast<UInt32>(h) * 4;
-    texture->setImageData(pixels, pixelBytes);
-    stbi_image_free(pixels);
-    texture->setMipmapLayout(std::vector<UInt32>{0},
-                             std::vector<UInt32>{pixelBytes});
-    texture->setLoaded(true);
-    return texture;
+    return decodeImageBytes(fileBytes.data(), fileBytes.size());
 }
-#endif
 
 } // namespace
 
@@ -377,11 +380,9 @@ std::shared_ptr<IResource> TextureLoader::load(const std::string& path) {
         }
         return nullptr;
     }
-#if defined(AY_TEXTURE_LOOSE_FORMATS)
     if (isLooseTextureExtension(ext)) {
         return loadLooseImage(path);
     }
-#endif
     return nullptr;
 }
 
@@ -390,7 +391,12 @@ std::shared_ptr<IResource> TextureLoader::loadFromBinary(const void* data, size_
     if (texture->loadFromBinary(data, size)) {
         return texture;
     }
-    return nullptr;
+    if (data && size >= sizeof(UInt32)) {
+        UInt32 magic = 0;
+        std::memcpy(&magic, data, sizeof(magic));
+        if (magic == ITexture::MAGIC) return nullptr;
+    }
+    return decodeImageBytes(data, size);
 }
 
 std::shared_ptr<IResource> TextureLoader::loadAsync(const std::string& path,
