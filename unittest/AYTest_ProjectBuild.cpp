@@ -28,6 +28,9 @@
 #include <AYSequence/SequenceAssetIO.h>
 #include <AYSequence/SequenceCooked.h>
 #endif
+#if defined(AY_RESOURCE_HAS_PUPPET)
+#include <AY2DEditor/ParametricSpriteDocument2D.h>
+#endif
 #include "AYTest.h"
 #ifdef AY_RESOURCE_TEST_SHADER
 #include <AYShader/ShaderBuild.h>
@@ -1910,5 +1913,81 @@ TEST_CASE(project_build_refuses_a_new_source_recipe_added_after_planning)
     const auto built=ProjectBuildExecutor::execute(current);
     CHECK_MSG(built.ok,built.error.c_str());
 }
+
+#if defined(AY_RESOURCE_HAS_PUPPET)
+TEST_CASE(parametric_sprite_project_publication_pins_complete_texture_closure)
+{
+    ProjectBuildCleanup cleanup{"ayproject_puppet_closure"};
+    const auto assets=cleanup.root/"Assets";
+    CHECK(writeText(cleanup.root/"BuildProfiles/test.aybuild.json",profileJson()));
+    ayt::ay2d::ParametricSpriteRig2D rig;
+    ayt::ay2d::PuppetLayer2D face;
+    face.name="face";
+    face.texturePath="puppet-textures/base.png";
+    face.variants.push_back({0,0.5f,"puppet-textures/blink.png"});
+    CHECK(rig.load({{"blink",0,0,1}},{face}));
+    std::string author,error;
+    CHECK(ayt::ay2d::editor::saveParametricSpriteDocument2D(rig,author,error));
+    CHECK(writeText(assets/"avatars/face.pup",author));
+    CHECK(writeBytes(assets/"puppet-textures/base.png",makeImportPng()));
+    CHECK(writeBytes(assets/"puppet-textures/blink.png",makeImportPng()));
+    const auto profile=ProjectBuildProfile::load(
+        (cleanup.root/"BuildProfiles/test.aybuild.json").string());
+    const auto plan=ProjectBuildPlanner::create(profile,cleanup.root.string());
+    CHECK_MSG(plan.valid(),plan.serialize().c_str());
+    if(!plan.valid())return;
+    bool closed=false;
+    for(const auto& asset:plan.assets)
+        if(asset.logicalPath=="avatars/face.pup")
+            closed=asset.cacheKey.size()>0 &&
+                asset.resourceDependencies.size()==2;
+    CHECK(closed);
+    const auto built=ProjectBuildExecutor::execute(plan);
+    CHECK_MSG(built.ok,built.error.c_str());
+    if(!built.ok)return;
+    const auto published=cleanup.root/"out/package/test/Content";
+    CHECK(fs::is_regular_file(published/"avatars/face.pup"));
+    CHECK(fs::is_regular_file(published/"puppet-textures/base.png"));
+    CHECK(fs::is_regular_file(published/"puppet-textures/blink.png"));
+    const auto manifest=nlohmann::json::parse(ayt::io::File::readAllText(
+        (cleanup.root/"out/package/test/build-manifest.json").string()));
+    bool manifestClosed=false;
+    for(const auto& file:manifest.at("files"))
+        if(file.at("path")=="avatars/face.pup")
+            manifestClosed=file.at("resourceDependencies").size()==2;
+    CHECK(manifestClosed);
+
+    CHECK(writeBytes(assets/"puppet-textures/blink.png",makeImportPng(true)));
+    const auto stale=ProjectBuildExecutor::execute(plan);
+    CHECK_FALSE(stale.ok);
+    CHECK(fs::is_regular_file(published/"avatars/face.pup"));
+    const auto fresh=ProjectBuildPlanner::create(profile,cleanup.root.string());
+    CHECK(fresh.valid());
+    auto pakProfile=profile;
+    pakProfile.content.defaultStorage=ProjectAssetStorage::Pak;
+    const auto pakPlan=ProjectBuildPlanner::create(pakProfile,cleanup.root.string());
+    CHECK_MSG(pakPlan.valid(),pakPlan.serialize().c_str());
+    if(!pakPlan.valid())return;
+    const auto packed=ProjectBuildExecutor::execute(pakPlan);
+    CHECK_MSG(packed.ok,packed.error.c_str());
+    if(!packed.ok)return;
+    auto pak=ayt::storage::IPackageReader::open(
+        (cleanup.root/"out/package/test/Content/core.pak").string());
+    CHECK(pak!=nullptr);
+    if(pak) {
+        CHECK(pak->getEntry("avatars/face.pup").has_value());
+        CHECK(pak->getEntry("puppet-textures/base.png").has_value());
+        CHECK(pak->getEntry("puppet-textures/blink.png").has_value());
+    }
+    auto excluded=profile;
+    ProjectBuildRule omit;
+    omit.match="puppet-textures/blink.png";
+    omit.transform=ProjectAssetTransform::Exclude;
+    excluded.content.rules.insert(excluded.content.rules.begin(),omit);
+    CHECK_FALSE(ProjectBuildPlanner::create(excluded,cleanup.root.string()).valid());
+    CHECK(writeText(assets/"puppet-textures/blink.png","broken image"));
+    CHECK_FALSE(ProjectBuildPlanner::create(profile,cleanup.root.string()).valid());
+}
+#endif
 
 TEST_SUITE_END

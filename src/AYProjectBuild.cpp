@@ -40,6 +40,9 @@
 #include <AY2DEditor/RoomAssemblyCook2D.h>
 #include <AY2DEditor/RoomAssemblyDocument2D.h>
 #endif
+#if defined(AY_RESOURCE_HAS_PUPPET)
+#include <AY2DEditor/ParametricSpritePackage2D.h>
+#endif
 #if defined(AY_RESOURCE_HAS_SEQUENCE)
 #include <AYSequence/SequenceAssetIO.h>
 #include <AYSequence/SequenceCooked.h>
@@ -1219,6 +1222,65 @@ std::set<std::string> validateRegionBindings(
     return bound;
 }
 
+#if defined(AY_RESOURCE_HAS_PUPPET)
+struct PuppetClosure {
+    std::set<std::string> bound;
+    std::map<std::string, std::vector<std::string>> textures;
+};
+
+PuppetClosure validatePuppetContent(const ProjectBuildPlan& plan,
+                                    std::vector<ProjectBuildDiagnostic>& diagnostics) {
+    PuppetClosure closure;
+    std::map<std::string, const ProjectBuildAsset*> byPath;
+    for (const auto& asset : plan.assets) byPath.emplace(asset.logicalPath, &asset);
+    const auto root=fs::path(plan.projectRoot)/plan.profile.content.assetRoot;
+    for (const auto& asset : plan.assets) {
+        if (asset.transform == ProjectAssetTransform::Exclude ||
+            !asset_format::matchesPath(asset.logicalPath,
+                asset_format::Id::ParametricSpriteDocument2D)) continue;
+        const auto fail = [&](const std::string& message) {
+            diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Error,
+                asset.logicalPath, message);
+        };
+        if (asset.transform != ProjectAssetTransform::Raw) {
+            fail("Parametric sprite documents require raw publication");
+            continue;
+        }
+        ayt::ay2d::editor::ParametricSpritePackageReport2D inspected;
+        std::string error;
+        if (!ayt::ay2d::editor::inspectParametricSpritePackage2D(
+                root, fs::path(asset.logicalPath), inspected, error)) {
+            fail("Invalid parametric sprite package: " + error);
+            continue;
+        }
+        std::vector<std::string> dependencies;
+        bool valid=true;
+        for (const auto& path : inspected.outputPaths) {
+            const auto found=byPath.find(path);
+            if (found==byPath.end() ||
+                found->second->transform!=ProjectAssetTransform::Raw) {
+                fail("Parametric sprite dependency missing, excluded or transformed: " + path);
+                valid=false;
+                continue;
+            }
+            if (found->second->storage!=asset.storage ||
+                (asset.storage==ProjectAssetStorage::Pak &&
+                 found->second->chunk!=asset.chunk)) {
+                fail("Parametric sprite dependency must share storage and Pak chunk: " + path);
+                valid=false;
+                continue;
+            }
+            if (path!=asset.logicalPath) dependencies.push_back(path);
+        }
+        if (!valid) continue;
+        closure.bound.insert(inspected.outputPaths.begin(),
+            inspected.outputPaths.end());
+        closure.textures.emplace(asset.logicalPath,std::move(dependencies));
+    }
+    return closure;
+}
+#endif
+
 bool audioContentSource(const std::string& source){return asset_format::matchesPath(source,asset_format::Id::AudioChartSource)||asset_format::matchesPath(source,asset_format::Id::AudioPerformanceSource);}
 void validateAudioContent(const ProjectBuildPlan& plan,std::vector<ProjectBuildDiagnostic>& diagnostics){
     const fs::path root=fs::path(plan.projectRoot)/plan.profile.content.assetRoot;
@@ -2270,6 +2332,9 @@ ProjectBuildPlan ProjectBuildPlanner::create(
     const auto dialogueBound = validateDialogueBindings(plan, plan.diagnostics);
     validateRegionContent(plan,plan.diagnostics);
     const auto regionBound = validateRegionBindings(plan, plan.diagnostics);
+#if defined(AY_RESOURCE_HAS_PUPPET)
+    const auto puppetClosure = validatePuppetContent(plan, plan.diagnostics);
+#endif
     for (auto& asset : plan.assets)
         if (asset.transform == ProjectAssetTransform::Raw &&
             (dialogueBound.contains(asset.logicalPath) ||
@@ -2277,6 +2342,22 @@ ProjectBuildPlan ProjectBuildPlanner::create(
             !asset_format::matchesPath(asset.sourcePath, asset_format::Id::DialogueDocument) &&
             !asset_format::matchesPath(asset.sourcePath, asset_format::Id::RegionDocument))
             asset.cacheKey = hashFiles({asset.sourcePath}, "content-bound-v1");
+#if defined(AY_RESOURCE_HAS_PUPPET)
+    for (auto& asset : plan.assets) {
+        if (!puppetClosure.bound.contains(asset.logicalPath) ||
+            asset.transform != ProjectAssetTransform::Raw) continue;
+        asset.cacheKey = hashFiles({asset.sourcePath}, "content-bound-v1");
+        const auto found=puppetClosure.textures.find(asset.logicalPath);
+        if (found!=puppetClosure.textures.end()) {
+            asset.resourceDependencies.insert(asset.resourceDependencies.end(),
+                found->second.begin(), found->second.end());
+            std::sort(asset.resourceDependencies.begin(),asset.resourceDependencies.end());
+            asset.resourceDependencies.erase(std::unique(
+                asset.resourceDependencies.begin(),asset.resourceDependencies.end()),
+                asset.resourceDependencies.end());
+        }
+    }
+#endif
     validateAudioContent(plan,plan.diagnostics);
     validateActorContent(plan, plan.diagnostics);
     detail::discoverProjectLogia(plan);
@@ -2329,6 +2410,25 @@ ProjectBuildResult ProjectBuildExecutor::execute(
     const auto dialogueBound = validateDialogueBindings(plan, releaseDiagnostics);
     validateRegionContent(plan, releaseDiagnostics);
     const auto regionBound = validateRegionBindings(plan, releaseDiagnostics);
+#if defined(AY_RESOURCE_HAS_PUPPET)
+    const auto puppetClosure = validatePuppetContent(plan, releaseDiagnostics);
+    for (const auto& asset : plan.assets) {
+        if (!puppetClosure.bound.contains(asset.logicalPath) ||
+            asset.transform!=ProjectAssetTransform::Raw) continue;
+        if (asset.cacheKey!=hashFiles({asset.sourcePath},"content-bound-v1")) {
+            result.error="Parametric sprite content changed after planning: "
+                +asset.logicalPath;return result;
+        }
+        const auto found=puppetClosure.textures.find(asset.logicalPath);
+        if (found!=puppetClosure.textures.end())
+            for (const auto& dependency:found->second)
+                if (!std::binary_search(asset.resourceDependencies.begin(),
+                        asset.resourceDependencies.end(),dependency)) {
+                    result.error="Parametric sprite dependency graph changed: "
+                        +asset.logicalPath;return result;
+                }
+    }
+#endif
     for (const auto& asset : plan.assets)
         if (asset.transform == ProjectAssetTransform::Raw &&
             (dialogueBound.contains(asset.logicalPath) ||
@@ -2568,6 +2668,11 @@ ProjectBuildResult ProjectBuildExecutor::execute(
             ++result.rawCount;
             std::string rawType = ResourceRegistry::getTypeFromPath(
                 asset.logicalPath);
+#if defined(AY_RESOURCE_HAS_PUPPET)
+            if (asset_format::matchesPath(asset.logicalPath,
+                    asset_format::Id::ParametricSpriteDocument2D))
+                rawType = "ParametricSpriteDocument2D";
+#endif
 #if defined(AY_RESOURCE_HAS_REGIONS)
             if (asset_format::matchesPath(asset.logicalPath,
                 asset_format::Id::RegionDocument))
@@ -2845,6 +2950,27 @@ ProjectBuildResult ProjectBuildExecutor::execute(
         [](const StagedFile& a, const StagedFile& b) {
             return a.logicalPath == b.logicalPath;
         }), staged.end());
+
+#if defined(AY_RESOURCE_HAS_PUPPET)
+    // Every closure member was copied into bound-sources and verified against
+    // the planned single-file key. Reinspect those frozen bytes as one rig.
+    for (const auto& [document, textures] : puppetClosure.textures) {
+        ayt::ay2d::editor::ParametricSpritePackageReport2D frozen;
+        std::string error;
+        if (!ayt::ay2d::editor::inspectParametricSpritePackage2D(
+                staging / "bound-sources", fs::path(document), frozen, error)) {
+            result.error="Invalid frozen parametric sprite: "+document+": "+error;
+            return result;
+        }
+        std::vector<std::string> expected=textures;
+        expected.push_back(document);
+        std::sort(expected.begin(),expected.end());
+        if (frozen.outputPaths!=expected) {
+            result.error="Frozen parametric sprite closure changed: "+document;
+            return result;
+        }
+    }
+#endif
 
 #if defined(AY_RESOURCE_HAS_SEQUENCE)
     // A cooked Sequence is useful only when every authored dependency is

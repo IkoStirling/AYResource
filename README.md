@@ -288,6 +288,18 @@ result in its content-addressed cache and registers the cooked
 publication. CookShip validates `.rmb` before packing. The runtime loader is
 provided by optional `AY2DRoomResources` registration.
 
+## 2D parametric sprite project publication (2026-10-27)
+
+With AY2D authoring enabled, ProjectBuild recognizes selected `.pup` documents
+as raw versioned JSON. Planning, execution and frozen staging use AY2D's full
+document and PNG/JPEG/BMP/TGA decode validator. Every referenced base/variant
+texture must be selected Raw with the document's storage mode and, for Pak,
+the same chunk. Individual source bytes are pinned from plan to staging; the
+build manifest records document-to-texture dependency edges. Missing, excluded,
+transformed, changed or corrupt members reject publication while preserving
+the previous output. Loose and Pak publication work; runtime rig construction,
+texture loading and GPU presentation remain game/Entity integration work.
+
 具体 Material::setTextureReference 供作者工具重定位既有纹理引用，保留 Texture2D/3D/Cube 类型；
 拒绝缺失、非纹理参数及 NUL 路径，不改变失败前的值。它不是新的运行时资源获取入口。
 证据 MaterialFileTests，普通与 MSVC ASan 材质文件组均通过7例/357断言。

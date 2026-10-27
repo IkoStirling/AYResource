@@ -1288,3 +1288,16 @@ closure is not claimed. Runtime stream registration and leases remain Host work.
 Published raw region records carry the explicit `RegionContent` type, so a
 runtime that registers AYScene::RegionResources can resolve them from the
 ProjectBuild database and Pak rather than relying on a build-process registry.
+
+## Parametric sprite raw project closure
+
+When AY2DEditorCore is available, selected `.pup` files are raw authoring
+documents. The shared inspection path parses versions 1–4, canonicalizes the
+rig in memory, fully decodes every base/variant image within AY2D's budgets,
+and returns a sorted project-relative closure. Planning requires every member
+to be selected Raw in the same storage mode and Pak chunk. Each source receives
+a single-file content key; execution rechecks the authored closure and keys,
+and frozen staging reinspects copies before package publication. The manifest
+records document-to-texture dependencies and labels the raw document type.
+This is a deliberate exception allowing an Authoring source inside a selected
+game package; it adds no cooked puppet format or automatic runtime loader.
