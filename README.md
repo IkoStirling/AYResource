@@ -4,6 +4,9 @@
 PNG 图集页，要求全部为同存储、同 Pak chunk 的 Raw 资产；规划、执行及冻结暂存
 均复核闭包与内容身份。文档以 `SpriteClipDocument2D`、图集以 `Texture` 类型发布，
 可选 `AY2DSpriteClipResources` 从 loose 或 Pak 加载片段文档。
+选中 `.sproutes` 版本 2 路线文档时，ProjectBuild 还要求其明确引用的 `.spc`
+和所有 PNG 页同存储、同 Pak chunk 发布，冻结暂存后再次复核；可选资源适配器
+可从 loose 或 Pak 读取路线，再按片段集合配置动作/朝向映射。
 
 选中 `.pup` 作者角色时，ProjectBuild 将文档与去重后的 PNG/JPEG/BMP/TGA
 贴图作为同存储 Raw 闭包发布。原始图片以 `Texture` 类型索引，

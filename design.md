@@ -1300,6 +1300,12 @@ before replacement. Raw documents are typed `SpriteClipDocument2D` and pages
 `Texture`, independent of development-only extension scanning. A registered
 AY2D loader reads loose or Pak document bytes; atlas GPU residency remains
 the game's responsibility. No cooked `.spc` variant or migration is implied.
+Selected version-2 `.sproutes` files explicitly bind a `.spc` logical path.
+The planner requires route, clip and every PNG page to be selected Raw in the
+same loose/Pak destination and chunk. It pins source bytes, records route
+dependencies and reinspects the frozen route/clip/page closure before output
+replacement. Published route files are typed `SpriteClipRoutes2D`; runtime
+games configure their route maps against a loaded clip set.
 
 ## Parametric sprite raw project closure
 

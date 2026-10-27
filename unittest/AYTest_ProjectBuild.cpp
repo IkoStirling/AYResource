@@ -37,6 +37,8 @@
 #endif
 #if defined(AY_RESOURCE_HAS_SPRITE_CLIPS)
 #include <AY2DEditor/SpriteClipDocument2D.h>
+#include <AY2DEditor/SpriteClipRouteDocument2D.h>
+#include <AY2DEditor/SpriteClipRouteResource2D.h>
 #include <AY2D/SpriteClipResource2D.h>
 #include <AYResource/ResourceManager.h>
 #include <AYResource/AssetPath.h>
@@ -2072,32 +2074,48 @@ TEST_CASE(sprite_clip_project_publication_pins_atlas_closure)
     CHECK(ayt::ay2d::editor::encodeSpriteClipDocument2D(set, authored));
     CHECK(writeText(assets / "animation_samples/hero/hero.spc", authored));
     CHECK(writeBytes(assets / "animation_samples/hero/page.png", makeImportPng()));
+    std::string routes;
+    CHECK(ayt::ay2d::editor::encodeBoundSpriteClipRouteDocument2D(
+        {{"idle", ayt::ay2d::SpriteFacing2D::Any, "idle", false}},
+        set, "animation_samples/hero/hero.spc", routes));
+    CHECK(writeText(assets / "animation_samples/hero/hero.sproutes", routes));
     const auto profile = ProjectBuildProfile::load(
         (cleanup.root / "BuildProfiles/test.aybuild.json").string());
     const auto plan = ProjectBuildPlanner::create(profile, cleanup.root.string());
     CHECK_MSG(plan.valid(), plan.serialize().c_str());
     if (!plan.valid()) return;
-    bool closed = false;
+    bool closed = false, routesClosed = false;
     for (const auto& asset : plan.assets)
         if (asset.logicalPath == "animation_samples/hero/hero.spc")
             closed = !asset.cacheKey.empty() &&
                 asset.resourceDependencies == std::vector<std::string>{
                     "animation_samples/hero/page.png"};
+        else if (asset.logicalPath == "animation_samples/hero/hero.sproutes")
+            routesClosed = !asset.cacheKey.empty() &&
+                asset.resourceDependencies == std::vector<std::string>{
+                    "animation_samples/hero/hero.spc",
+                    "animation_samples/hero/page.png"};
     CHECK(closed);
+    CHECK(routesClosed);
     const auto built = ProjectBuildExecutor::execute(plan);
     CHECK_MSG(built.ok, built.error.c_str());
     if (!built.ok) return;
     const auto published = cleanup.root / "out/package/test/Content";
     CHECK(fs::is_regular_file(published / "animation_samples/hero/hero.spc"));
     CHECK(fs::is_regular_file(published / "animation_samples/hero/page.png"));
+    CHECK(fs::is_regular_file(published / "animation_samples/hero/hero.sproutes"));
     const auto manifest = nlohmann::json::parse(ayt::io::File::readAllText(
         (cleanup.root / "out/package/test/build-manifest.json").string()));
-    bool manifestClosed = false;
+    bool manifestClosed = false, routeManifestClosed = false;
     for (const auto& file : manifest.at("files"))
         if (file.at("path") == "animation_samples/hero/hero.spc")
             manifestClosed = file.at("resourceDependencies").size() == 1;
+        else if (file.at("path") == "animation_samples/hero/hero.sproutes")
+            routeManifestClosed = file.at("resourceDependencies").size() == 2;
     CHECK(manifestClosed);
+    CHECK(routeManifestClosed);
     CHECK(ayt::ay2d::registerSpriteClipResource2D());
+    CHECK(ayt::ay2d::registerSpriteClipRouteResource2D());
     auto& resources = ResourceManager::instance();
     resources.unloadAll();
     resources.setDatabase({});
@@ -2108,6 +2126,12 @@ TEST_CASE(sprite_clip_project_publication_pins_atlas_closure)
     const auto loose = resources.load<ayt::ay2d::SpriteClipResource2D>(looseKey);
     CHECK(loose != nullptr);
     CHECK(loose && loose->clips().clips.size() == 1);
+    const auto looseRoutes = resources.load<ayt::ay2d::SpriteClipRouteResource2D>(
+        ayt::resource::resolveAssetPath({},
+            "animation_samples/hero/hero.sproutes"));
+    ayt::ay2d::SpriteClipMap2D looseMap;
+    CHECK(looseRoutes && loose && looseRoutes->configureMap(loose->clips(),
+        "animation_samples/hero/hero.spc", looseMap));
     std::vector<ayt::ay2d::SpriteClipPageLease2D> pageLeases;
     std::string pageError;
     CHECK(loose && ayt::ay2d::acquireSpriteClipPages2D(
@@ -2138,6 +2162,7 @@ TEST_CASE(sprite_clip_project_publication_pins_atlas_closure)
     if (pak) {
         CHECK(pak->getEntry("animation_samples/hero/hero.spc").has_value());
         CHECK(pak->getEntry("animation_samples/hero/page.png").has_value());
+        CHECK(pak->getEntry("animation_samples/hero/hero.sproutes").has_value());
     }
     resources.unloadAll();
     resources.setDatabase({});
@@ -2151,6 +2176,12 @@ TEST_CASE(sprite_clip_project_publication_pins_atlas_closure)
     const auto loaded = resources.load<ayt::ay2d::SpriteClipResource2D>(packedKey);
     CHECK(loaded != nullptr);
     CHECK(loaded && loaded->clips().clips.size() == 1);
+    const auto packedRoutes = resources.load<ayt::ay2d::SpriteClipRouteResource2D>(
+        ayt::resource::resolveAssetPath({},
+            "animation_samples/hero/hero.sproutes"));
+    ayt::ay2d::SpriteClipMap2D packedMap;
+    CHECK(packedRoutes && loaded && packedRoutes->configureMap(loaded->clips(),
+        "animation_samples/hero/hero.spc", packedMap));
     CHECK(loaded && loaded->pagePaths().size() == 1);
     CHECK(loaded && ayt::ay2d::acquireSpriteClipPages2D(
         resources, *loaded, "", pageLeases, pageError));
@@ -2168,8 +2199,22 @@ TEST_CASE(sprite_clip_project_publication_pins_atlas_closure)
     omit.transform = ProjectAssetTransform::Exclude;
     excluded.content.rules.insert(excluded.content.rules.begin(), omit);
     CHECK_FALSE(ProjectBuildPlanner::create(excluded, cleanup.root.string()).valid());
+    auto excludedRoutes = profile;
+    omit.match = "animation_samples/hero/hero.spc";
+    excludedRoutes.content.rules.insert(excludedRoutes.content.rules.begin(), omit);
+    CHECK_FALSE(ProjectBuildPlanner::create(excludedRoutes, cleanup.root.string()).valid());
     CHECK(writeText(assets / "animation_samples/hero/page.png", "broken image"));
     CHECK_FALSE(ProjectBuildPlanner::create(profile, cleanup.root.string()).valid());
+    CHECK(writeBytes(assets / "animation_samples/hero/page.png", makeImportPng()));
+    const auto routeClip = routes.find("\"clip\": \"idle\"");
+    CHECK(routeClip != std::string::npos);
+    if (routeClip != std::string::npos) {
+        routes.replace(routeClip, std::string("\"clip\": \"idle\"").size(),
+                       "\"clip\": \"missing\"");
+        CHECK(writeText(assets / "animation_samples/hero/hero.sproutes", routes));
+        CHECK_FALSE(ProjectBuildPlanner::create(profile,
+            cleanup.root.string()).valid());
+    }
 }
 #endif
 

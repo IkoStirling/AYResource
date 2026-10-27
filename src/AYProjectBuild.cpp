@@ -1289,6 +1289,7 @@ PuppetClosure validatePuppetContent(const ProjectBuildPlan& plan,
 struct SpriteClipClosure {
     std::set<std::string> bound;
     std::map<std::string, std::vector<std::string>> pages;
+    std::map<std::string, std::vector<std::string>> routes;
 };
 
 SpriteClipClosure validateSpriteClipContent(
@@ -1340,6 +1341,49 @@ SpriteClipClosure validateSpriteClipContent(
         closure.bound.insert(inspected.outputPaths.begin(),
                              inspected.outputPaths.end());
         closure.pages.emplace(asset.logicalPath, std::move(pages));
+    }
+    for (const auto& asset : plan.assets) {
+        if (asset.transform == ProjectAssetTransform::Exclude ||
+            !asset_format::matchesPath(asset.logicalPath,
+                asset_format::Id::SpriteClipRoutes2D)) continue;
+        const auto fail = [&](const std::string& message) {
+            diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Error,
+                asset.logicalPath, message);
+        };
+        if (asset.transform != ProjectAssetTransform::Raw) {
+            fail("Sprite clip routes require raw publication");
+            continue;
+        }
+        ayt::ay2d::editor::SpriteClipPackageReport2D inspected;
+        std::string error;
+        if (!ayt::ay2d::editor::inspectSpriteClipRoutePackage2D(
+                root, fs::path(asset.logicalPath), inspected, error)) {
+            fail("Invalid sprite clip routes: " + error);
+            continue;
+        }
+        bool valid = true;
+        std::vector<std::string> dependencies;
+        for (const auto& path : inspected.outputPaths) {
+            const auto found = byPath.find(path);
+            if (found == byPath.end() ||
+                found->second->transform != ProjectAssetTransform::Raw) {
+                fail("Sprite route dependency missing, excluded or transformed: " + path);
+                valid = false;
+                continue;
+            }
+            if (found->second->storage != asset.storage ||
+                (asset.storage == ProjectAssetStorage::Pak &&
+                 found->second->chunk != asset.chunk)) {
+                fail("Sprite route dependency must share storage and Pak chunk: " + path);
+                valid = false;
+                continue;
+            }
+            if (path != asset.logicalPath) dependencies.push_back(path);
+        }
+        if (!valid) continue;
+        closure.bound.insert(inspected.outputPaths.begin(),
+                             inspected.outputPaths.end());
+        closure.routes.emplace(asset.logicalPath, std::move(dependencies));
     }
     return closure;
 }
@@ -2429,10 +2473,14 @@ ProjectBuildPlan ProjectBuildPlanner::create(
         if (!spriteClipClosure.bound.contains(asset.logicalPath) ||
             asset.transform != ProjectAssetTransform::Raw) continue;
         asset.cacheKey = hashFiles({asset.sourcePath}, "content-bound-v1");
-        const auto found = spriteClipClosure.pages.find(asset.logicalPath);
-        if (found != spriteClipClosure.pages.end()) {
+        const auto pageFound = spriteClipClosure.pages.find(asset.logicalPath);
+        const auto routeFound = spriteClipClosure.routes.find(asset.logicalPath);
+        const auto* dependencies = pageFound != spriteClipClosure.pages.end()
+            ? &pageFound->second : routeFound != spriteClipClosure.routes.end()
+                ? &routeFound->second : nullptr;
+        if (dependencies) {
             asset.resourceDependencies.insert(asset.resourceDependencies.end(),
-                found->second.begin(), found->second.end());
+                dependencies->begin(), dependencies->end());
             std::sort(asset.resourceDependencies.begin(),
                       asset.resourceDependencies.end());
             asset.resourceDependencies.erase(std::unique(
@@ -2523,9 +2571,13 @@ ProjectBuildResult ProjectBuildExecutor::execute(
                 asset.logicalPath;
             return result;
         }
-        const auto found = spriteClipClosure.pages.find(asset.logicalPath);
-        if (found != spriteClipClosure.pages.end())
-            for (const auto& dependency : found->second)
+        const auto pageFound = spriteClipClosure.pages.find(asset.logicalPath);
+        const auto routeFound = spriteClipClosure.routes.find(asset.logicalPath);
+        const auto* dependencies = pageFound != spriteClipClosure.pages.end()
+            ? &pageFound->second : routeFound != spriteClipClosure.routes.end()
+                ? &routeFound->second : nullptr;
+        if (dependencies)
+            for (const auto& dependency : *dependencies)
                 if (!std::binary_search(asset.resourceDependencies.begin(),
                         asset.resourceDependencies.end(), dependency)) {
                     result.error = "Sprite clip dependency graph changed: " +
@@ -2784,6 +2836,9 @@ ProjectBuildResult ProjectBuildExecutor::execute(
             if (asset_format::matchesPath(asset.logicalPath,
                     asset_format::Id::SpriteClipDocument2D))
                 rawType = "SpriteClipDocument2D";
+            else if (asset_format::matchesPath(asset.logicalPath,
+                    asset_format::Id::SpriteClipRoutes2D))
+                rawType = "SpriteClipRoutes2D";
             else if (spriteClipClosure.bound.contains(asset.logicalPath))
                 rawType = "Texture";
 #endif
@@ -3100,6 +3155,23 @@ ProjectBuildResult ProjectBuildExecutor::execute(
         expected.insert(expected.end(), pages.begin(), pages.end());
         if (frozen.outputPaths != expected) {
             result.error = "Frozen sprite clip closure changed: " + document;
+            return result;
+        }
+    }
+    for (const auto& [document, dependencies] : spriteClipClosure.routes) {
+        ayt::ay2d::editor::SpriteClipPackageReport2D frozen;
+        std::string error;
+        if (!ayt::ay2d::editor::inspectSpriteClipRoutePackage2D(
+                staging / "bound-sources", fs::path(document), frozen, error)) {
+            result.error = "Invalid frozen sprite routes: " + document +
+                ": " + error;
+            return result;
+        }
+        std::vector<std::string> expected{document};
+        expected.insert(expected.end(), dependencies.begin(), dependencies.end());
+        std::sort(expected.begin(), expected.end());
+        if (frozen.outputPaths != expected) {
+            result.error = "Frozen sprite route closure changed: " + document;
             return result;
         }
     }
