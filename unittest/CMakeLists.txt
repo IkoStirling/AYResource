@@ -62,6 +62,9 @@ target_link_libraries(${MODULE_NAME} PRIVATE
     AYTest
     assimp::assimp
 )
+if(TARGET AYProgressionJson)
+    target_link_libraries(${MODULE_NAME} PRIVATE AYProgressionJson)
+endif()
 if(TARGET AYShader)
     target_link_libraries(${MODULE_NAME} PRIVATE AYShader)
     target_compile_definitions(${MODULE_NAME} PRIVATE AY_RESOURCE_TEST_SHADER=1)

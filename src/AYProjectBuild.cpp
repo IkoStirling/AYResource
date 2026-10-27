@@ -22,6 +22,7 @@
 #include <AYStorage/IStorageDatabase.h>
 #include <nlohmann/json.hpp>
 #if defined(AY_RESOURCE_HAS_DIALOGUE)
+#include <AYProgression/DialogueBindings.h>
 #include <AYProgression/DialogueJson.h>
 #endif
 #if defined(AY_RESOURCE_HAS_PARTICLE)
@@ -828,7 +829,7 @@ void validateDialogueContent(const ProjectBuildPlan& plan,
 }
 
 #if defined(AY_RESOURCE_HAS_DIALOGUE)
-bool readDialogueJson(const fs::path& path, Json& output, std::string& error) {
+bool readDialogueBytes(const fs::path& path, std::string& output, std::string& error) {
     error.clear();
     std::error_code ec;
     if (!fs::is_regular_file(fs::symlink_status(path, ec)) || ec) {
@@ -842,12 +843,18 @@ bool readDialogueJson(const fs::path& path, Json& output, std::string& error) {
     }
     std::ifstream input(path, std::ios::binary);
     if (!input) { error = "Cannot open dialogue binding file"; return false; }
-    std::string bytes(static_cast<std::size_t>(size), '\0');
-    if (!input.read(bytes.data(), static_cast<std::streamsize>(size))
+    output.assign(static_cast<std::size_t>(size), '\0');
+    if (!input.read(output.data(), static_cast<std::streamsize>(size))
         || input.peek() != std::char_traits<char>::eof() || input.bad()) {
         error = "Dialogue binding file changed during read";
         return false;
     }
+    return true;
+}
+
+bool readDialogueJson(const fs::path& path, Json& output, std::string& error) {
+    std::string bytes;
+    if (!readDialogueBytes(path, bytes, error)) return false;
     output = Json::parse(bytes, nullptr, false);
     if (!output.is_object()) { error = "Invalid dialogue binding JSON"; return false; }
     return true;
@@ -933,29 +940,22 @@ std::set<std::string> validateDialogueBindings(
     };
     const auto manifestAsset = require(manifestPath);
     if (!manifestAsset) return bound;
-    Json manifest;
+    std::string manifestText;
     std::string error;
-    if (!readDialogueJson(manifestAsset->sourcePath, manifest, error)) {
+    if (!readDialogueBytes(manifestAsset->sourcePath, manifestText, error)) {
         fail(manifestPath, error);
         return bound;
     }
+    const auto decoded = progression::dialogue::decodeBindingsJson(manifestText);
+    if (!decoded) {
+        fail(manifestPath, decoded.error().detail);
+        return bound;
+    }
+    const auto& bindings = *decoded;
     try {
-        if (manifest.at("schema") != 1 || !manifest.at("documents").is_array()
-            || !manifest.at("locales").is_array() || !manifest.at("voice").is_object()
-            || !manifest.at("sequence").is_object())
-            throw std::runtime_error("Invalid dialogue bindings schema");
-        const auto& documents = manifest.at("documents");
-        const auto& locales = manifest.at("locales");
-        const auto& voice = manifest.at("voice");
-        const auto& sequence = manifest.at("sequence");
-        if (documents.empty() || documents.size() > 1024 || locales.empty()
-            || locales.size() > 64 || voice.size() > 4096 || sequence.size() > 4096)
-            throw std::runtime_error("Dialogue bindings exceed document, locale or cue limits");
         std::set<std::string> documentPaths, textKeys, voiceKeys, sequenceKeys;
-        for (const auto& value : documents) {
-            const std::string path = value.get<std::string>();
-            if (!documentPaths.insert(path).second)
-                throw std::runtime_error("Duplicate dialogue document path: " + path);
+        for (const auto& path : bindings.documents) {
+            documentPaths.insert(path);
             const auto* asset = require(path, asset_format::Id::DialogueDocument);
             if (!asset) continue;
             progression::dialogue::Document document;
@@ -978,8 +978,7 @@ std::set<std::string> validateDialogueBindings(
                 !documentPaths.contains(asset.logicalPath))
                 fail(asset.logicalPath, "Selected dialogue document is absent from bindings");
         std::set<std::string> languages;
-        for (const auto& value : locales) {
-            const std::string path = value.get<std::string>();
+        for (const auto& path : bindings.locales) {
             const auto* asset = require(path);
             if (!asset) continue;
             Json locale;
@@ -1001,15 +1000,15 @@ std::set<std::string> validateDialogueBindings(
             for (const auto& key : textKeys)
                 if (!available.contains(key)) fail(path, "Missing dialogue text key: " + key);
         }
-        const auto checkMedia = [&](const Json& mappings,
+        const auto checkMedia = [&](const auto& mappings,
                                     const std::set<std::string>& referenced,
                                     asset_format::Id format,
                                     const char* kind) {
             for (const auto& key : referenced)
                 if (!mappings.contains(key)) fail(manifestPath,
                     std::string("Missing ") + kind + " binding: " + key);
-            for (auto it = mappings.begin(); it != mappings.end(); ++it) {
-                const std::string path = it.value().get<std::string>();
+            for (const auto& [key, path] : mappings) {
+                (void)key;
                 const auto* asset = require(path, format);
                 if (!asset) continue;
                 if (format == asset_format::Id::Audio) {
@@ -1025,11 +1024,11 @@ std::set<std::string> validateDialogueBindings(
                 }
             }
         };
-        checkMedia(voice, voiceKeys, asset_format::Id::Audio, "voice");
+        checkMedia(bindings.voice, voiceKeys, asset_format::Id::Audio, "voice");
 #if defined(AY_RESOURCE_HAS_SEQUENCE)
-        checkMedia(sequence, sequenceKeys, asset_format::Id::SceneSequenceCooked, "sequence");
+        checkMedia(bindings.sequence, sequenceKeys, asset_format::Id::SceneSequenceCooked, "sequence");
 #else
-        if (!sequence.empty() || !sequenceKeys.empty())
+        if (!bindings.sequence.empty() || !sequenceKeys.empty())
             fail(manifestPath, "Sequence dialogue bindings require AYSequence AssetIO");
 #endif
     } catch (const std::exception& exception) {

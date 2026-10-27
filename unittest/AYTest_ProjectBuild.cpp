@@ -6,6 +6,9 @@
 #include <AYResource/assetsImpl/Audio.h>
 #include <AYIO/File.h>
 #include <AYStorage/IPackageReader.h>
+#if defined(AY_RESOURCE_HAS_DIALOGUE)
+#include <AYProgression/DialogueBindings.h>
+#endif
 #if defined(AY_RESOURCE_HAS_SEQUENCE)
 #include <AYSequence/SequenceAssetIO.h>
 #include <AYSequence/SequenceCooked.h>
@@ -1062,6 +1065,29 @@ TEST_CASE(dialogue_project_build_checks_locale_and_media_bindings)
     bindings["voice"] = nlohmann::json::object();
     CHECK(writeText(assets / "dialogue/bindings.json", bindings.dump()));
     CHECK_FALSE(ProjectBuildPlanner::create(profile, cleanup.root.string()).valid());
+    bindings["voice"]["voice.welcome"] = "audio/welcome.aud";
+    CHECK(writeText(assets / "dialogue/bindings.json", bindings.dump()));
+    profileJsonValue["content"]["defaultStorage"] = "pak";
+    CHECK(writeText(cleanup.root / "BuildProfiles/test.aybuild.json", profileJsonValue.dump()));
+    const auto pakProfile = ProjectBuildProfile::load(
+        (cleanup.root / "BuildProfiles/test.aybuild.json").string());
+    const auto pakPlan = ProjectBuildPlanner::create(pakProfile, cleanup.root.string());
+    CHECK(pakPlan.valid());
+    if (!pakPlan.valid()) return;
+    const auto pakBuilt = ProjectBuildExecutor::execute(pakPlan);
+    CHECK_MSG(pakBuilt.ok, pakBuilt.error.c_str());
+    if (!pakBuilt.ok) return;
+    auto reader = ayt::storage::IPackageReader::open(
+        (cleanup.root / "out/package/test/Content/core.pak").string());
+    CHECK(reader != nullptr);
+    if (!reader) return;
+    const auto manifestBytes = reader->read("dialogue/bindings.json");
+    const auto decodedBindings = ayt::progression::dialogue::decodeBindingsJson(
+        std::string_view(reinterpret_cast<const char*>(manifestBytes.data()),
+                         manifestBytes.size()));
+    CHECK(decodedBindings.has_value());
+    if (decodedBindings)
+        CHECK(decodedBindings->voicePath("voice.welcome") == "audio/welcome.aud");
 }
 #endif
 #endif
