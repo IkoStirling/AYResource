@@ -2108,6 +2108,13 @@ TEST_CASE(sprite_clip_project_publication_pins_atlas_closure)
     const auto loose = resources.load<ayt::ay2d::SpriteClipResource2D>(looseKey);
     CHECK(loose != nullptr);
     CHECK(loose && loose->clips().clips.size() == 1);
+    std::vector<ayt::ay2d::SpriteClipPageLease2D> pageLeases;
+    std::string pageError;
+    CHECK(loose && ayt::ay2d::acquireSpriteClipPages2D(
+        resources, *loose, published.string(), pageLeases, pageError));
+    CHECK(pageLeases.size() == 1);
+    CHECK(pageLeases[0].texture && pageLeases[0].texture->getWidth() == 2);
+    pageLeases.clear();
     resources.unloadAll();
     resources.setDatabase({});
     ayt::resource::setAssetRoot({});
@@ -2145,6 +2152,12 @@ TEST_CASE(sprite_clip_project_publication_pins_atlas_closure)
     CHECK(loaded != nullptr);
     CHECK(loaded && loaded->clips().clips.size() == 1);
     CHECK(loaded && loaded->pagePaths().size() == 1);
+    CHECK(loaded && ayt::ay2d::acquireSpriteClipPages2D(
+        resources, *loaded, "", pageLeases, pageError));
+    CHECK(pageLeases.size() == 1);
+    CHECK(pageLeases[0].logicalPath == "animation_samples/hero/page.png");
+    CHECK(pageLeases[0].texture && pageLeases[0].texture->getHeight() == 2);
+    pageLeases.clear();
     resources.unloadAll();
     resources.setDatabase({});
     ayt::resource::setAssetRoot({});
