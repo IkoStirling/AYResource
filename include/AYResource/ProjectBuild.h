@@ -54,6 +54,9 @@ struct ProjectContentBuildProfile {
     /// Optional Assets-relative JSON mapping dialogue documents and referenced
     /// locale/voice/sequence keys to files selected by this build profile.
     std::string dialogueBindings;
+    /// Optional Assets-relative schema-1 source set for same-World regions.
+    /// Requires AYScene authoring integration; all references are Raw assets.
+    std::string regionBindings;
     ProjectAssetTransform defaultTransform = ProjectAssetTransform::Raw;
     ProjectAssetStorage defaultStorage = ProjectAssetStorage::Loose;
     std::vector<ProjectBuildRule> rules;

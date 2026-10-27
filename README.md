@@ -1,5 +1,23 @@
 # AYResource
 
+## 区域作者内容发布
+
+启用 AYScene 与资源作者构建后，ProjectBuild 将选中的 `.region.json` 作为
+Raw 文件发布。规划和执行时解析每份最多 8 MiB 的文档，拒绝重复区域 ID、
+跨区域重复对象 ID 和规划后源内容变更；暂存副本再核对内容身份。可在 Build
+Profile 的 `content.regionBindings` 指定 Assets 相对的发布清单：
+
+```json
+{"schema":1,"topology":[1,2],
+ "documents":["regions/one.region.json","regions/two.region.json"]}
+```
+
+清单最多 1 MiB，列出本次所有选中区域文档及拓扑区域 ID。ProjectBuild 复用
+AYScene 的集合预检，要求所有文档和引用资源都作为 Raw 普通文件进入同一次
+构建，拒绝缺失、排除、转换和路径逃逸。规划、执行、暂存核对源字节；Pak 与
+loose 都可承载发布后的原始文档。未配置清单时仅检查所选文档本身，不能证明
+资源引用闭包。运行时游戏仍负责读取字节、建立区域驻留租约及状态恢复。
+
 ## 对话作者 JSON 发布
 
 启用 AYProgression JSON 与资源作者构建后，ProjectBuild 识别所选的

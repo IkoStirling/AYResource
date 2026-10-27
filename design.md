@@ -1268,3 +1268,17 @@ path. ProjectBuild includes the converter contract in cache identity, rechecks
 the source before execution, and validates cached output path/type and bytes.
 CookShip validates final envelopes before replacing an existing package. Game
 state and generated room objects remain outside the asset pipeline.
+
+## Region authoring publication
+
+ProjectBuild optionally consumes `content.regionBindings` after AYScene is
+defined in the composition root. Ordinary AYResource runtime does not link
+AYScene. A selected `.region.json` is a Raw source: the planner and executor
+parse the bounded document and reject duplicate region and persistent object
+IDs. The explicit schema-1 bindings list topology IDs and all selected
+documents; `buildRegionContentManifest` validates cross-document identity and
+the existence of every referenced selected Raw asset. Bound source content
+hashes are checked at planning, execution and frozen staging. Missing or
+transformed references reject publication before the previous output is
+replaced. Without bindings, individual documents are validated but resource
+closure is not claimed. Runtime stream registration and leases remain Host work.

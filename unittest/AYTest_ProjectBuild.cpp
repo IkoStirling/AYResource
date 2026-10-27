@@ -14,6 +14,10 @@
 #include <AYLocalization.h>
 #endif
 #endif
+#if defined(AY_RESOURCE_HAS_REGIONS)
+#include <AYScene/RegionContentDocument.h>
+#include <AYScene/RegionPublicationBindings.h>
+#endif
 #if defined(AY_RESOURCE_HAS_SEQUENCE)
 #include <AYSequence/SequenceAssetIO.h>
 #include <AYSequence/SequenceCooked.h>
@@ -1137,6 +1141,94 @@ TEST_CASE(dialogue_project_build_checks_locale_and_media_bindings)
 #endif
 }
 #endif
+#endif
+
+#if defined(AY_RESOURCE_HAS_REGIONS)
+TEST_CASE(region_project_build_checks_cross_region_identity_and_package_closure)
+{
+    ProjectBuildCleanup cleanup{"ayproject_region_bindings_test"};
+    const auto assets = cleanup.root / "Assets";
+    CHECK(writeText(assets / "meshes/shared.asset", "mesh bytes"));
+    CHECK(writeText(assets / "collision/shared.asset", "collision bytes"));
+    const std::string firstId = "00000000000000000000000000000001";
+    const std::string secondId = "00000000000000000000000000000002";
+    auto makeRegion = [&](std::uint64_t region, const std::string& id) {
+        ayt::scene::RegionContent content;
+        content.region = region;
+        content.version = 1;
+        content.objects.push_back({id, "crate", {float(region), 0, 0},
+            "meshes/shared.asset", "collision/shared.asset"});
+        std::string error;
+        const auto encoded = ayt::scene::writeRegionContentDocument(content, error);
+        CHECK_MSG(encoded.has_value(), error.c_str());
+        return encoded.value_or(std::string{});
+    };
+    const auto north = makeRegion(1, firstId);
+    const auto south = makeRegion(2, secondId);
+    CHECK(writeText(assets / "regions/north.region.json", north));
+    CHECK(writeText(assets / "regions/south.region.json", south));
+    const nlohmann::json bindings{{"schema", 1},
+        {"topology", nlohmann::json::array({1, 2})},
+        {"documents", nlohmann::json::array({
+            "regions/north.region.json", "regions/south.region.json"})}};
+    CHECK(writeText(assets / "regions/bindings.json", bindings.dump()));
+    auto profileValue = nlohmann::json::parse(profileJson());
+    profileValue["content"]["regionBindings"] = "regions/bindings.json";
+    profileValue["content"]["defaultStorage"] = "pak";
+    CHECK(writeText(cleanup.root / "BuildProfiles/test.aybuild.json",
+        profileValue.dump()));
+    const auto profile = ProjectBuildProfile::load(
+        (cleanup.root / "BuildProfiles/test.aybuild.json").string());
+    const auto plan = ProjectBuildPlanner::create(profile, cleanup.root.string());
+    const auto description = plan.serialize();
+    CHECK_MSG(plan.valid(), description.c_str());
+    if (!plan.valid()) return;
+    const auto built = ProjectBuildExecutor::execute(plan);
+    CHECK_MSG(built.ok, built.error.c_str());
+    if (!built.ok) return;
+    auto reader = ayt::storage::IPackageReader::open(
+        (cleanup.root / "out/package/test/Content/core.pak").string());
+    CHECK(reader != nullptr);
+    if (!reader) return;
+    const auto boundBytes = reader->read("regions/bindings.json");
+    std::string error;
+    const auto decoded = ayt::scene::decodeRegionPublicationBindings(
+        std::string_view(reinterpret_cast<const char*>(boundBytes.data()),
+            boundBytes.size()), error);
+    CHECK_MSG(decoded.has_value(), error.c_str());
+    CHECK(decoded && decoded->documents.size() == 2);
+    const auto publishedNorth = reader->read("regions/north.region.json");
+    CHECK(std::string(publishedNorth.begin(), publishedNorth.end()) == north);
+    const auto manifest = nlohmann::json::parse(ayt::io::File::readAllText(
+        (cleanup.root / "out/package/test/build-manifest.json").string()));
+    bool closed = false;
+    for (const auto& file : manifest.at("files"))
+        if (file.at("path") == "regions/bindings.json")
+            closed = file.at("resourceDependencies").size() == 4u;
+    CHECK(closed);
+    CHECK(writeText(assets / "meshes/shared.asset", "changed mesh"));
+    const auto stale = ProjectBuildExecutor::execute(plan);
+    CHECK_FALSE(stale.ok);
+    CHECK(stale.error.find("changed after planning") != std::string::npos);
+    CHECK(writeText(assets / "meshes/shared.asset", "mesh bytes"));
+    CHECK(writeText(assets / "regions/south.region.json",
+        makeRegion(2, "00000000000000000000000000000003")));
+    CHECK_FALSE(ProjectBuildExecutor::execute(plan).ok);
+    CHECK(writeText(assets / "regions/south.region.json", south));
+    auto partialBindings = bindings;
+    partialBindings["documents"] = nlohmann::json::array({
+        "regions/north.region.json"});
+    CHECK(writeText(assets / "regions/bindings.json", partialBindings.dump()));
+    CHECK_FALSE(ProjectBuildPlanner::create(profile, cleanup.root.string()).valid());
+    CHECK(writeText(assets / "regions/bindings.json", bindings.dump()));
+    CHECK(writeText(assets / "regions/south.region.json",
+        makeRegion(2, firstId)));
+    CHECK_FALSE(ProjectBuildPlanner::create(profile, cleanup.root.string()).valid());
+    CHECK(writeText(assets / "regions/south.region.json", south));
+    std::error_code removeError;
+    fs::remove(assets / "collision/shared.asset", removeError);
+    CHECK_FALSE(ProjectBuildPlanner::create(profile, cleanup.root.string()).valid());
+}
 #endif
 
 TEST_CASE(existing_code_artifact_is_staged_and_published_for_editor_run)

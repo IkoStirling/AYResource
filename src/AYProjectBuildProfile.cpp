@@ -182,6 +182,7 @@ bool ProjectBuildProfile::validate(std::string* error) const
     if (!portableRelative(content.assetRoot)
         || !portableRelative(content.outputSubdirectory)
         || (!content.dialogueBindings.empty() && !portableRelative(content.dialogueBindings))
+        || (!content.regionBindings.empty() && !portableRelative(content.regionBindings))
         || !portableRelative(cache.root)
         || !portableRelative(package.output)
         || !portableRelative(run.workingDirectory)) {
@@ -284,6 +285,7 @@ bool ProjectBuildProfile::serialize(
                 {"assetRoot", content.assetRoot},
                 {"outputSubdirectory", content.outputSubdirectory},
                 {"dialogueBindings", content.dialogueBindings},
+                {"regionBindings", content.regionBindings},
                 {"defaultTransform", transformName(
                     content.defaultTransform)},
                 {"defaultStorage", storageName(content.defaultStorage)},
@@ -391,6 +393,8 @@ ProjectBuildProfile ProjectBuildProfile::load(
             "outputSubdirectory", std::string("Content"));
         result.content.dialogueBindings = content.value(
             "dialogueBindings", std::string{});
+        result.content.regionBindings = content.value(
+            "regionBindings", std::string{});
         std::string text = content.value("defaultTransform", std::string("raw"));
         if (!parseTransform(text, result.content.defaultTransform)) {
             if (error) *error = "Unknown content.defaultTransform: " + text;

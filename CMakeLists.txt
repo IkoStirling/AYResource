@@ -240,3 +240,20 @@ if(BUILD_TESTING AND AY_BUILD_RESOURCE_AUTHORING)
 endif()
 
 message(STATUS "AYResource v2.0.0 (runtime + optional import/cook targets) — see ${CMAKE_CURRENT_SOURCE_DIR}/design.md")
+
+# Called by the composition root after AYScene is defined. Region authoring is
+# optional and does not add an AYScene dependency to ordinary AYResource runtime.
+function(ay_resource_add_region_authoring_integration)
+    if(NOT TARGET AYProjectBuild OR NOT TARGET AYScene)
+        message(FATAL_ERROR "Region authoring requires AYProjectBuild and AYScene")
+    endif()
+    cmake_policy(PUSH)
+    cmake_policy(SET CMP0079 NEW)
+    target_link_libraries(AYProjectBuild PRIVATE AYScene)
+    target_compile_definitions(AYProjectBuild PRIVATE AY_RESOURCE_HAS_REGIONS=1)
+    if(TARGET AYResource_Tests)
+        target_link_libraries(AYResource_Tests PRIVATE AYScene)
+        target_compile_definitions(AYResource_Tests PRIVATE AY_RESOURCE_HAS_REGIONS=1)
+    endif()
+    cmake_policy(POP)
+endfunction()

@@ -25,6 +25,11 @@
 #include <AYProgression/DialogueBindings.h>
 #include <AYProgression/DialogueJson.h>
 #endif
+#if defined(AY_RESOURCE_HAS_REGIONS)
+#include <AYScene/RegionContentDocument.h>
+#include <AYScene/RegionContentManifest.h>
+#include <AYScene/RegionPublicationBindings.h>
+#endif
 #if defined(AY_RESOURCE_HAS_PARTICLE)
 #include <AYParticle/EffectPackaging.h>
 #endif
@@ -1034,6 +1039,167 @@ std::set<std::string> validateDialogueBindings(
     } catch (const std::exception& exception) {
         fail(manifestPath, exception.what());
     }
+#endif
+    return bound;
+}
+
+#if defined(AY_RESOURCE_HAS_REGIONS)
+bool readRegionBytes(const fs::path& path, std::size_t limit,
+                     std::string& output, std::string& error) {
+    std::error_code ec;
+    if (!fs::is_regular_file(fs::symlink_status(path, ec)) || ec) {
+        error = "Region source must be an ordinary file";
+        return false;
+    }
+    const auto size = fs::file_size(path, ec);
+    if (ec || size > limit) {
+        error = "Region source exceeds its byte limit";
+        return false;
+    }
+    std::ifstream input(path, std::ios::binary);
+    if (!input) { error = "Cannot open region source"; return false; }
+    output.assign(static_cast<std::size_t>(size), '\0');
+    if (!input.read(output.data(), static_cast<std::streamsize>(size)) ||
+        input.peek() != std::char_traits<char>::eof() || input.bad()) {
+        error = "Region source changed during read";
+        return false;
+    }
+    return true;
+}
+#endif
+
+void validateRegionContent(const ProjectBuildPlan& plan,
+                           std::vector<ProjectBuildDiagnostic>& diagnostics) {
+#if defined(AY_RESOURCE_HAS_REGIONS)
+    std::map<entity::SpaceRegionId, std::string> ids;
+    std::set<std::string> objects;
+#endif
+    for (const auto& asset : plan.assets) {
+        if (asset.transform == ProjectAssetTransform::Exclude ||
+            !asset_format::matchesPath(asset.sourcePath,
+                asset_format::Id::RegionDocument))
+            continue;
+        if (asset.transform != ProjectAssetTransform::Raw) {
+            diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Error,
+                asset.logicalPath, "Region documents require raw publication");
+            continue;
+        }
+#if defined(AY_RESOURCE_HAS_REGIONS)
+        std::string bytes, error;
+        if (!readRegionBytes(asset.sourcePath, 8u * 1024u * 1024u,
+                             bytes, error)) {
+            diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Error,
+                asset.logicalPath, error);
+            continue;
+        }
+        const auto content = scene::parseRegionContentDocument(bytes, error);
+        if (!content) {
+            diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Error,
+                asset.logicalPath, error);
+            continue;
+        }
+        if (const auto [it, inserted] = ids.emplace(content->region,
+                asset.logicalPath); !inserted)
+            diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Error,
+                asset.logicalPath, "Duplicate region ID in " + it->second);
+        for (const auto& object : content->objects)
+            if (!objects.insert(object.persistentId).second)
+                diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Error,
+                    asset.logicalPath, "Duplicate region object ID " +
+                        object.persistentId);
+#else
+        diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Error,
+            asset.logicalPath, "Region publication requires AYScene integration");
+#endif
+    }
+}
+
+std::set<std::string> validateRegionBindings(
+    const ProjectBuildPlan& plan,
+    std::vector<ProjectBuildDiagnostic>& diagnostics) {
+    std::set<std::string> bound;
+    const auto& manifestPath = plan.profile.content.regionBindings;
+    if (manifestPath.empty()) return bound;
+    const auto fail = [&](const std::string& path, const std::string& message) {
+        diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Error,
+            path, message);
+    };
+#if !defined(AY_RESOURCE_HAS_REGIONS)
+    fail(manifestPath, "Region bindings require AYScene integration");
+#else
+    std::map<std::string, const ProjectBuildAsset*> byPath;
+    for (const auto& asset : plan.assets)
+        byPath.emplace(asset.logicalPath, &asset);
+    const auto require = [&](const std::string& path,
+        bool raw, std::optional<asset_format::Id> format = std::nullopt)
+        -> const ProjectBuildAsset* {
+        if (!portableRelative(path) || path.find('\\') != std::string::npos) {
+            fail(manifestPath, "Non-portable region binding path: " + path);
+            return nullptr;
+        }
+        const auto it = byPath.find(path);
+        if (it == byPath.end() ||
+            it->second->transform == ProjectAssetTransform::Exclude ||
+            (raw && it->second->transform != ProjectAssetTransform::Raw)) {
+            fail(manifestPath, "Missing, excluded or transformed region binding: " + path);
+            return nullptr;
+        }
+        if (format && !asset_format::matchesPath(path, *format)) {
+            fail(manifestPath, "Wrong region binding format: " + path);
+            return nullptr;
+        }
+        std::error_code ec;
+        if (!fs::is_regular_file(fs::symlink_status(it->second->sourcePath, ec)) || ec) {
+            fail(manifestPath, "Region binding must be an ordinary file: " + path);
+            return nullptr;
+        }
+        bound.insert(path);
+        return it->second;
+    };
+    const auto* manifestAsset = require(manifestPath, true);
+    if (!manifestAsset) return bound;
+    std::string bytes, error;
+    if (!readRegionBytes(manifestAsset->sourcePath, 1'048'576, bytes, error)) {
+        fail(manifestPath, error);
+        return bound;
+    }
+    const auto bindings = scene::decodeRegionPublicationBindings(bytes, error);
+    if (!bindings) {
+        fail(manifestPath, error);
+        return bound;
+    }
+    std::vector<std::string> documentTexts;
+    documentTexts.reserve(bindings->documents.size());
+    std::set<std::string> documents;
+    for (const auto& path : bindings->documents) {
+        documents.insert(path);
+        const auto* asset = require(path, true, asset_format::Id::RegionDocument);
+        if (!asset) continue;
+        std::string document;
+        if (!readRegionBytes(asset->sourcePath, 8u * 1024u * 1024u,
+                             document, error)) {
+            fail(path, error);
+            continue;
+        }
+        documentTexts.push_back(std::move(document));
+    }
+    for (const auto& asset : plan.assets)
+        if (asset.transform != ProjectAssetTransform::Exclude &&
+            asset_format::matchesPath(asset.logicalPath,
+                asset_format::Id::RegionDocument) &&
+            !documents.contains(asset.logicalPath))
+            fail(asset.logicalPath, "Selected region document absent from bindings");
+    if (documentTexts.size() != bindings->documents.size()) return bound;
+    std::vector<std::string_view> views;
+    views.reserve(documentTexts.size());
+    for (const auto& document : documentTexts) views.push_back(document);
+    scene::RegionContentManifest manifest;
+    const auto exists = [&](std::string_view assetId) {
+        return require(std::string(assetId), true) != nullptr;
+    };
+    if (!scene::buildRegionContentManifest(views, bindings->topology,
+                                           exists, manifest, error))
+        fail(manifestPath, error);
 #endif
     return bound;
 }
@@ -2059,6 +2225,9 @@ ProjectBuildPlan ProjectBuildPlanner::create(
         if (asset.transform == ProjectAssetTransform::Raw &&
             asset_format::matchesPath(asset.sourcePath, asset_format::Id::DialogueDocument))
             asset.cacheKey = hashFiles({asset.sourcePath}, "dialogue-source-v1");
+        if (asset.transform == ProjectAssetTransform::Raw &&
+            asset_format::matchesPath(asset.sourcePath, asset_format::Id::RegionDocument))
+            asset.cacheKey = hashFiles({asset.sourcePath}, "region-source-v1");
         if(ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::PhoskiaShader)
             && asset.transform!=ProjectAssetTransform::Exclude
             && (asset.transform!=ProjectAssetTransform::Raw || asset.storage!=ProjectAssetStorage::Loose)) {
@@ -2084,11 +2253,15 @@ ProjectBuildPlan ProjectBuildPlanner::create(
 #endif
     validateDialogueContent(plan,plan.diagnostics);
     const auto dialogueBound = validateDialogueBindings(plan, plan.diagnostics);
+    validateRegionContent(plan,plan.diagnostics);
+    const auto regionBound = validateRegionBindings(plan, plan.diagnostics);
     for (auto& asset : plan.assets)
         if (asset.transform == ProjectAssetTransform::Raw &&
-            dialogueBound.contains(asset.logicalPath) &&
-            !asset_format::matchesPath(asset.sourcePath, asset_format::Id::DialogueDocument))
-            asset.cacheKey = hashFiles({asset.sourcePath}, "dialogue-bound-v1");
+            (dialogueBound.contains(asset.logicalPath) ||
+             regionBound.contains(asset.logicalPath)) &&
+            !asset_format::matchesPath(asset.sourcePath, asset_format::Id::DialogueDocument) &&
+            !asset_format::matchesPath(asset.sourcePath, asset_format::Id::RegionDocument))
+            asset.cacheKey = hashFiles({asset.sourcePath}, "content-bound-v1");
     validateAudioContent(plan,plan.diagnostics);
     validateActorContent(plan, plan.diagnostics);
     detail::discoverProjectLogia(plan);
@@ -2139,14 +2312,21 @@ ProjectBuildResult ProjectBuildExecutor::execute(
     std::vector<ProjectBuildDiagnostic> releaseDiagnostics;
     validateDialogueContent(plan, releaseDiagnostics);
     const auto dialogueBound = validateDialogueBindings(plan, releaseDiagnostics);
+    validateRegionContent(plan, releaseDiagnostics);
+    const auto regionBound = validateRegionBindings(plan, releaseDiagnostics);
     for (const auto& asset : plan.assets)
         if (asset.transform == ProjectAssetTransform::Raw &&
             (dialogueBound.contains(asset.logicalPath) ||
-             asset_format::matchesPath(asset.sourcePath, asset_format::Id::DialogueDocument))) {
+             regionBound.contains(asset.logicalPath) ||
+             asset_format::matchesPath(asset.sourcePath, asset_format::Id::DialogueDocument) ||
+             asset_format::matchesPath(asset.sourcePath, asset_format::Id::RegionDocument))) {
             const auto discriminator = asset_format::matchesPath(asset.sourcePath,
-                asset_format::Id::DialogueDocument) ? "dialogue-source-v1" : "dialogue-bound-v1";
+                asset_format::Id::DialogueDocument) ? "dialogue-source-v1" :
+                asset_format::matchesPath(asset.sourcePath,
+                    asset_format::Id::RegionDocument) ? "region-source-v1" :
+                    "content-bound-v1";
             if (asset.cacheKey != hashFiles({asset.sourcePath}, discriminator)) {
-                result.error = "Dialogue source changed after planning: " + asset.logicalPath;
+                result.error = "Bound content changed after planning: " + asset.logicalPath;
                 return result;
             }
         }
@@ -2376,19 +2556,33 @@ ProjectBuildResult ProjectBuildExecutor::execute(
                 ResourceRegistry::getTypeFromPath(asset.logicalPath), {},
                 true, asset.logicalPath, {}});
             if (!asset.cacheKey.empty()) {
-                const auto frozen = staging / "dialogue-sources" / fs::u8path(asset.logicalPath);
+                const auto frozen = staging / "bound-sources" / fs::u8path(asset.logicalPath);
                 if (!copyFile(asset.sourcePath, frozen, result.error)) return result;
                 const auto dialogue = asset_format::matchesPath(asset.sourcePath,
                     asset_format::Id::DialogueDocument);
+                const auto region = asset_format::matchesPath(asset.sourcePath,
+                    asset_format::Id::RegionDocument);
                 if (asset.cacheKey != hashFiles({frozen},
-                        dialogue ? "dialogue-source-v1" : "dialogue-bound-v1")) {
-                    result.error = "Dialogue source changed after planning: " + asset.logicalPath;
+                        dialogue ? "dialogue-source-v1" :
+                            region ? "region-source-v1" : "content-bound-v1")) {
+                    result.error = "Bound content changed after planning: " + asset.logicalPath;
                     return result;
                 }
 #if defined(AY_RESOURCE_HAS_DIALOGUE)
                 if (dialogue) {
                     progression::dialogue::Document verified;
                     if (!readDialogueDocument(frozen, verified, result.error)) return result;
+                }
+#endif
+#if defined(AY_RESOURCE_HAS_REGIONS)
+                if (region) {
+                    std::string frozenBytes, error;
+                    if (!readRegionBytes(frozen, 8u * 1024u * 1024u,
+                                         frozenBytes, error) ||
+                        !scene::parseRegionContentDocument(frozenBytes, error)) {
+                        result.error = "Invalid frozen region document: " + error;
+                        return result;
+                    }
                 }
 #endif
                 staged.back().diskPath = frozen;
@@ -2401,6 +2595,12 @@ ProjectBuildResult ProjectBuildExecutor::execute(
             staged.back().declaredResources=asset.resourceDependencies;
             if (asset.logicalPath == plan.profile.content.dialogueBindings)
                 for (const auto& dependency : dialogueBound)
+                    if (dependency != asset.logicalPath) {
+                        staged.back().dependencies.push_back({asset.logicalPath, dependency});
+                        staged.back().declaredResources.push_back(dependency);
+                    }
+            if (asset.logicalPath == plan.profile.content.regionBindings)
+                for (const auto& dependency : regionBound)
                     if (dependency != asset.logicalPath) {
                         staged.back().dependencies.push_back({asset.logicalPath, dependency});
                         staged.back().declaredResources.push_back(dependency);
