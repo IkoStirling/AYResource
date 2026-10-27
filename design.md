@@ -1276,7 +1276,10 @@ defined in the composition root. Ordinary AYResource runtime does not link
 AYScene. A selected `.region.json` is a Raw source: the planner and executor
 parse the bounded document and reject duplicate region and persistent object
 IDs. The explicit schema-1 bindings list topology IDs and all selected
-documents; `buildRegionContentManifest` validates cross-document identity and
+documents; schema 2 additionally pins each document's region, version and
+rc1/rc2 signature, validated against actual bytes before publication. Runtime
+can use these identities for on-demand Pak binding without eagerly parsing
+every document. `buildRegionContentManifest` validates cross-document identity and
 the existence of every referenced selected Raw asset. Bound source content
 hashes are checked at planning, execution and frozen staging. Missing or
 transformed references reject publication before the previous output is

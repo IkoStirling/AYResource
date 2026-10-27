@@ -1171,7 +1171,8 @@ std::set<std::string> validateRegionBindings(
     std::vector<std::string> documentTexts;
     documentTexts.reserve(bindings->documents.size());
     std::set<std::string> documents;
-    for (const auto& path : bindings->documents) {
+    for (std::size_t index = 0; index < bindings->documents.size(); ++index) {
+        const auto& path = bindings->documents[index];
         documents.insert(path);
         const auto* asset = require(path, true, asset_format::Id::RegionDocument);
         if (!asset) continue;
@@ -1180,6 +1181,20 @@ std::set<std::string> validateRegionBindings(
                              document, error)) {
             fail(path, error);
             continue;
+        }
+        if (bindings->schema == 2) {
+            const auto content = scene::parseRegionContentDocument(document, error);
+            if (!content) {
+                fail(path, error);
+                continue;
+            }
+            const auto& published = bindings->published[index];
+            if (content->region != published.region ||
+                content->version != published.version ||
+                scene::regionContentSignature(*content) != published.signature) {
+                fail(path, "Published region identity differs from document");
+                continue;
+            }
         }
         documentTexts.push_back(std::move(document));
     }

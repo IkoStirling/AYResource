@@ -17,6 +17,8 @@ AYScene 的集合预检，要求所有文档和引用资源都作为 Raw 普通�
 构建，拒绝缺失、排除、转换和路径逃逸。规划、执行、暂存核对源字节；Pak 与
 loose 都可承载发布后的原始文档。未配置清单时仅检查所选文档本身，不能证明
 资源引用闭包。运行时游戏仍负责读取字节、建立区域驻留租约及状态恢复。
+schema 2 可将每项文档改成 `{path,region,version,signature}` 对象；发布前
+逐项核对实际区域文档身份，运行时据此按需绑定 Pak 区域。schema 1 保持兼容。
 包内区域记录以 `RegionContent` 类型索引；游戏链接
 `AYScene::RegionResources` 并注册 loader 后，可经 ResourceManager 从
 `resources.db` 和 Pak 直接加载 `RegionContentResource`。

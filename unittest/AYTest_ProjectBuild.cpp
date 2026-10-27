@@ -1169,12 +1169,21 @@ TEST_CASE(region_project_build_checks_cross_region_identity_and_package_closure)
     };
     const auto north = makeRegion(1, firstId);
     const auto south = makeRegion(2, secondId);
+    std::string signatureError;
+    const auto northContent = ayt::scene::parseRegionContentDocument(north, signatureError);
+    const auto southContent = ayt::scene::parseRegionContentDocument(south, signatureError);
+    CHECK(northContent.has_value());
+    CHECK(southContent.has_value());
+    if (!northContent || !southContent) return;
     CHECK(writeText(assets / "regions/north.region.json", north));
     CHECK(writeText(assets / "regions/south.region.json", south));
-    const nlohmann::json bindings{{"schema", 1},
+    const nlohmann::json bindings{{"schema", 2},
         {"topology", nlohmann::json::array({1, 2})},
         {"documents", nlohmann::json::array({
-            "regions/north.region.json", "regions/south.region.json"})}};
+            {{"path", "regions/north.region.json"}, {"region", 1}, {"version", 1},
+             {"signature", ayt::scene::regionContentSignature(*northContent)}},
+            {{"path", "regions/south.region.json"}, {"region", 2}, {"version", 1},
+             {"signature", ayt::scene::regionContentSignature(*southContent)}}})}};
     CHECK(writeText(assets / "regions/bindings.json", bindings.dump()));
     auto profileValue = nlohmann::json::parse(profileJson());
     profileValue["content"]["regionBindings"] = "regions/bindings.json";
@@ -1201,6 +1210,9 @@ TEST_CASE(region_project_build_checks_cross_region_identity_and_package_closure)
             boundBytes.size()), error);
     CHECK_MSG(decoded.has_value(), error.c_str());
     CHECK(decoded && decoded->documents.size() == 2);
+    CHECK(decoded && decoded->schema == 2 && decoded->published.size() == 2);
+    CHECK(decoded && decoded->published.front().signature ==
+        ayt::scene::regionContentSignature(*northContent));
     const auto publishedNorth = reader->read("regions/north.region.json");
     CHECK(std::string(publishedNorth.begin(), publishedNorth.end()) == north);
     const auto manifest = nlohmann::json::parse(ayt::io::File::readAllText(
@@ -1240,8 +1252,13 @@ TEST_CASE(region_project_build_checks_cross_region_identity_and_package_closure)
     CHECK(writeText(assets / "regions/south.region.json", south));
     auto partialBindings = bindings;
     partialBindings["documents"] = nlohmann::json::array({
-        "regions/north.region.json"});
+        bindings["documents"][0]});
     CHECK(writeText(assets / "regions/bindings.json", partialBindings.dump()));
+    CHECK_FALSE(ProjectBuildPlanner::create(profile, cleanup.root.string()).valid());
+    CHECK(writeText(assets / "regions/bindings.json", bindings.dump()));
+    auto wrongIdentity = bindings;
+    wrongIdentity["documents"][1]["signature"] = "rc1:0000000000000000";
+    CHECK(writeText(assets / "regions/bindings.json", wrongIdentity.dump()));
     CHECK_FALSE(ProjectBuildPlanner::create(profile, cleanup.root.string()).valid());
     CHECK(writeText(assets / "regions/bindings.json", bindings.dump()));
     CHECK(writeText(assets / "regions/south.region.json",
