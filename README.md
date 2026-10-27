@@ -28,6 +28,9 @@ Voice 指向可解码的 `.aud`（单件上限 128 MiB）；Sequence 指向已�
 不替游戏决定具体台词、语音或镜头资源。
 `AYProgression::Json` 提供同一映射的 `decodeBindingsJson` 与 cue 路径查询；
 游戏可读取随包发布的 JSON 字节后直接复用该解析器。
+包内语言 JSON 还可交给 `Localization::loadFromJson`；ProjectBuild 用例以
+Pak 里的文档、绑定、语言联合验证文本显示与读档不重播媒体。宿主仍负责选择
+语言以及将 Voice/Sequence 路径交给媒体播放器。
 
 ## 可选场景序列发布（2026-10-26）
 

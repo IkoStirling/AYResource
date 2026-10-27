@@ -23,6 +23,8 @@ Voice 绑定须是可解码的 `.aud`（至多 128 MiB），Sequence 绑定须�
 发布 manifest 和资源数据库从映射文件记录指向所有已核对文件的依赖边，
 便于审计包内闭包；ProjectBuild 与运行时可共用 AYProgression 的纯值
 `decodeBindingsJson`，但游戏仍需安装文件读取与内容键解析器。
+语言目录可以直接通过 `Localization::loadFromJson` 从 Pak 字节安装；包内
+读取回归同时验证 `PresentationController` 的首次展示与恢复展示规则。
 
 ## Sequence 作者资源发布边界（2026-10-26）
 

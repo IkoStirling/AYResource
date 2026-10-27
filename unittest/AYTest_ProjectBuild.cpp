@@ -8,6 +8,11 @@
 #include <AYStorage/IPackageReader.h>
 #if defined(AY_RESOURCE_HAS_DIALOGUE)
 #include <AYProgression/DialogueBindings.h>
+#include <AYProgression/DialogueJson.h>
+#include <AYProgression/DialoguePresentation.h>
+#if defined(AY_RESOURCE_TEST_HAS_LOCALIZATION)
+#include <AYLocalization.h>
+#endif
 #endif
 #if defined(AY_RESOURCE_HAS_SEQUENCE)
 #include <AYSequence/SequenceAssetIO.h>
@@ -1088,6 +1093,48 @@ TEST_CASE(dialogue_project_build_checks_locale_and_media_bindings)
     CHECK(decodedBindings.has_value());
     if (decodedBindings)
         CHECK(decodedBindings->voicePath("voice.welcome") == "audio/welcome.aud");
+#if defined(AY_RESOURCE_TEST_HAS_LOCALIZATION)
+    const auto documentBytes = reader->read("dialogue/intro.dialogue.json");
+    const auto parsedDocument = ayt::progression::dialogue::decodeDocumentJson(
+        std::string_view(reinterpret_cast<const char*>(documentBytes.data()),
+                         documentBytes.size()));
+    CHECK(parsedDocument.has_value());
+    const auto localeBytes = reader->read("locales/en-US.json");
+    ayt::localization::Localization locale;
+    CHECK(locale.loadFromJson(std::string_view(
+        reinterpret_cast<const char*>(localeBytes.data()), localeBytes.size())));
+    const auto zhBytes = reader->read("locales/zh-CN.json");
+    CHECK(locale.loadFromJson(std::string_view(
+        reinterpret_cast<const char*>(zhBytes.data()), zhBytes.size())));
+    if (!decodedBindings || !parsedDocument) return;
+    ayt::progression::dialogue::Session session;
+    CHECK(session.install(*parsedDocument, "story.intro/player").has_value());
+    std::string displayed;
+    std::string resolvedVoice;
+    bool startedMedia = false;
+    auto present = [&](const ayt::progression::dialogue::Presentation& frame) {
+        displayed = locale.get(frame.textKey);
+        resolvedVoice = decodedBindings->voicePath(frame.voiceCueKey);
+        startedMedia = frame.startMedia;
+        return true;
+    };
+    ayt::progression::dialogue::PresentationController presenter;
+    CHECK(presenter.begin(session, present).has_value());
+    CHECK(displayed == "Welcome");
+    CHECK(resolvedVoice == "audio/welcome.aud");
+    CHECK(startedMedia);
+    ayt::progression::dialogue::Session restored;
+    CHECK(restored.install(*parsedDocument, "story.intro/player").has_value());
+    CHECK(restored.restore(session.snapshot()).has_value());
+    ayt::progression::dialogue::PresentationController resumed;
+    CHECK(resumed.restored(restored, present).has_value());
+    CHECK(displayed == "Welcome");
+    CHECK_FALSE(startedMedia);
+    locale.setLanguage("zh-CN");
+    CHECK(locale.get("dialogue.welcome") == "欢迎");
+    locale.setLanguage("en-US");
+    CHECK(locale.get("dialogue.welcome") == "Welcome");
+#endif
 }
 #endif
 #endif
