@@ -7,7 +7,25 @@
 对话图校验，并拒绝同一项目中重复的文档 ID；执行时重验原始内容，暂存前冻结
 一份副本并与规划时 SHA-256 身份核对，失败保留旧包。可以按项目规则选择 loose
 或 Pak 存储；运行时读取仍由游戏负责。这一步只保证文档结构与原始字节一致，
-不自动解析语言、语音和 Sequence 键的文件闭包。
+未提供项目映射时不解析语言、语音和 Sequence 键的文件闭包。
+
+项目可在 Build Profile 的 `content.dialogueBindings` 填一个 Assets 相对 JSON
+路径，显式开启跨文件发布门禁。例如：
+
+```json
+{"schema":1,
+ "documents":["dialogue/intro.dialogue.json"],
+ "locales":["locales/en-US.json","locales/zh-CN.json"],
+ "voice":{"voice.intro":"audio/intro.aud"},
+ "sequence":{"sequence.intro":"scenes/intro.sqc"}}
+```
+
+映射文件与全部引用文件必须被本次构建选中为 Raw 普通文件；所有选中的对话文档
+必须列出。每种语言文件须提供全部说话人、正文与选项键，不用回退语言补缺。
+Voice 指向可解码的 `.aud`（单件上限 128 MiB）；Sequence 指向已编译且依赖闭包
+有效的 `.sqc`，需要 AYSequence 作者构建。规划、执行和暂存使用同一内容身份；
+缺键、排除、错误类型或规划后变更均拒绝发布。映射是项目显式提供的键到文件关系，
+不替游戏决定具体台词、语音或镜头资源。
 
 ## 可选场景序列发布（2026-10-26）
 

@@ -992,6 +992,78 @@ TEST_CASE(dialogue_project_build_preserves_raw_bytes_in_pak)
     const auto bytes = reader->read("dialogue/intro.dialogue.json");
     CHECK(std::string(bytes.begin(), bytes.end()) == authored);
 }
+#if defined(AY_RESOURCE_HAS_SEQUENCE)
+TEST_CASE(dialogue_project_build_checks_locale_and_media_bindings)
+{
+    ProjectBuildCleanup cleanup{"ayproject_dialogue_bindings_test"};
+    const auto assets = cleanup.root / "Assets";
+    const std::string authored = R"({"schema":1,"id":"story.intro","contentVersion":1,"startNode":"first","nodes":[{"id":"first","speakerKey":"npc.greeter","textKey":"dialogue.welcome","voiceCueKey":"voice.welcome","sequenceCueKey":"sequence.intro","choices":[]}]})";
+    CHECK(writeText(assets / "dialogue/intro.dialogue.json", authored));
+    const auto en = nlohmann::json{{"_metadata", {{"language", "en-US"}}},
+        {"npc", {{"greeter", "Greeter"}}}, {"dialogue", {{"welcome", "Welcome"}}}};
+    const auto zh = nlohmann::json{{"_metadata", {{"language", "zh-CN"}}},
+        {"npc", {{"greeter", "向导"}}}, {"dialogue", {{"welcome", "欢迎"}}}};
+    CHECK(writeText(assets / "locales/en-US.json", en.dump()));
+    CHECK(writeText(assets / "locales/zh-CN.json", zh.dump()));
+    Audio voice;
+    voice.createSilence(32);
+    std::vector<std::uint8_t> audioBytes;
+    CHECK(voice.saveToBinary(audioBytes));
+    CHECK(writeBytes(assets / "audio/welcome.aud", audioBytes));
+    ayt::sequence::Sequence sequence;
+    sequence.id = "intro";
+    sequence.duration = 2;
+    std::vector<std::uint8_t> cooked;
+    ayt::sequence::Diagnostic sequenceError;
+    CHECK(ayt::sequence::encodeCookedSequence(sequence, assets, cooked, &sequenceError));
+    CHECK(writeBytes(assets / "scenes/intro.sqc", cooked));
+    auto bindings = nlohmann::json{
+        {"schema", 1},
+        {"documents", nlohmann::json::array({"dialogue/intro.dialogue.json"})},
+        {"locales", nlohmann::json::array({"locales/en-US.json", "locales/zh-CN.json"})},
+        {"voice", {{"voice.welcome", "audio/welcome.aud"}}},
+        {"sequence", {{"sequence.intro", "scenes/intro.sqc"}}},
+    };
+    CHECK(writeText(assets / "dialogue/bindings.json", bindings.dump()));
+    auto profileJsonValue = nlohmann::json::parse(profileJson());
+    profileJsonValue["content"]["dialogueBindings"] = "dialogue/bindings.json";
+    CHECK(writeText(cleanup.root / "BuildProfiles/test.aybuild.json", profileJsonValue.dump()));
+    const auto profile = ProjectBuildProfile::load(
+        (cleanup.root / "BuildProfiles/test.aybuild.json").string());
+    const auto plan = ProjectBuildPlanner::create(profile, cleanup.root.string());
+    const auto planDescription = plan.serialize();
+    CHECK_MSG(plan.valid(), planDescription.c_str());
+    if (!plan.valid()) return;
+    const auto built = ProjectBuildExecutor::execute(plan);
+    CHECK_MSG(built.ok, built.error.c_str());
+    if (!built.ok) return;
+    const auto published = cleanup.root / "out/package/test/Content";
+    CHECK(fs::is_regular_file(published / "dialogue/intro.dialogue.json"));
+    CHECK(fs::is_regular_file(published / "locales/en-US.json"));
+    CHECK(fs::is_regular_file(published / "audio/welcome.aud"));
+    CHECK(fs::is_regular_file(published / "scenes/intro.sqc"));
+    const auto packageManifest = nlohmann::json::parse(ayt::io::File::readAllText(
+        (cleanup.root / "out/package/test/build-manifest.json").string()));
+    bool recordedClosure = false;
+    for (const auto& file : packageManifest.at("files"))
+        if (file.at("path") == "dialogue/bindings.json")
+            recordedClosure = file.at("resourceDependencies").size() == 5u;
+    CHECK(recordedClosure);
+    CHECK(writeText(assets / "locales/zh-CN.json", zh.dump() + "\n"));
+    const auto stale = ProjectBuildExecutor::execute(plan);
+    CHECK_FALSE(stale.ok);
+    CHECK(stale.error.find("changed after planning") != std::string::npos);
+    CHECK(writeText(assets / "locales/zh-CN.json", zh.dump()));
+    auto incomplete = zh;
+    incomplete["dialogue"] = nlohmann::json::object();
+    CHECK(writeText(assets / "locales/zh-CN.json", incomplete.dump()));
+    CHECK_FALSE(ProjectBuildPlanner::create(profile, cleanup.root.string()).valid());
+    CHECK(writeText(assets / "locales/zh-CN.json", zh.dump()));
+    bindings["voice"] = nlohmann::json::object();
+    CHECK(writeText(assets / "dialogue/bindings.json", bindings.dump()));
+    CHECK_FALSE(ProjectBuildPlanner::create(profile, cleanup.root.string()).valid());
+}
+#endif
 #endif
 
 TEST_CASE(existing_code_artifact_is_staged_and_published_for_editor_run)

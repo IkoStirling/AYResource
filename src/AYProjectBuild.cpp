@@ -1,5 +1,6 @@
 #include "AYResource/ProjectBuild.h"
 #include <AYResource/Converter/AudioContentConverter.h>
+#include <AYResource/assetsImpl/Audio.h>
 #include <AYResource/AudioContent.h>
 #include "ProjectPublishRetry.h"
 #include "ProjectShaderProduction.h"
@@ -54,6 +55,7 @@
 #include <regex>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string_view>
 #include <system_error>
 #include <unordered_map>
@@ -764,6 +766,7 @@ std::string hashFiles(const std::vector<fs::path>& paths,
 bool readDialogueDocument(const fs::path& path,
                           progression::dialogue::Document& document,
                           std::string& error) {
+    error.clear();
     std::error_code ec;
     if (!fs::is_regular_file(fs::symlink_status(path, ec)) || ec) {
         error = "Dialogue document must be an ordinary file";
@@ -822,6 +825,218 @@ void validateDialogueContent(const ProjectBuildPlan& plan,
                    asset.logicalPath, "Dialogue publication requires AYProgression::Json");
 #endif
     }
+}
+
+#if defined(AY_RESOURCE_HAS_DIALOGUE)
+bool readDialogueJson(const fs::path& path, Json& output, std::string& error) {
+    error.clear();
+    std::error_code ec;
+    if (!fs::is_regular_file(fs::symlink_status(path, ec)) || ec) {
+        error = "Dialogue binding file must be an ordinary file";
+        return false;
+    }
+    const auto size = fs::file_size(path, ec);
+    if (ec || size > 1'048'576) {
+        error = "Dialogue binding file exceeds 1 MiB";
+        return false;
+    }
+    std::ifstream input(path, std::ios::binary);
+    if (!input) { error = "Cannot open dialogue binding file"; return false; }
+    std::string bytes(static_cast<std::size_t>(size), '\0');
+    if (!input.read(bytes.data(), static_cast<std::streamsize>(size))
+        || input.peek() != std::char_traits<char>::eof() || input.bad()) {
+        error = "Dialogue binding file changed during read";
+        return false;
+    }
+    output = Json::parse(bytes, nullptr, false);
+    if (!output.is_object()) { error = "Invalid dialogue binding JSON"; return false; }
+    return true;
+}
+
+void collectLocaleText(const Json& value, const std::string& prefix,
+                       std::set<std::string>& keys) {
+    if (value.is_object()) {
+        for (auto it = value.begin(); it != value.end(); ++it) {
+            if (prefix.empty() && it.key() == "_metadata") continue;
+            collectLocaleText(it.value(), prefix.empty() ? it.key()
+                : prefix + "." + it.key(), keys);
+        }
+    } else if (value.is_array()) {
+        for (std::size_t i = 0; i < value.size(); ++i)
+            if (value[i].is_string() && !value[i].get_ref<const std::string&>().empty())
+                keys.insert(prefix + "." + std::to_string(i));
+    } else if (value.is_string() && !value.get_ref<const std::string&>().empty()) {
+        keys.insert(prefix);
+    }
+}
+
+std::string normalizeDialogueLanguage(std::string language) {
+    std::replace(language.begin(), language.end(), '_', '-');
+    if (const auto dot = language.find('.'); dot != std::string::npos) language.erase(dot);
+    if (const auto at = language.find('@'); at != std::string::npos) language.erase(at);
+    bool first = true;
+    std::size_t begin = 0;
+    while (begin <= language.size()) {
+        const auto end = language.find('-', begin);
+        const auto count = end == std::string::npos ? language.size() - begin : end - begin;
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto ch = static_cast<unsigned char>(language[begin + i]);
+            language[begin + i] = static_cast<char>(first ? std::tolower(ch)
+                                                        : count == 2 ? std::toupper(ch)
+                                                                     : std::tolower(ch));
+        }
+        first = false;
+        if (end == std::string::npos) break;
+        begin = end + 1;
+    }
+    return language;
+}
+#endif
+
+std::set<std::string> validateDialogueBindings(
+    const ProjectBuildPlan& plan, std::vector<ProjectBuildDiagnostic>& diagnostics) {
+    std::set<std::string> bound;
+    const std::string& manifestPath = plan.profile.content.dialogueBindings;
+    if (manifestPath.empty()) return bound;
+    const auto fail = [&](const std::string& path, const std::string& message) {
+        diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Error, path, message);
+    };
+#if !defined(AY_RESOURCE_HAS_DIALOGUE)
+    fail(manifestPath, "Dialogue bindings require AYProgression::Json");
+#else
+    std::map<std::string, const ProjectBuildAsset*> byPath;
+    for (const auto& asset : plan.assets) byPath.emplace(asset.logicalPath, &asset);
+    const auto require = [&](const std::string& path,
+                             std::optional<asset_format::Id> format = std::nullopt)
+                             -> const ProjectBuildAsset* {
+        if (!portableRelative(path) || path.find('\\') != std::string::npos) {
+            fail(manifestPath, "Non-portable dialogue binding path: " + path);
+            return nullptr;
+        }
+        const auto found = byPath.find(path);
+        if (found == byPath.end() || found->second->transform != ProjectAssetTransform::Raw) {
+            fail(manifestPath, "Dialogue binding is missing, excluded or transformed: " + path);
+            return nullptr;
+        }
+        if (format && !asset_format::matchesPath(path, *format)) {
+            fail(manifestPath, "Dialogue binding has wrong resource format: " + path);
+            return nullptr;
+        }
+        std::error_code statusError;
+        if (!fs::is_regular_file(fs::symlink_status(found->second->sourcePath,
+                statusError)) || statusError) {
+            fail(manifestPath, "Dialogue binding must be an ordinary file: " + path);
+            return nullptr;
+        }
+        bound.insert(path);
+        return found->second;
+    };
+    const auto manifestAsset = require(manifestPath);
+    if (!manifestAsset) return bound;
+    Json manifest;
+    std::string error;
+    if (!readDialogueJson(manifestAsset->sourcePath, manifest, error)) {
+        fail(manifestPath, error);
+        return bound;
+    }
+    try {
+        if (manifest.at("schema") != 1 || !manifest.at("documents").is_array()
+            || !manifest.at("locales").is_array() || !manifest.at("voice").is_object()
+            || !manifest.at("sequence").is_object())
+            throw std::runtime_error("Invalid dialogue bindings schema");
+        const auto& documents = manifest.at("documents");
+        const auto& locales = manifest.at("locales");
+        const auto& voice = manifest.at("voice");
+        const auto& sequence = manifest.at("sequence");
+        if (documents.empty() || documents.size() > 1024 || locales.empty()
+            || locales.size() > 64 || voice.size() > 4096 || sequence.size() > 4096)
+            throw std::runtime_error("Dialogue bindings exceed document, locale or cue limits");
+        std::set<std::string> documentPaths, textKeys, voiceKeys, sequenceKeys;
+        for (const auto& value : documents) {
+            const std::string path = value.get<std::string>();
+            if (!documentPaths.insert(path).second)
+                throw std::runtime_error("Duplicate dialogue document path: " + path);
+            const auto* asset = require(path, asset_format::Id::DialogueDocument);
+            if (!asset) continue;
+            progression::dialogue::Document document;
+            if (!readDialogueDocument(asset->sourcePath, document, error)) {
+                fail(path, error);
+                continue;
+            }
+            for (const auto& node : document.nodes) {
+                if (!node.speakerKey.empty()) textKeys.insert(node.speakerKey);
+                textKeys.insert(node.textKey);
+                if (!node.voiceCueKey.empty()) voiceKeys.insert(node.voiceCueKey);
+                if (!node.sequenceCueKey.empty()) sequenceKeys.insert(node.sequenceCueKey);
+                for (const auto& choice : node.choices) textKeys.insert(choice.textKey);
+            }
+        }
+        for (const auto& asset : plan.assets)
+            if (asset.transform != ProjectAssetTransform::Exclude &&
+                asset_format::matchesPath(asset.logicalPath,
+                    asset_format::Id::DialogueDocument) &&
+                !documentPaths.contains(asset.logicalPath))
+                fail(asset.logicalPath, "Selected dialogue document is absent from bindings");
+        std::set<std::string> languages;
+        for (const auto& value : locales) {
+            const std::string path = value.get<std::string>();
+            const auto* asset = require(path);
+            if (!asset) continue;
+            Json locale;
+            if (!readDialogueJson(asset->sourcePath, locale, error) ||
+                !locale.contains("_metadata") || !locale["_metadata"].is_object() ||
+                !locale["_metadata"].contains("language") ||
+                !locale["_metadata"]["language"].is_string()) {
+                fail(path, error.empty() ? "Invalid locale language metadata" : error);
+                continue;
+            }
+            const auto language = normalizeDialogueLanguage(
+                locale["_metadata"]["language"].get<std::string>());
+            if (language.empty() || !languages.insert(language).second) {
+                fail(path, "Empty or duplicate locale language");
+                continue;
+            }
+            std::set<std::string> available;
+            collectLocaleText(locale, "", available);
+            for (const auto& key : textKeys)
+                if (!available.contains(key)) fail(path, "Missing dialogue text key: " + key);
+        }
+        const auto checkMedia = [&](const Json& mappings,
+                                    const std::set<std::string>& referenced,
+                                    asset_format::Id format,
+                                    const char* kind) {
+            for (const auto& key : referenced)
+                if (!mappings.contains(key)) fail(manifestPath,
+                    std::string("Missing ") + kind + " binding: " + key);
+            for (auto it = mappings.begin(); it != mappings.end(); ++it) {
+                const std::string path = it.value().get<std::string>();
+                const auto* asset = require(path, format);
+                if (!asset) continue;
+                if (format == asset_format::Id::Audio) {
+                    std::error_code sizeError;
+                    const auto bytes = fs::file_size(asset->sourcePath, sizeError);
+                    if (sizeError || bytes > 128u * 1024u * 1024u) {
+                        fail(path, "Bound voice audio exceeds 128 MiB");
+                        continue;
+                    }
+                    Audio audio;
+                    if (!audio.load(asset->sourcePath))
+                        fail(path, "Invalid bound voice audio");
+                }
+            }
+        };
+        checkMedia(voice, voiceKeys, asset_format::Id::Audio, "voice");
+#if defined(AY_RESOURCE_HAS_SEQUENCE)
+        checkMedia(sequence, sequenceKeys, asset_format::Id::SceneSequenceCooked, "sequence");
+#else
+        if (!sequence.empty() || !sequenceKeys.empty())
+            fail(manifestPath, "Sequence dialogue bindings require AYSequence AssetIO");
+#endif
+    } catch (const std::exception& exception) {
+        fail(manifestPath, exception.what());
+    }
+#endif
+    return bound;
 }
 
 bool audioContentSource(const std::string& source){return asset_format::matchesPath(source,asset_format::Id::AudioChartSource)||asset_format::matchesPath(source,asset_format::Id::AudioPerformanceSource);}
@@ -1869,6 +2084,12 @@ ProjectBuildPlan ProjectBuildPlanner::create(
     validateSequenceContent(plan,plan.diagnostics);
 #endif
     validateDialogueContent(plan,plan.diagnostics);
+    const auto dialogueBound = validateDialogueBindings(plan, plan.diagnostics);
+    for (auto& asset : plan.assets)
+        if (asset.transform == ProjectAssetTransform::Raw &&
+            dialogueBound.contains(asset.logicalPath) &&
+            !asset_format::matchesPath(asset.sourcePath, asset_format::Id::DialogueDocument))
+            asset.cacheKey = hashFiles({asset.sourcePath}, "dialogue-bound-v1");
     validateAudioContent(plan,plan.diagnostics);
     validateActorContent(plan, plan.diagnostics);
     detail::discoverProjectLogia(plan);
@@ -1918,12 +2139,17 @@ ProjectBuildResult ProjectBuildExecutor::execute(
     }
     std::vector<ProjectBuildDiagnostic> releaseDiagnostics;
     validateDialogueContent(plan, releaseDiagnostics);
+    const auto dialogueBound = validateDialogueBindings(plan, releaseDiagnostics);
     for (const auto& asset : plan.assets)
         if (asset.transform == ProjectAssetTransform::Raw &&
-            asset_format::matchesPath(asset.sourcePath, asset_format::Id::DialogueDocument) &&
-            asset.cacheKey != hashFiles({asset.sourcePath}, "dialogue-source-v1")) {
-            result.error = "Dialogue source changed after planning: " + asset.logicalPath;
-            return result;
+            (dialogueBound.contains(asset.logicalPath) ||
+             asset_format::matchesPath(asset.sourcePath, asset_format::Id::DialogueDocument))) {
+            const auto discriminator = asset_format::matchesPath(asset.sourcePath,
+                asset_format::Id::DialogueDocument) ? "dialogue-source-v1" : "dialogue-bound-v1";
+            if (asset.cacheKey != hashFiles({asset.sourcePath}, discriminator)) {
+                result.error = "Dialogue source changed after planning: " + asset.logicalPath;
+                return result;
+            }
         }
     validateAudioContent(plan,releaseDiagnostics);
     for(const auto& asset:plan.assets)if(asset.transform==ProjectAssetTransform::Cook&&audioContentSource(asset.sourcePath)&&asset.cacheKey!=computeCacheKey(plan.profile,asset)){
@@ -2150,17 +2376,21 @@ ProjectBuildResult ProjectBuildExecutor::execute(
                 asset.storage, asset.chunk,
                 ResourceRegistry::getTypeFromPath(asset.logicalPath), {},
                 true, asset.logicalPath, {}});
-            if (asset_format::matchesPath(asset.sourcePath,
-                    asset_format::Id::DialogueDocument)) {
+            if (!asset.cacheKey.empty()) {
                 const auto frozen = staging / "dialogue-sources" / fs::u8path(asset.logicalPath);
                 if (!copyFile(asset.sourcePath, frozen, result.error)) return result;
-                if (asset.cacheKey != hashFiles({frozen}, "dialogue-source-v1")) {
+                const auto dialogue = asset_format::matchesPath(asset.sourcePath,
+                    asset_format::Id::DialogueDocument);
+                if (asset.cacheKey != hashFiles({frozen},
+                        dialogue ? "dialogue-source-v1" : "dialogue-bound-v1")) {
                     result.error = "Dialogue source changed after planning: " + asset.logicalPath;
                     return result;
                 }
 #if defined(AY_RESOURCE_HAS_DIALOGUE)
-                progression::dialogue::Document verified;
-                if (!readDialogueDocument(frozen, verified, result.error)) return result;
+                if (dialogue) {
+                    progression::dialogue::Document verified;
+                    if (!readDialogueDocument(frozen, verified, result.error)) return result;
+                }
 #endif
                 staged.back().diskPath = frozen;
                 staged.back().cacheKey = asset.cacheKey;
@@ -2170,6 +2400,12 @@ ProjectBuildResult ProjectBuildExecutor::execute(
             for (const auto& dependency : asset.resourceDependencies)
                 staged.back().dependencies.push_back({asset.logicalPath, dependency});
             staged.back().declaredResources=asset.resourceDependencies;
+            if (asset.logicalPath == plan.profile.content.dialogueBindings)
+                for (const auto& dependency : dialogueBound)
+                    if (dependency != asset.logicalPath) {
+                        staged.back().dependencies.push_back({asset.logicalPath, dependency});
+                        staged.back().declaredResources.push_back(dependency);
+                    }
             continue;
         }
 

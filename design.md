@@ -8,7 +8,20 @@ ProjectBuild 作者目标可选链接 AYProgressionJson；普通 AYResource runt
 `dialogue-source-v1` SHA-256；执行期先复查源，发布前复制到私有 staging 并按同一
 身份核对，随后只发布冻结副本。失败不替换旧输出。无 AYProgressionJson 的作者
 构建会拒绝选中的对话文档，避免把未验证 JSON 当成可发布对话。此阶段不定义
-对话 Cook 格式、运行时 Loader 或跨语言及媒体依赖闭包。
+对话 Cook 格式、运行时 Loader 或自动发现跨语言及媒体依赖。
+
+可选 `content.dialogueBindings` 是 Assets 相对的 Raw JSON，schema 1 含
+`documents`（1..1024）、`locales`（1..64）、`voice` 和 `sequence`
+（各至多 4096 键）。规划和执行均从选中资产表解析这些路径，不接受逃逸、
+排除、Cook 或符号链接。所有选中对话文档都必须列入。每份 locale JSON 上限
+1 MiB，需有非重复的归一化语言标签，并覆盖全部被引用的非空文本键；
+Voice 绑定须是可解码的 `.aud`（至多 128 MiB），Sequence 绑定须是 `.sqc`
+且由现有 Sequence 门禁复核。映射及引用的 Raw 文件保存 SHA-256 规划身份，
+执行时复核并逐项复制到私有 staging；发布只读取冻结副本。未声明映射时仍只
+做单文档结构与 ID 检查。它不把 `.seq` 或音频作者文件自动转换为对话绑定，
+也不提供运行时键解析策略。
+发布 manifest 和资源数据库从映射文件记录指向所有已核对文件的依赖边，
+便于审计包内闭包；游戏仍需显式安装内容键解析器。
 
 ## Sequence 作者资源发布边界（2026-10-26）
 

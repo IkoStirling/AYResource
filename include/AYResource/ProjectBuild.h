@@ -51,6 +51,9 @@ struct ProjectCodeBuildProfile {
 struct ProjectContentBuildProfile {
     std::string assetRoot = "Assets";
     std::string outputSubdirectory = "Content";
+    /// Optional Assets-relative JSON mapping dialogue documents and referenced
+    /// locale/voice/sequence keys to files selected by this build profile.
+    std::string dialogueBindings;
     ProjectAssetTransform defaultTransform = ProjectAssetTransform::Raw;
     ProjectAssetStorage defaultStorage = ProjectAssetStorage::Loose;
     std::vector<ProjectBuildRule> rules;
