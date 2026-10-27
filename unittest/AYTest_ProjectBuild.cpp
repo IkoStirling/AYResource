@@ -17,6 +17,10 @@
 #if defined(AY_RESOURCE_HAS_REGIONS)
 #include <AYScene/RegionContentDocument.h>
 #include <AYScene/RegionPublicationBindings.h>
+#if defined(AY_RESOURCE_TEST_HAS_REGION_RESOURCES)
+#include <AYScene/RegionContentResource.h>
+#include <AYResource/ResourceManager.h>
+#endif
 #endif
 #if defined(AY_RESOURCE_HAS_SEQUENCE)
 #include <AYSequence/SequenceAssetIO.h>
@@ -1202,10 +1206,29 @@ TEST_CASE(region_project_build_checks_cross_region_identity_and_package_closure)
     const auto manifest = nlohmann::json::parse(ayt::io::File::readAllText(
         (cleanup.root / "out/package/test/build-manifest.json").string()));
     bool closed = false;
+    bool typedRegion = false;
     for (const auto& file : manifest.at("files"))
         if (file.at("path") == "regions/bindings.json")
             closed = file.at("resourceDependencies").size() == 4u;
+        else if (file.at("path") == "regions/north.region.json")
+            typedRegion = file.at("type") == "RegionContent";
     CHECK(closed);
+    CHECK(typedRegion);
+#if defined(AY_RESOURCE_TEST_HAS_REGION_RESOURCES)
+    CHECK(ayt::scene::registerRegionContentResource());
+    auto& resources = ayt::resource::ResourceManager::instance();
+    resources.unloadResource("regions/north.region.json");
+    CHECK(resources.openDatabase((cleanup.root /
+        "out/package/test/Content/resources.db").string()));
+    auto packagedRegion = resources.load<ayt::scene::RegionContentResource>(
+        "regions/north.region.json");
+    CHECK(packagedRegion && packagedRegion->content() &&
+          packagedRegion->content()->region == 1);
+    packagedRegion.reset();
+    resources.unloadResource("regions/north.region.json");
+    (void)resources.invalidatePak();
+    resources.setDatabase({});
+#endif
     CHECK(writeText(assets / "meshes/shared.asset", "changed mesh"));
     const auto stale = ProjectBuildExecutor::execute(plan);
     CHECK_FALSE(stale.ok);

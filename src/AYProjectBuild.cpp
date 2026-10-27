@@ -2551,9 +2551,16 @@ ProjectBuildResult ProjectBuildExecutor::execute(
         }
         if (asset.transform == ProjectAssetTransform::Raw) {
             ++result.rawCount;
+            std::string rawType = ResourceRegistry::getTypeFromPath(
+                asset.logicalPath);
+#if defined(AY_RESOURCE_HAS_REGIONS)
+            if (asset_format::matchesPath(asset.logicalPath,
+                asset_format::Id::RegionDocument))
+                rawType = "RegionContent";
+#endif
             staged.push_back({asset.sourcePath, asset.logicalPath,
                 asset.storage, asset.chunk,
-                ResourceRegistry::getTypeFromPath(asset.logicalPath), {},
+                std::move(rawType), {},
                 true, asset.logicalPath, {}});
             if (!asset.cacheKey.empty()) {
                 const auto frozen = staging / "bound-sources" / fs::u8path(asset.logicalPath);

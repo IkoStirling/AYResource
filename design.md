@@ -1282,3 +1282,6 @@ hashes are checked at planning, execution and frozen staging. Missing or
 transformed references reject publication before the previous output is
 replaced. Without bindings, individual documents are validated but resource
 closure is not claimed. Runtime stream registration and leases remain Host work.
+Published raw region records carry the explicit `RegionContent` type, so a
+runtime that registers AYScene::RegionResources can resolve them from the
+ProjectBuild database and Pak rather than relying on a build-process registry.
