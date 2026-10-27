@@ -202,6 +202,10 @@ if(AY_BUILD_RESOURCE_AUTHORING)
             AYStorage
             AYIO
     )
+    if(TARGET AYProgressionJson)
+        target_link_libraries(AYProjectBuild PRIVATE AYProgressionJson)
+        target_compile_definitions(AYProjectBuild PRIVATE AY_RESOURCE_HAS_DIALOGUE=1)
+    endif()
     if(TARGET AYShader)
         target_link_libraries(AYProjectBuild PRIVATE AYShader)
         target_compile_definitions(AYProjectBuild PRIVATE AY_RESOURCE_HAS_SHADER=1
@@ -230,6 +234,9 @@ endif()
 if(BUILD_TESTING AND AY_BUILD_RESOURCE_AUTHORING)
     enable_testing()
     add_subdirectory(unittest)
+    if(TARGET AYProgressionJson)
+        target_compile_definitions(AYResource_Tests PRIVATE AY_RESOURCE_HAS_DIALOGUE=1)
+    endif()
 endif()
 
 message(STATUS "AYResource v2.0.0 (runtime + optional import/cook targets) — see ${CMAKE_CURRENT_SOURCE_DIR}/design.md")

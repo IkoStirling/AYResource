@@ -1,5 +1,14 @@
 # AYResource
 
+## 对话作者 JSON 发布
+
+启用 AYProgression JSON 与资源作者构建后，ProjectBuild 识别所选的
+`.dialogue.json`，只接受 Raw 规则。规划时复用 AYProgression 的 1 MiB 有界解码与
+对话图校验，并拒绝同一项目中重复的文档 ID；执行时重验原始内容，暂存前冻结
+一份副本并与规划时 SHA-256 身份核对，失败保留旧包。可以按项目规则选择 loose
+或 Pak 存储；运行时读取仍由游戏负责。这一步只保证文档结构与原始字节一致，
+不自动解析语言、语音和 Sequence 键的文件闭包。
+
 ## 可选场景序列发布（2026-10-26）
 
 启用 AYSequence 作者构建后，ProjectBuild 把显式 Cook 的 `.seq` 发布为

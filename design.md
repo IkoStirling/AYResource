@@ -1,5 +1,15 @@
 # AYResource — Design (v2.1)
 
+## 对话作者文档的发布门禁（2026-10-27）
+
+ProjectBuild 作者目标可选链接 AYProgressionJson；普通 AYResource runtime 不增加
+对话依赖。选中的 `.dialogue.json` 必须为 Raw，最大 1 MiB，规划和执行均用同一
+版本化解码器检查图结构及跨文档 ID 唯一性。Raw 项的 `cacheKey` 存规划时
+`dialogue-source-v1` SHA-256；执行期先复查源，发布前复制到私有 staging 并按同一
+身份核对，随后只发布冻结副本。失败不替换旧输出。无 AYProgressionJson 的作者
+构建会拒绝选中的对话文档，避免把未验证 JSON 当成可发布对话。此阶段不定义
+对话 Cook 格式、运行时 Loader 或跨语言及媒体依赖闭包。
+
 ## Sequence 作者资源发布边界（2026-10-26）
 
 可选 AYSequenceAssetIO/AYSequenceCookIntegration 只链接作者工具目标，

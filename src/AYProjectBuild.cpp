@@ -20,6 +20,9 @@
 #include <AYStorage/IPackageWriter.h>
 #include <AYStorage/IStorageDatabase.h>
 #include <nlohmann/json.hpp>
+#if defined(AY_RESOURCE_HAS_DIALOGUE)
+#include <AYProgression/DialogueJson.h>
+#endif
 #if defined(AY_RESOURCE_HAS_PARTICLE)
 #include <AYParticle/EffectPackaging.h>
 #endif
@@ -755,6 +758,70 @@ std::string hashFiles(const std::vector<fs::path>& paths,
         result.push_back(digits[bytes[index] & 0x0f]);
     }
     return result;
+}
+
+#if defined(AY_RESOURCE_HAS_DIALOGUE)
+bool readDialogueDocument(const fs::path& path,
+                          progression::dialogue::Document& document,
+                          std::string& error) {
+    std::error_code ec;
+    if (!fs::is_regular_file(fs::symlink_status(path, ec)) || ec) {
+        error = "Dialogue document must be an ordinary file";
+        return false;
+    }
+    const auto size = fs::file_size(path, ec);
+    if (ec || size > 1'048'576) {
+        error = "Dialogue document exceeds 1 MiB";
+        return false;
+    }
+    std::ifstream input(path, std::ios::binary);
+    if (!input) { error = "Cannot open dialogue document"; return false; }
+    std::string bytes(static_cast<std::size_t>(size), '\0');
+    if (!input.read(bytes.data(), static_cast<std::streamsize>(size))
+        || input.peek() != std::char_traits<char>::eof() || input.bad()) {
+        error = "Dialogue document changed during read";
+        return false;
+    }
+    auto decoded = progression::dialogue::decodeDocumentJson(bytes);
+    if (!decoded) { error = decoded.error().detail; return false; }
+    document = std::move(*decoded);
+    return true;
+}
+#endif
+
+void validateDialogueContent(const ProjectBuildPlan& plan,
+                             std::vector<ProjectBuildDiagnostic>& diagnostics) {
+#if defined(AY_RESOURCE_HAS_DIALOGUE)
+    std::map<std::string, std::string> ids;
+#endif
+    for (const auto& asset : plan.assets) {
+        if (asset.transform == ProjectAssetTransform::Exclude ||
+            !asset_format::matchesPath(asset.sourcePath, asset_format::Id::DialogueDocument))
+            continue;
+        if (asset.transform != ProjectAssetTransform::Raw) {
+            diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Error,
+                       asset.logicalPath, "Dialogue documents require raw publication");
+            continue;
+        }
+#if defined(AY_RESOURCE_HAS_DIALOGUE)
+        progression::dialogue::Document document;
+        std::string error;
+        if (!readDialogueDocument(asset.sourcePath, document, error)) {
+            diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Error,
+                       asset.logicalPath, error);
+            continue;
+        }
+        if (const auto [it, inserted] = ids.emplace(document.id, asset.logicalPath);
+            !inserted) {
+            diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Error,
+                       asset.logicalPath, "Duplicate dialogue document ID " + document.id
+                           + " in " + it->second);
+        }
+#else
+        diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Error,
+                   asset.logicalPath, "Dialogue publication requires AYProgression::Json");
+#endif
+    }
 }
 
 bool audioContentSource(const std::string& source){return asset_format::matchesPath(source,asset_format::Id::AudioChartSource)||asset_format::matchesPath(source,asset_format::Id::AudioPerformanceSource);}
@@ -1775,6 +1842,9 @@ ProjectBuildPlan ProjectBuildPlanner::create(
                            "Could not compute the content-addressed cook key.");
             }
         }
+        if (asset.transform == ProjectAssetTransform::Raw &&
+            asset_format::matchesPath(asset.sourcePath, asset_format::Id::DialogueDocument))
+            asset.cacheKey = hashFiles({asset.sourcePath}, "dialogue-source-v1");
         if(ayt::asset_format::matchesPath(asset.sourcePath, ayt::asset_format::Id::PhoskiaShader)
             && asset.transform!=ProjectAssetTransform::Exclude
             && (asset.transform!=ProjectAssetTransform::Raw || asset.storage!=ProjectAssetStorage::Loose)) {
@@ -1798,6 +1868,7 @@ ProjectBuildPlan ProjectBuildPlanner::create(
 #if defined(AY_RESOURCE_HAS_SEQUENCE)
     validateSequenceContent(plan,plan.diagnostics);
 #endif
+    validateDialogueContent(plan,plan.diagnostics);
     validateAudioContent(plan,plan.diagnostics);
     validateActorContent(plan, plan.diagnostics);
     detail::discoverProjectLogia(plan);
@@ -1846,6 +1917,14 @@ ProjectBuildResult ProjectBuildExecutor::execute(
         }
     }
     std::vector<ProjectBuildDiagnostic> releaseDiagnostics;
+    validateDialogueContent(plan, releaseDiagnostics);
+    for (const auto& asset : plan.assets)
+        if (asset.transform == ProjectAssetTransform::Raw &&
+            asset_format::matchesPath(asset.sourcePath, asset_format::Id::DialogueDocument) &&
+            asset.cacheKey != hashFiles({asset.sourcePath}, "dialogue-source-v1")) {
+            result.error = "Dialogue source changed after planning: " + asset.logicalPath;
+            return result;
+        }
     validateAudioContent(plan,releaseDiagnostics);
     for(const auto& asset:plan.assets)if(asset.transform==ProjectAssetTransform::Cook&&audioContentSource(asset.sourcePath)&&asset.cacheKey!=computeCacheKey(plan.profile,asset)){
         result.error="Audio content inputs changed after planning; create a fresh build plan.";return result;
@@ -2071,6 +2150,21 @@ ProjectBuildResult ProjectBuildExecutor::execute(
                 asset.storage, asset.chunk,
                 ResourceRegistry::getTypeFromPath(asset.logicalPath), {},
                 true, asset.logicalPath, {}});
+            if (asset_format::matchesPath(asset.sourcePath,
+                    asset_format::Id::DialogueDocument)) {
+                const auto frozen = staging / "dialogue-sources" / fs::u8path(asset.logicalPath);
+                if (!copyFile(asset.sourcePath, frozen, result.error)) return result;
+                if (asset.cacheKey != hashFiles({frozen}, "dialogue-source-v1")) {
+                    result.error = "Dialogue source changed after planning: " + asset.logicalPath;
+                    return result;
+                }
+#if defined(AY_RESOURCE_HAS_DIALOGUE)
+                progression::dialogue::Document verified;
+                if (!readDialogueDocument(frozen, verified, result.error)) return result;
+#endif
+                staged.back().diskPath = frozen;
+                staged.back().cacheKey = asset.cacheKey;
+            }
             for (const auto& dependency : asset.scriptDependencies)
                 staged.back().dependencies.push_back({asset.logicalPath, dependency});
             for (const auto& dependency : asset.resourceDependencies)

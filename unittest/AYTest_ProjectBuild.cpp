@@ -4,6 +4,8 @@
 #include <AYResource/Loader/MeshLoader.h>
 #include <AYResource/assetsImpl/Mesh.h>
 #include <AYResource/assetsImpl/Audio.h>
+#include <AYIO/File.h>
+#include <AYStorage/IPackageReader.h>
 #if defined(AY_RESOURCE_HAS_SEQUENCE)
 #include <AYSequence/SequenceAssetIO.h>
 #include <AYSequence/SequenceCooked.h>
@@ -929,6 +931,66 @@ TEST_CASE(sequence_project_build_cooks_caches_and_rejects_missing_dependencies)
     const auto changed=ProjectBuildExecutor::execute(withAudio);
     CHECK_FALSE(changed.ok);
     CHECK(fs::is_regular_file(cooked));
+}
+#endif
+
+#if defined(AY_RESOURCE_HAS_DIALOGUE)
+TEST_CASE(dialogue_project_build_validates_and_freezes_raw_documents)
+{
+    ProjectBuildCleanup cleanup{"ayproject_dialogue_publish_test"};
+    const auto source = cleanup.root / "Assets/dialogue/town.dialogue.json";
+    const std::string authored = R"({"schema":1,"id":"town.greeter","contentVersion":1,"startNode":"hello","nodes":[{"id":"hello","speakerKey":"npc.greeter","textKey":"dialogue.hello","choices":[]}]})";
+    CHECK(writeText(source, authored));
+    CHECK(writeText(cleanup.root / "BuildProfiles/test.aybuild.json", profileJson()));
+    const auto profile = ProjectBuildProfile::load(
+        (cleanup.root / "BuildProfiles/test.aybuild.json").string());
+    const auto plan = ProjectBuildPlanner::create(profile, cleanup.root.string());
+    CHECK(plan.valid());
+    if (!plan.valid()) return;
+    CHECK(plan.assets.size() == 1u);
+    CHECK(!plan.assets.front().cacheKey.empty());
+    const auto published = ProjectBuildExecutor::execute(plan);
+    CHECK_MSG(published.ok, published.error.c_str());
+    if (!published.ok) return;
+    const auto output = cleanup.root / "out/package/test/Content/dialogue/town.dialogue.json";
+    CHECK(fs::is_regular_file(output));
+    CHECK(ayt::io::File::readAllText(output.string()) == authored);
+
+    CHECK(writeText(source, authored + "\n"));
+    const auto stale = ProjectBuildExecutor::execute(plan);
+    CHECK_FALSE(stale.ok);
+    CHECK(stale.error.find("changed after planning") != std::string::npos);
+    CHECK(ayt::io::File::readAllText(output.string()) == authored);
+
+    CHECK(writeText(source, "{broken"));
+    CHECK_FALSE(ProjectBuildPlanner::create(profile, cleanup.root.string()).valid());
+    CHECK(writeText(source, authored));
+    CHECK(writeText(cleanup.root / "Assets/dialogue/other.dialogue.json", authored));
+    CHECK_FALSE(ProjectBuildPlanner::create(profile, cleanup.root.string()).valid());
+}
+
+TEST_CASE(dialogue_project_build_preserves_raw_bytes_in_pak)
+{
+    ProjectBuildCleanup cleanup{"ayproject_dialogue_pak_test"};
+    const std::string authored = R"({"schema":1,"id":"intro","contentVersion":1,"startNode":"first","nodes":[{"id":"first","speakerKey":"narrator","textKey":"intro.first","choices":[]}]})";
+    CHECK(writeText(cleanup.root / "Assets/dialogue/intro.dialogue.json", authored));
+    auto profileJsonValue = nlohmann::json::parse(profileJson());
+    profileJsonValue["content"]["defaultStorage"] = "pak";
+    CHECK(writeText(cleanup.root / "BuildProfiles/test.aybuild.json", profileJsonValue.dump()));
+    const auto profile = ProjectBuildProfile::load(
+        (cleanup.root / "BuildProfiles/test.aybuild.json").string());
+    const auto plan = ProjectBuildPlanner::create(profile, cleanup.root.string());
+    CHECK(plan.valid());
+    if (!plan.valid()) return;
+    const auto built = ProjectBuildExecutor::execute(plan);
+    CHECK_MSG(built.ok, built.error.c_str());
+    if (!built.ok) return;
+    auto reader = ayt::storage::IPackageReader::open(
+        (cleanup.root / "out/package/test/Content/core.pak").string());
+    CHECK(reader != nullptr);
+    if (!reader) return;
+    const auto bytes = reader->read("dialogue/intro.dialogue.json");
+    CHECK(std::string(bytes.begin(), bytes.end()) == authored);
 }
 #endif
 

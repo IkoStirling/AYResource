@@ -118,6 +118,7 @@ struct ProjectBuildAsset {
     std::string chunk;
     bool cookTextures = true;
     std::size_t matchedRule = static_cast<std::size_t>(-1);
+    /// Cook identity, or the source-byte identity of a selected raw dialogue document.
     std::string cacheKey;
     /// Portable transitive Logia source paths resolved by the planner. Excluded,
     /// missing or non-loose imports are errors; execution rechecks this closure.
@@ -152,6 +153,8 @@ public:
     /// every referenced texture in the owning effect's cook identity.
     /// Script-enabled authoring discovers Logia imports using the shared parser.
     /// Unruled scripts default to raw/loose; explicit incompatible rules fail.
+    /// With AYProgression JSON authoring, selected raw dialogue documents are
+    /// validated and pinned by source bytes before publication.
     static ProjectBuildPlan create(const ProjectBuildProfile& profile,
                                    const std::string& projectRoot);
 };
