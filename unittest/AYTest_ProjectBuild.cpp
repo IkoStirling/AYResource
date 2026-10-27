@@ -19,6 +19,8 @@
 #include <AYScene/RegionPublicationBindings.h>
 #if defined(AY_RESOURCE_TEST_HAS_REGION_RESOURCES)
 #include <AYScene/RegionContentResource.h>
+#include <AYScene.h>
+#include <AYEntity/World.h>
 #include <AYResource/ResourceManager.h>
 #endif
 #endif
@@ -38,6 +40,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <cmath>
@@ -48,6 +51,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #if defined(_WIN32)
@@ -1227,6 +1231,28 @@ TEST_CASE(region_project_build_checks_cross_region_identity_and_package_closure)
     CHECK(closed);
     CHECK(typedRegion);
 #if defined(AY_RESOURCE_TEST_HAS_REGION_RESOURCES)
+    ayt::scene::Scene publicationScene(ayt::scene::SceneMode::Play);
+    auto& publicationWorld = publicationScene.world();
+    CHECK(publicationWorld.connectedSpaces().addRegion(1));
+    CHECK(publicationWorld.connectedSpaces().addRegion(2));
+    ayt::scene::WorldRegionStream publicationStream(publicationWorld);
+    CHECK(ayt::scene::bindRegionContentPackagePublication(
+        publicationStream,
+        (cleanup.root / "out/package/test/Content/core.pak").string(),
+        "regions/bindings.json", {}, error));
+    CHECK(publicationStream.requestLoad(1, &error));
+    auto publicationStatus = ayt::scene::RegionPollStatus::Pending;
+    const auto publicationDeadline = std::chrono::steady_clock::now() +
+        std::chrono::seconds(3);
+    while (publicationStatus == ayt::scene::RegionPollStatus::Pending &&
+           std::chrono::steady_clock::now() < publicationDeadline) {
+        publicationStatus = publicationStream.poll();
+        if (publicationStatus == ayt::scene::RegionPollStatus::Pending)
+            std::this_thread::yield();
+    }
+    CHECK(publicationStatus == ayt::scene::RegionPollStatus::Loaded);
+    CHECK(publicationWorld.findEntityByPersistentId(firstId) != nullptr);
+    CHECK(publicationStream.unload(1, &error));
     CHECK(ayt::scene::registerRegionContentResource());
     auto& resources = ayt::resource::ResourceManager::instance();
     resources.unloadResource("regions/north.region.json");
