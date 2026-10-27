@@ -43,11 +43,15 @@
 #if defined(AY_RESOURCE_HAS_PUPPET)
 #include <AY2DEditor/ParametricSpritePackage2D.h>
 #endif
+#if defined(AY_RESOURCE_HAS_SPRITE_CLIPS)
+#include <AY2DEditor/SpriteClipPackage2D.h>
+#endif
 #if defined(AY_RESOURCE_HAS_SEQUENCE)
 #include <AYSequence/SequenceAssetIO.h>
 #include <AYSequence/SequenceCooked.h>
 #include <AYSequence/SequenceDependencies.h>
 #endif
+
 #if defined(AY_RESOURCE_HAS_DET_LEVEL)
 #include <AYEntity/DeterministicLevelCooked2D.h>
 #endif
@@ -1281,6 +1285,65 @@ PuppetClosure validatePuppetContent(const ProjectBuildPlan& plan,
 }
 #endif
 
+#if defined(AY_RESOURCE_HAS_SPRITE_CLIPS)
+struct SpriteClipClosure {
+    std::set<std::string> bound;
+    std::map<std::string, std::vector<std::string>> pages;
+};
+
+SpriteClipClosure validateSpriteClipContent(
+    const ProjectBuildPlan& plan,
+    std::vector<ProjectBuildDiagnostic>& diagnostics) {
+    SpriteClipClosure closure;
+    std::map<std::string, const ProjectBuildAsset*> byPath;
+    for (const auto& asset : plan.assets) byPath.emplace(asset.logicalPath, &asset);
+    const auto root = fs::path(plan.projectRoot) / plan.profile.content.assetRoot;
+    for (const auto& asset : plan.assets) {
+        if (asset.transform == ProjectAssetTransform::Exclude ||
+            !asset_format::matchesPath(asset.logicalPath,
+                asset_format::Id::SpriteClipDocument2D)) continue;
+        const auto fail = [&](const std::string& message) {
+            diagnostic(diagnostics, ProjectBuildDiagnostic::Severity::Error,
+                asset.logicalPath, message);
+        };
+        if (asset.transform != ProjectAssetTransform::Raw) {
+            fail("Sprite clip documents require raw publication");
+            continue;
+        }
+        ayt::ay2d::editor::SpriteClipPackageReport2D inspected;
+        std::string error;
+        if (!ayt::ay2d::editor::inspectSpriteClipPackage2D(
+                root, fs::path(asset.logicalPath), inspected, error)) {
+            fail("Invalid sprite clip package: " + error);
+            continue;
+        }
+        bool valid = true;
+        std::vector<std::string> pages;
+        for (const auto& path : inspected.outputPaths) {
+            const auto found = byPath.find(path);
+            if (found == byPath.end() ||
+                found->second->transform != ProjectAssetTransform::Raw) {
+                fail("Sprite clip dependency missing, excluded or transformed: " + path);
+                valid = false;
+                continue;
+            }
+            if (found->second->storage != asset.storage ||
+                (asset.storage == ProjectAssetStorage::Pak &&
+                 found->second->chunk != asset.chunk)) {
+                fail("Sprite clip dependency must share storage and Pak chunk: " + path);
+                valid = false;
+                continue;
+            }
+            if (path != asset.logicalPath) pages.push_back(path);
+        }
+        if (!valid) continue;
+        closure.bound.insert(inspected.outputPaths.begin(),
+                             inspected.outputPaths.end());
+        closure.pages.emplace(asset.logicalPath, std::move(pages));
+    }
+    return closure;
+}
+#endif
 bool audioContentSource(const std::string& source){return asset_format::matchesPath(source,asset_format::Id::AudioChartSource)||asset_format::matchesPath(source,asset_format::Id::AudioPerformanceSource);}
 void validateAudioContent(const ProjectBuildPlan& plan,std::vector<ProjectBuildDiagnostic>& diagnostics){
     const fs::path root=fs::path(plan.projectRoot)/plan.profile.content.assetRoot;
@@ -2335,6 +2398,9 @@ ProjectBuildPlan ProjectBuildPlanner::create(
 #if defined(AY_RESOURCE_HAS_PUPPET)
     const auto puppetClosure = validatePuppetContent(plan, plan.diagnostics);
 #endif
+#if defined(AY_RESOURCE_HAS_SPRITE_CLIPS)
+    const auto spriteClipClosure = validateSpriteClipContent(plan, plan.diagnostics);
+#endif
     for (auto& asset : plan.assets)
         if (asset.transform == ProjectAssetTransform::Raw &&
             (dialogueBound.contains(asset.logicalPath) ||
@@ -2354,6 +2420,24 @@ ProjectBuildPlan ProjectBuildPlanner::create(
             std::sort(asset.resourceDependencies.begin(),asset.resourceDependencies.end());
             asset.resourceDependencies.erase(std::unique(
                 asset.resourceDependencies.begin(),asset.resourceDependencies.end()),
+                asset.resourceDependencies.end());
+        }
+    }
+#endif
+#if defined(AY_RESOURCE_HAS_SPRITE_CLIPS)
+    for (auto& asset : plan.assets) {
+        if (!spriteClipClosure.bound.contains(asset.logicalPath) ||
+            asset.transform != ProjectAssetTransform::Raw) continue;
+        asset.cacheKey = hashFiles({asset.sourcePath}, "content-bound-v1");
+        const auto found = spriteClipClosure.pages.find(asset.logicalPath);
+        if (found != spriteClipClosure.pages.end()) {
+            asset.resourceDependencies.insert(asset.resourceDependencies.end(),
+                found->second.begin(), found->second.end());
+            std::sort(asset.resourceDependencies.begin(),
+                      asset.resourceDependencies.end());
+            asset.resourceDependencies.erase(std::unique(
+                asset.resourceDependencies.begin(),
+                asset.resourceDependencies.end()),
                 asset.resourceDependencies.end());
         }
     }
@@ -2426,6 +2510,27 @@ ProjectBuildResult ProjectBuildExecutor::execute(
                         asset.resourceDependencies.end(),dependency)) {
                     result.error="Parametric sprite dependency graph changed: "
                         +asset.logicalPath;return result;
+                }
+    }
+#endif
+#if defined(AY_RESOURCE_HAS_SPRITE_CLIPS)
+    const auto spriteClipClosure = validateSpriteClipContent(plan, releaseDiagnostics);
+    for (const auto& asset : plan.assets) {
+        if (!spriteClipClosure.bound.contains(asset.logicalPath) ||
+            asset.transform != ProjectAssetTransform::Raw) continue;
+        if (asset.cacheKey != hashFiles({asset.sourcePath}, "content-bound-v1")) {
+            result.error = "Sprite clip content changed after planning: " +
+                asset.logicalPath;
+            return result;
+        }
+        const auto found = spriteClipClosure.pages.find(asset.logicalPath);
+        if (found != spriteClipClosure.pages.end())
+            for (const auto& dependency : found->second)
+                if (!std::binary_search(asset.resourceDependencies.begin(),
+                        asset.resourceDependencies.end(), dependency)) {
+                    result.error = "Sprite clip dependency graph changed: " +
+                        asset.logicalPath;
+                    return result;
                 }
     }
 #endif
@@ -2673,6 +2778,13 @@ ProjectBuildResult ProjectBuildExecutor::execute(
                     asset_format::Id::ParametricSpriteDocument2D))
                 rawType = "ParametricSpriteDocument2D";
             else if (puppetClosure.bound.contains(asset.logicalPath))
+                rawType = "Texture";
+#endif
+#if defined(AY_RESOURCE_HAS_SPRITE_CLIPS)
+            if (asset_format::matchesPath(asset.logicalPath,
+                    asset_format::Id::SpriteClipDocument2D))
+                rawType = "SpriteClipDocument2D";
+            else if (spriteClipClosure.bound.contains(asset.logicalPath))
                 rawType = "Texture";
 #endif
 #if defined(AY_RESOURCE_HAS_REGIONS)
@@ -2969,6 +3081,25 @@ ProjectBuildResult ProjectBuildExecutor::execute(
         std::sort(expected.begin(),expected.end());
         if (frozen.outputPaths!=expected) {
             result.error="Frozen parametric sprite closure changed: "+document;
+            return result;
+        }
+    }
+#endif
+
+#if defined(AY_RESOURCE_HAS_SPRITE_CLIPS)
+    for (const auto& [document, pages] : spriteClipClosure.pages) {
+        ayt::ay2d::editor::SpriteClipPackageReport2D frozen;
+        std::string error;
+        if (!ayt::ay2d::editor::inspectSpriteClipPackage2D(
+                staging / "bound-sources", fs::path(document), frozen, error)) {
+            result.error = "Invalid frozen sprite clip: " + document +
+                ": " + error;
+            return result;
+        }
+        std::vector<std::string> expected{document};
+        expected.insert(expected.end(), pages.begin(), pages.end());
+        if (frozen.outputPaths != expected) {
+            result.error = "Frozen sprite clip closure changed: " + document;
             return result;
         }
     }

@@ -35,6 +35,12 @@
 #include <AYResource/AssetPath.h>
 #include <AYResource/assetsImpl/Texture.h>
 #endif
+#if defined(AY_RESOURCE_HAS_SPRITE_CLIPS)
+#include <AY2DEditor/SpriteClipDocument2D.h>
+#include <AY2D/SpriteClipResource2D.h>
+#include <AYResource/ResourceManager.h>
+#include <AYResource/AssetPath.h>
+#endif
 #include "AYTest.h"
 #ifdef AY_RESOURCE_TEST_SHADER
 #include <AYShader/ShaderBuild.h>
@@ -2046,6 +2052,111 @@ TEST_CASE(parametric_sprite_project_publication_pins_complete_texture_closure)
     CHECK_FALSE(ProjectBuildPlanner::create(excluded,cleanup.root.string()).valid());
     CHECK(writeText(assets/"puppet-textures/blink.png","broken image"));
     CHECK_FALSE(ProjectBuildPlanner::create(profile,cleanup.root.string()).valid());
+}
+#endif
+
+#if defined(AY_RESOURCE_HAS_SPRITE_CLIPS)
+TEST_CASE(sprite_clip_project_publication_pins_atlas_closure)
+{
+    ProjectBuildCleanup cleanup{"ayproject_sprite_clip_closure"};
+    const auto assets = cleanup.root / "Assets";
+    CHECK(writeText(cleanup.root / "BuildProfiles/test.aybuild.json", profileJson()));
+    ayt::ay2d::SpriteClipSet2D set;
+    set.pages.push_back({"animation_samples/hero/page.png", 2, 2});
+    ayt::ay2d::SpriteClipFrame2D frame;
+    frame.width = frame.height = 2;
+    frame.canvasWidth = frame.canvasHeight = 2;
+    frame.pivotX = 1; frame.pivotY = 1;
+    set.clips.push_back({"idle", true, {frame}});
+    std::string authored;
+    CHECK(ayt::ay2d::editor::encodeSpriteClipDocument2D(set, authored));
+    CHECK(writeText(assets / "animation_samples/hero/hero.spc", authored));
+    CHECK(writeBytes(assets / "animation_samples/hero/page.png", makeImportPng()));
+    const auto profile = ProjectBuildProfile::load(
+        (cleanup.root / "BuildProfiles/test.aybuild.json").string());
+    const auto plan = ProjectBuildPlanner::create(profile, cleanup.root.string());
+    CHECK_MSG(plan.valid(), plan.serialize().c_str());
+    if (!plan.valid()) return;
+    bool closed = false;
+    for (const auto& asset : plan.assets)
+        if (asset.logicalPath == "animation_samples/hero/hero.spc")
+            closed = !asset.cacheKey.empty() &&
+                asset.resourceDependencies == std::vector<std::string>{
+                    "animation_samples/hero/page.png"};
+    CHECK(closed);
+    const auto built = ProjectBuildExecutor::execute(plan);
+    CHECK_MSG(built.ok, built.error.c_str());
+    if (!built.ok) return;
+    const auto published = cleanup.root / "out/package/test/Content";
+    CHECK(fs::is_regular_file(published / "animation_samples/hero/hero.spc"));
+    CHECK(fs::is_regular_file(published / "animation_samples/hero/page.png"));
+    const auto manifest = nlohmann::json::parse(ayt::io::File::readAllText(
+        (cleanup.root / "out/package/test/build-manifest.json").string()));
+    bool manifestClosed = false;
+    for (const auto& file : manifest.at("files"))
+        if (file.at("path") == "animation_samples/hero/hero.spc")
+            manifestClosed = file.at("resourceDependencies").size() == 1;
+    CHECK(manifestClosed);
+    CHECK(ayt::ay2d::registerSpriteClipResource2D());
+    auto& resources = ResourceManager::instance();
+    resources.unloadAll();
+    resources.setDatabase({});
+    CHECK(resources.openDatabase((published / "resources.db").string()));
+    ayt::resource::setAssetRoot(published.string());
+    const auto looseKey = ayt::resource::resolveAssetPath({},
+        "animation_samples/hero/hero.spc");
+    const auto loose = resources.load<ayt::ay2d::SpriteClipResource2D>(looseKey);
+    CHECK(loose != nullptr);
+    CHECK(loose && loose->clips().clips.size() == 1);
+    resources.unloadAll();
+    resources.setDatabase({});
+    ayt::resource::setAssetRoot({});
+
+    CHECK(writeBytes(assets / "animation_samples/hero/page.png", makeImportPng(true)));
+    const auto stale = ProjectBuildExecutor::execute(plan);
+    CHECK_FALSE(stale.ok);
+    CHECK(fs::is_regular_file(published / "animation_samples/hero/hero.spc"));
+
+    auto pakProfile = profile;
+    pakProfile.content.defaultStorage = ProjectAssetStorage::Pak;
+    const auto pakPlan = ProjectBuildPlanner::create(pakProfile, cleanup.root.string());
+    CHECK_MSG(pakPlan.valid(), pakPlan.serialize().c_str());
+    if (!pakPlan.valid()) return;
+    const auto packed = ProjectBuildExecutor::execute(pakPlan);
+    CHECK_MSG(packed.ok, packed.error.c_str());
+    if (!packed.ok) return;
+    auto pak = ayt::storage::IPackageReader::open(
+        (cleanup.root / "out/package/test/Content/core.pak").string());
+    CHECK(pak != nullptr);
+    if (pak) {
+        CHECK(pak->getEntry("animation_samples/hero/hero.spc").has_value());
+        CHECK(pak->getEntry("animation_samples/hero/page.png").has_value());
+    }
+    resources.unloadAll();
+    resources.setDatabase({});
+    const auto content = cleanup.root / "out/package/test/Content";
+    CHECK(resources.openDatabase((content / "resources.db").string()));
+    ayt::resource::setAssetRoot(content.string());
+    const auto packedKey = ayt::resource::resolveAssetPath({},
+        "animation_samples/hero/hero.spc");
+    CHECK(resources.hasDatabaseResource(packedKey));
+    CHECK_FALSE(fs::exists(fs::path(packedKey)));
+    const auto loaded = resources.load<ayt::ay2d::SpriteClipResource2D>(packedKey);
+    CHECK(loaded != nullptr);
+    CHECK(loaded && loaded->clips().clips.size() == 1);
+    CHECK(loaded && loaded->pagePaths().size() == 1);
+    resources.unloadAll();
+    resources.setDatabase({});
+    ayt::resource::setAssetRoot({});
+
+    auto excluded = profile;
+    ProjectBuildRule omit;
+    omit.match = "animation_samples/hero/page.png";
+    omit.transform = ProjectAssetTransform::Exclude;
+    excluded.content.rules.insert(excluded.content.rules.begin(), omit);
+    CHECK_FALSE(ProjectBuildPlanner::create(excluded, cleanup.root.string()).valid());
+    CHECK(writeText(assets / "animation_samples/hero/page.png", "broken image"));
+    CHECK_FALSE(ProjectBuildPlanner::create(profile, cleanup.root.string()).valid());
 }
 #endif
 

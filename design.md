@@ -1289,6 +1289,18 @@ Published raw region records carry the explicit `RegionContent` type, so a
 runtime that registers AYScene::RegionResources can resolve them from the
 ProjectBuild database and Pak rather than relying on a build-process registry.
 
+## Named sprite clip raw project closure
+
+Selected `.spc` documents use AY2D's strict codec and full PNG decoding to
+discover a bounded document-to-atlas closure. The planner requires each page
+to be selected Raw with the document's loose/Pak storage and Pak chunk, pins
+each source's bytes, and records page dependencies. Execution rechecks source
+identity and the dependency graph; frozen staging reinspects the copied set
+before replacement. Raw documents are typed `SpriteClipDocument2D` and pages
+`Texture`, independent of development-only extension scanning. A registered
+AY2D loader reads loose or Pak document bytes; atlas GPU residency remains
+the game's responsibility. No cooked `.spc` variant or migration is implied.
+
 ## Parametric sprite raw project closure
 
 When AY2DEditorCore is available, selected `.pup` files are raw authoring

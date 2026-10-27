@@ -1,5 +1,10 @@
 # AYResource
 
+选中 `.spc` 具名 Sprite 动画时，ProjectBuild 用 AY2D 的检查器完整解码文档与
+PNG 图集页，要求全部为同存储、同 Pak chunk 的 Raw 资产；规划、执行及冻结暂存
+均复核闭包与内容身份。文档以 `SpriteClipDocument2D`、图集以 `Texture` 类型发布，
+可选 `AY2DSpriteClipResources` 从 loose 或 Pak 加载片段文档。
+
 选中 `.pup` 作者角色时，ProjectBuild 将文档与去重后的 PNG/JPEG/BMP/TGA
 贴图作为同存储 Raw 闭包发布。原始图片以 `Texture` 类型索引，
 `TextureLoader` 可从显式 Pak 字节或已登记的 loose 记录解码单级 RGBA8
