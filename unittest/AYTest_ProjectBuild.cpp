@@ -1929,9 +1929,14 @@ TEST_CASE(parametric_sprite_project_publication_pins_complete_texture_closure)
     face.name="face";
     face.texturePath="puppet-textures/base.png";
     face.variants.push_back({0,0.5f,"puppet-textures/blink.png"});
+    ayt::ay2d::PuppetLayerMesh2D faceMesh;
+    faceMesh.vertices={{-1,-1,0,0},{1,-1,1,0},{0,1,.5f,1}};
+    faceMesh.indices={0,1,2};
+    face.mesh=std::move(faceMesh);
     CHECK(rig.load({{"blink",0,0,1}},{face}));
     std::string author,error;
     CHECK(ayt::ay2d::editor::saveParametricSpriteDocument2D(rig,author,error));
+    CHECK(author.find("\"version\": 5")!=std::string::npos);
     CHECK(writeText(assets/"avatars/face.pup",author));
     CHECK(writeBytes(assets/"puppet-textures/base.png",makeImportPng()));
     CHECK(writeBytes(assets/"puppet-textures/blink.png",makeImportPng()));
@@ -2016,6 +2021,7 @@ TEST_CASE(parametric_sprite_project_publication_pins_complete_texture_closure)
         puppetPath);
     CHECK(loaded != nullptr);
     CHECK(loaded && loaded->rig().layerCount()==1);
+    CHECK(loaded && loaded->rig().layer(0).mesh.has_value());
     CHECK(loaded && loaded->texturePaths().size()==2);
     const auto texturePath=ayt::resource::resolveAssetPath({},
         "puppet-textures/base.png");
